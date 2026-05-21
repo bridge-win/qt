@@ -1,0 +1,49 @@
+# Byte-compiled / packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Data (kept out of git)
+data/raw/
+data/parquet/
+data/cache/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# Logs
+logs/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets.yaml
+credentials.json
+
+# OS
+.DS_Store
+Thumbs.db

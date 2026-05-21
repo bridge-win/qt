@@ -1,0 +1,21 @@
+# Aggressive research-mode thresholds.
+#
+# Generates many more candidate signals than `default.yaml`. Use only for
+# parameter-sensitivity studies and walk-forward analysis — never live.
+
+thresholds:
+  rsi_oversold: 25.0
+  bb_std: 2.0
+  drawdown_30d_min: 0.10
+  wick_body_ratio_min: 2.0
+  rv_ratio_min: 1.5
+  funding_rate_8h_max: -0.0002
+  oi_drop_24h_min: 0.06
+  asopr_max: 1.0
+  mvrv_z_max: 1.0
+  fear_greed_max: 25
+  social_z_max: -1.0
+  vix_max: 45.0
+  dxy_z_max: 3.0
+  entry_score_min: 0.40
+  min_factor_groups: 3
