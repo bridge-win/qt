@@ -1,0 +1,58 @@
+# QT default configuration.
+#
+# Override per-environment by passing --config to the CLI or by setting QT_*
+# environment variables (see .env.example).
+#
+# Threshold defaults come from public practitioner research; see
+# docs/strategy.md and docs/indicators.md for citations.
+
+env: research
+log_level: INFO
+
+thresholds:
+  rsi_oversold: 20.0
+  bb_std: 2.5
+  drawdown_30d_min: 0.15
+  wick_body_ratio_min: 3.0
+  rv_ratio_min: 2.0
+  atr_ratio_min: 2.0
+  funding_rate_8h_max: -0.0005    # -0.05 % per 8h
+  oi_drop_24h_min: 0.10
+  long_liq_pct_min: 0.95
+  asopr_max: 0.97
+  mvrv_z_max: 0.5
+  exchange_netflow_neg: true
+  fear_greed_max: 15
+  social_z_max: -2.0
+  vix_max: 35.0
+  dxy_z_max: 2.0
+  entry_score_min: 0.60
+  min_factor_groups: 4
+
+risk:
+  base_currency: USDT
+  max_position_pct: 0.20
+  max_total_exposure_pct: 0.50
+  max_drawdown_pct: 0.20
+  cooldown_bars: 24
+  kelly_fraction: 0.25
+  vol_target_annual: 0.40
+  atr_stop_mult: 2.5
+  atr_take_profit_mult: 4.0
+  time_stop_bars: 120
+
+data:
+  primary_symbol: BTC/USDT
+  timeframes: ["1h", "4h", "1d"]
+  exchanges: ["binance"]
+  history_days: 1095          # 3 years
+  parquet_dir: data/parquet
+  cache_dir: data/cache
+
+execution:
+  mode: paper
+  live_enabled: false
+  fee_bps: 5.0
+  slippage_bps: 8.0
+  max_order_value_usdt: 100000.0
+  venue: binance
