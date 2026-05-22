@@ -29,6 +29,11 @@ from qt.indicators.derivatives import (
     funding_zscore,
     oi_drop_24h,
 )
+from qt.indicators.events import (
+    flash_crash,
+    liquidation_cascade,
+    wick_cluster,
+)
 from qt.indicators.onchain import (
     mvrv_z_extreme,
     netflow_zscore,
@@ -40,6 +45,14 @@ from qt.indicators.onchain import (
 )
 from qt.indicators.price import bollinger_zscore, drawdown_from_high, rsi, wick_ratio
 from qt.indicators.sentiment import fear_greed_extreme, social_sentiment_z
+from qt.indicators.smartmoney import (
+    coinbase_premium_extreme,
+    coinbase_premium_index,
+    ssr_oscillator,
+    stablecoin_supply_ratio,
+    whale_net_z,
+    whale_ratio_z,
+)
 from qt.indicators.volatility import rv_ratio
 
 
@@ -67,6 +80,7 @@ def compute_extreme_score(
     ohlcv: pd.DataFrame,
     funding: pd.Series | None = None,
     oi: pd.Series | None = None,
+    long_liquidations_usd: pd.Series | None = None,
     sopr: pd.Series | None = None,
     mvrv_z: pd.Series | None = None,
     nupl: pd.Series | None = None,
@@ -77,6 +91,11 @@ def compute_extreme_score(
     social_sentiment: pd.Series | None = None,
     vix: pd.Series | None = None,
     dxy: pd.Series | None = None,
+    coinbase_close: pd.Series | None = None,
+    btc_market_cap: pd.Series | None = None,
+    stablecoin_supply: pd.Series | None = None,
+    whale_ratio: pd.Series | None = None,
+    whales_to_exchange_net: pd.Series | None = None,
     cfg: ThresholdConfig | None = None,
 ) -> ExtremeScore:
     """Compute the composite extreme-event score from heterogenous inputs.
@@ -128,6 +147,21 @@ def compute_extreme_score(
         o = oi.reindex(ohlcv.index).ffill()
         flags["deriv_oi_drop"] = oi_drop_24h(o) <= -cfg.oi_drop_24h_min
         deriv_components.append(flags["deriv_oi_drop"])
+    if long_liquidations_usd is not None and not long_liquidations_usd.empty:
+        ll = long_liquidations_usd.reindex(ohlcv.index).fillna(0)
+        flags["deriv_liq_cascade"] = liquidation_cascade(
+            ll, notional_threshold=cfg.long_liq_24h_usd, z_threshold=cfg.long_liq_z,
+        )
+        deriv_components.append(flags["deriv_liq_cascade"])
+    # Flash-crash event always available (just OHLCV)
+    flags["deriv_flash_crash"] = flash_crash(close, cfg.flash_crash_pct, cfg.flash_crash_bars)
+    deriv_components.append(flags["deriv_flash_crash"])
+    # Wick cluster (>=2 long lower wicks in last 6h)
+    wk_series = wick_ratio(open_, high, low, close)
+    flags["deriv_wick_cluster"] = wick_cluster(
+        wk_series, window=6, count=2, ratio_min=cfg.wick_body_ratio_min,
+    )
+    deriv_components.append(flags["deriv_wick_cluster"])
     deriv_group = _combine_or(deriv_components, default=false_template)
 
     # --- On-chain group ---------------------------------------------------
@@ -179,6 +213,33 @@ def compute_extreme_score(
         sentiment_components.append(flags["snt_social_z"])
     sentiment_group = _combine_or(sentiment_components, default=false_template)
 
+    # --- Smart-money group ------------------------------------------------
+    sm_components: list[pd.Series] = []
+    if coinbase_close is not None and not coinbase_close.empty:
+        prem = coinbase_premium_index(coinbase_close, close)
+        flags["sm_coinbase_premium"] = coinbase_premium_extreme(
+            prem, sustained_bars=cfg.coinbase_premium_bars,
+            threshold=cfg.coinbase_premium_extreme,
+        ).reindex(ohlcv.index).fillna(False).astype(bool)
+        sm_components.append(flags["sm_coinbase_premium"])
+    if btc_market_cap is not None and stablecoin_supply is not None \
+            and not btc_market_cap.empty and not stablecoin_supply.empty:
+        ssr = stablecoin_supply_ratio(btc_market_cap, stablecoin_supply)
+        ssr_z = ssr_oscillator(ssr).reindex(ohlcv.index).ffill()
+        flags["sm_ssr_z"] = ssr_z <= cfg.ssr_z_max
+        sm_components.append(flags["sm_ssr_z"])
+    if whale_ratio is not None and not whale_ratio.empty:
+        wr = whale_ratio.reindex(ohlcv.index).ffill()
+        wrz = whale_ratio_z(wr)
+        flags["sm_whale_ratio_z"] = wrz <= cfg.whale_ratio_z_max
+        sm_components.append(flags["sm_whale_ratio_z"])
+    if whales_to_exchange_net is not None and not whales_to_exchange_net.empty:
+        wn = whales_to_exchange_net.reindex(ohlcv.index).ffill()
+        wnz = whale_net_z(wn)
+        flags["sm_whale_net_z"] = wnz <= cfg.whale_net_z_max
+        sm_components.append(flags["sm_whale_net_z"])
+    smart_money_group = _combine_or(sm_components, default=false_template)
+
     # --- Macro veto -------------------------------------------------------
     macro_ok = pd.Series(True, index=ohlcv.index)
     if vix is not None and not vix.empty:
@@ -199,6 +260,7 @@ def compute_extreme_score(
             "derivatives": deriv_group,
             "onchain": onchain_group,
             "sentiment": sentiment_group,
+            "smart_money": smart_money_group,
         }
     ).fillna(False).astype(bool)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -9,7 +10,7 @@ def funding_zscore(funding: pd.Series, window: int = 30 * 3) -> pd.Series:
     """Rolling Z-score of 8h funding rate."""
 
     mu = funding.rolling(window).mean()
-    sd = funding.rolling(window).std(ddof=0).replace(0, pd.NA)
+    sd = funding.rolling(window).std(ddof=0).replace(0, np.nan)
     return ((funding - mu) / sd).astype("float64").rename("funding_z")
 
 

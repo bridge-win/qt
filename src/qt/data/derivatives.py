@@ -39,7 +39,7 @@ def fetch_funding_rate_history(
                 f"{BINANCE_FAPI}/fapi/v1/fundingRate",
                 params={"symbol": symbol, "startTime": cursor_ms, "limit": 1000},
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("funding_fetch_failed", error=str(e))
             break
         if not data:
@@ -81,7 +81,7 @@ def fetch_open_interest_history(
                 "limit": 500,
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("oi_fetch_failed", error=str(e))
         return pd.DataFrame(columns=["oi_btc", "oi_usd"])
     if not data:
@@ -116,7 +116,7 @@ def fetch_long_short_ratio(
                 "limit": 500,
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("lsr_fetch_failed", error=str(e))
         return pd.DataFrame(columns=["long_short_ratio"])
     if not data:

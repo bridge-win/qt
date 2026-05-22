@@ -39,4 +39,4 @@ def test_missing_inputs_drop_group(synthetic_ohlcv: pd.DataFrame) -> None:
     out = compute_extreme_score(synthetic_ohlcv, cfg=cfg)
     # Only 2 groups available -> max possible score is 1.0 with 2/2 firing,
     # but min_factor_groups would still gate elsewhere; here just test score bounds.
-    assert out.group_flags.shape[1] == 5  # always 5 cols, possibly all-False
+    assert out.group_flags.shape[1] == 6  # 6 factor groups, possibly all-False

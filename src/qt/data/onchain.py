@@ -69,7 +69,7 @@ def fetch_coinmetrics(
             params["next_page_token"] = page_token
         try:
             data = http_get_json(f"{COINMETRICS}/timeseries/asset-metrics", params=params)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("coinmetrics_fetch_failed", metric=metric, error=str(e))
             break
         rows.extend(data.get("data", []))
@@ -131,7 +131,7 @@ def fetch_glassnode(
                 "api_key": api_key,
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("glassnode_fetch_failed", metric=metric, error=str(e))
         return pd.DataFrame(columns=[metric])
 
@@ -153,6 +153,6 @@ def fetch_mempool_fees() -> dict[str, float]:
 
     try:
         return http_get_json(f"{MEMPOOL}/v1/fees/recommended")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("mempool_fees_failed", error=str(e))
         return {}

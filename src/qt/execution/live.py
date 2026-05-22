@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from qt.core.logging import get_logger
-from qt.core.types import OrderSide, OrderType, Trade
+from qt.core.types import Trade
 from qt.execution.base import Broker, Order
 
 log = get_logger(__name__)

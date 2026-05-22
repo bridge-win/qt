@@ -6,8 +6,7 @@ aggregated into a daily news-stress index.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
+import numpy as np
 import pandas as pd
 
 from qt.core.logging import get_logger
@@ -39,7 +38,7 @@ def fetch_cryptopanic(
                 "public": "true" if public else "false",
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("cryptopanic_failed", error=str(e))
         return pd.DataFrame()
     rows = data.get("results", [])
@@ -61,7 +60,7 @@ def aggregate_news_sentiment(news_df: pd.DataFrame) -> pd.Series:
     neg = news_df.get("votes_negative", pd.Series(0, index=news_df.index)).fillna(0)
     daily_pos = pos.resample("1D").sum()
     daily_neg = neg.resample("1D").sum()
-    denom = (daily_pos + daily_neg).replace(0, pd.NA)
+    denom = (daily_pos + daily_neg).replace(0, np.nan)
     s = ((daily_pos - daily_neg) / denom).astype("float64").rename("news_sentiment")
     return s.dropna()
 
@@ -82,7 +81,7 @@ def fetch_gdelt_btc_tone(timespan: str = "30d") -> pd.DataFrame:
                 "timespan": timespan,
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("gdelt_failed", error=str(e))
         return pd.DataFrame(columns=["news_tone"])
     series = (data.get("timeline") or [{}])[0].get("data", [])
