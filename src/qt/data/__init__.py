@@ -10,6 +10,7 @@ Adapter philosophy:
   only reads from local snapshots (deterministic, replayable).
 """
 
+from qt.data.catalog import DATA_SOURCES, data_source_statuses
 from qt.data.store import ParquetStore
 
-__all__ = ["ParquetStore"]
+__all__ = ["DATA_SOURCES", "ParquetStore", "data_source_statuses"]

@@ -2,15 +2,15 @@
 
 Pulls live data every `--interval` seconds, recomputes the composite
 score on the trailing window, asks the risk engine for a decision, and
-routes orders to `PaperBroker`. State is *not* persisted across restarts
-in this stub — see `docs/architecture.md` for the production checklist.
+routes orders to `PaperBroker`. A durable heartbeat is written every
+cycle so deployments can be monitored and restarted safely.
 """
 
 from __future__ import annotations
 
 import argparse
-import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from rich.console import Console
 
@@ -18,7 +18,11 @@ from qt.backtest.fills import FillModel
 from qt.core.config import load_settings
 from qt.core.logging import configure_logging, get_logger
 from qt.core.types import OrderSide, OrderType, Position
-from qt.data.derivatives import fetch_funding_rate_history, fetch_open_interest_history
+from qt.data.derivatives import (
+    fetch_funding_rate_history,
+    fetch_long_short_ratio,
+    fetch_open_interest_history,
+)
 from qt.data.market import fetch_ohlcv
 from qt.data.onchain import fetch_coinmetrics
 from qt.data.sentiment import fetch_fear_greed
@@ -26,6 +30,7 @@ from qt.execution.base import Order
 from qt.execution.paper import PaperBroker
 from qt.indicators.price import atr
 from qt.indicators.volatility import realized_vol
+from qt.monitoring.supervisor import run_supervised_loop
 from qt.risk.engine import RiskEngine
 from qt.signal.engine import SignalEngine
 
@@ -39,6 +44,7 @@ def main() -> None:
     p.add_argument("--interval", type=int, default=3600, help="seconds between cycles")
     p.add_argument("--cash", type=float, default=100_000.0)
     p.add_argument("--cycles", type=int, default=0, help="0 = run forever")
+    p.add_argument("--state-path", default="data/runtime/monitor_state.json")
     args = p.parse_args()
 
     configure_logging("INFO")
@@ -51,19 +57,19 @@ def main() -> None:
                         slippage_bps=settings.execution.slippage_bps),
     )
 
-    cycle = 0
     position = Position(symbol="BTC/USDT")
-    while args.cycles == 0 or cycle < args.cycles:
-        cycle += 1
+
+    def run_cycle(cycle: int) -> dict[str, object]:
+        nonlocal position
         now = datetime.now(tz=timezone.utc)
         since = now - timedelta(days=180)
         ohlcv = fetch_ohlcv("binance", "BTC/USDT", "1h", since=since)
         if ohlcv.empty:
             log.warning("no_ohlcv_pulled")
-            time.sleep(args.interval)
-            continue
+            return {"cycle": cycle, "status": "no_ohlcv", "position_qty": position.qty}
         funding = fetch_funding_rate_history(symbol="BTCUSDT", since=since)
         oi = fetch_open_interest_history(symbol="BTCUSDT")
+        lsr = fetch_long_short_ratio(symbol="BTCUSDT")
         fg = fetch_fear_greed(limit=0)
         mvrv = fetch_coinmetrics("mvrv", since=since)
 
@@ -71,6 +77,7 @@ def main() -> None:
             ohlcv=ohlcv,
             funding=funding["funding_rate"] if not funding.empty else None,
             oi=oi["oi_usd"] if not oi.empty else None,
+            long_short_ratio=lsr["long_short_ratio"] if not lsr.empty else None,
             fear_greed=fg["fear_greed"] if not fg.empty else None,
             mvrv_z=mvrv["mvrv"] if not mvrv.empty else None,  # mvrv proxy if Z unavailable
         )
@@ -120,7 +127,29 @@ def main() -> None:
             f"[dim]cycle={cycle} ts={now.isoformat()} score_latest="
             f"{float(score.score.iloc[-1]):.2f} equity={equity:.2f}[/]"
         )
-        time.sleep(args.interval)
+        return {
+            "cycle": cycle,
+            "status": "ok",
+            "ts": now.isoformat(),
+            "latest_bar": latest_ts.isoformat(),
+            "score": float(score.score.iloc[-1]),
+            "equity": equity,
+            "position_qty": position.qty,
+            "ohlcv_rows": len(ohlcv),
+            "funding_rows": len(funding),
+            "oi_rows": len(oi),
+            "long_short_rows": len(lsr),
+            "fear_greed_rows": len(fg),
+        }
+
+    run_supervised_loop(
+        name="paper-trading",
+        mode=settings.execution.mode,
+        interval_seconds=args.interval,
+        cycles=args.cycles,
+        state_path=Path(args.state_path),
+        tick=run_cycle,
+    )
 
 
 if __name__ == "__main__":

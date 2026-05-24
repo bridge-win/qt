@@ -40,3 +40,28 @@ def test_missing_inputs_drop_group(synthetic_ohlcv: pd.DataFrame) -> None:
     # Only 2 groups available -> max possible score is 1.0 with 2/2 firing,
     # but min_factor_groups would still gate elsewhere; here just test score bounds.
     assert out.group_flags.shape[1] == 5  # always 5 cols, possibly all-False
+
+
+def test_available_group_stays_in_denominator_when_not_firing() -> None:
+    idx = pd.date_range("2024-01-01", periods=800, freq="1h", tz="UTC")
+    close = pd.Series(100.0, index=idx)
+    close.iloc[-1] = 80.0
+    ohlcv = pd.DataFrame(
+        {
+            "open": close.shift(1).fillna(close.iloc[0]),
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "volume": 100.0,
+        },
+        index=idx,
+    )
+    funding = pd.Series(0.0, index=idx)
+    cfg = ThresholdConfig(drawdown_30d_min=0.10, rv_ratio_min=999.0)
+
+    out = compute_extreme_score(ohlcv, funding=funding, cfg=cfg)
+
+    assert out.group_flags.loc[idx[-1], "price"]
+    assert not out.group_flags.loc[idx[-1], "volatility"]
+    assert not out.group_flags.loc[idx[-1], "derivatives"]
+    assert out.score.loc[idx[-1]] == 1 / 3

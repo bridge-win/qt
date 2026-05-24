@@ -23,8 +23,41 @@ class SignalEngine:
 
     thresholds: ThresholdConfig
 
-    def evaluate(self, **kwargs) -> ExtremeScore:
-        return compute_extreme_score(cfg=self.thresholds, **kwargs)
+    def evaluate(
+        self,
+        *,
+        ohlcv: pd.DataFrame,
+        funding: pd.Series | None = None,
+        oi: pd.Series | None = None,
+        long_short_ratio: pd.Series | None = None,
+        sopr: pd.Series | None = None,
+        mvrv_z: pd.Series | None = None,
+        nupl: pd.Series | None = None,
+        puell: pd.Series | None = None,
+        reserve_risk: pd.Series | None = None,
+        exchange_netflow: pd.Series | None = None,
+        fear_greed: pd.Series | None = None,
+        social_sentiment: pd.Series | None = None,
+        vix: pd.Series | None = None,
+        dxy: pd.Series | None = None,
+    ) -> ExtremeScore:
+        return compute_extreme_score(
+            ohlcv=ohlcv,
+            funding=funding,
+            oi=oi,
+            long_short_ratio=long_short_ratio,
+            sopr=sopr,
+            mvrv_z=mvrv_z,
+            nupl=nupl,
+            puell=puell,
+            reserve_risk=reserve_risk,
+            exchange_netflow=exchange_netflow,
+            fear_greed=fear_greed,
+            social_sentiment=social_sentiment,
+            vix=vix,
+            dxy=dxy,
+            cfg=self.thresholds,
+        )
 
     def to_signals(self, score: ExtremeScore) -> list[Signal]:
         """Convert a precomputed `ExtremeScore` into a list of `Signal` objects.
@@ -76,10 +109,38 @@ def _score_to_alloc(score: float) -> float:
 def generate_signals(
     thresholds: ThresholdConfig,
     ohlcv: pd.DataFrame,
-    **kwargs,
+    *,
+    funding: pd.Series | None = None,
+    oi: pd.Series | None = None,
+    long_short_ratio: pd.Series | None = None,
+    sopr: pd.Series | None = None,
+    mvrv_z: pd.Series | None = None,
+    nupl: pd.Series | None = None,
+    puell: pd.Series | None = None,
+    reserve_risk: pd.Series | None = None,
+    exchange_netflow: pd.Series | None = None,
+    fear_greed: pd.Series | None = None,
+    social_sentiment: pd.Series | None = None,
+    vix: pd.Series | None = None,
+    dxy: pd.Series | None = None,
 ) -> list[Signal]:
     """One-shot helper for non-streaming research / backtest use."""
 
     eng = SignalEngine(thresholds=thresholds)
-    score = eng.evaluate(ohlcv=ohlcv, **kwargs)
+    score = eng.evaluate(
+        ohlcv=ohlcv,
+        funding=funding,
+        oi=oi,
+        long_short_ratio=long_short_ratio,
+        sopr=sopr,
+        mvrv_z=mvrv_z,
+        nupl=nupl,
+        puell=puell,
+        reserve_risk=reserve_risk,
+        exchange_netflow=exchange_netflow,
+        fear_greed=fear_greed,
+        social_sentiment=social_sentiment,
+        vix=vix,
+        dxy=dxy,
+    )
     return eng.to_signals(score)

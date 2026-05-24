@@ -8,6 +8,7 @@ live capital is committed.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -16,7 +17,7 @@ def mvrv_z_from_caps(market_cap: pd.Series, realized_cap: pd.Series,
     """MVRV Z-Score: (MC - RC) / rolling_std(MC). Window ~2y of daily data."""
 
     diff = market_cap - realized_cap
-    std = market_cap.rolling(window).std(ddof=0).replace(0, pd.NA)
+    std = market_cap.rolling(window).std(ddof=0).replace(0, np.nan)
     return (diff / std).astype("float64").rename("mvrv_z")
 
 
@@ -44,7 +45,7 @@ def reserve_risk_low(rr: pd.Series, threshold: float = 0.002) -> pd.Series:
 
 def netflow_zscore(netflow: pd.Series, window: int = 30) -> pd.Series:
     mu = netflow.rolling(window).mean()
-    sd = netflow.rolling(window).std(ddof=0).replace(0, pd.NA)
+    sd = netflow.rolling(window).std(ddof=0).replace(0, np.nan)
     return ((netflow - mu) / sd).astype("float64").rename("netflow_z")
 
 
@@ -63,9 +64,9 @@ def hash_ribbon_recovery(hashrate: pd.Series) -> pd.Series:
 
 def pi_cycle_bottom(close: pd.Series, fast: int = 150, slow: int = 471,
                     slow_mult: float = 0.745) -> pd.Series:
-    """Pi Cycle Bottom: 471d SMA × 0.745 crosses above 150d EMA.
+    """Pi Cycle Bottom: 471d SMA x 0.745 crosses above 150d EMA.
 
-    Fired ≤3 days from the actual Mar-2020 low; no false positives 2013–2023
+    Fired within 3 days from the actual Mar-2020 low; no false positives 2013-2023
     on daily data per Philip Swift / LookIntoBitcoin.
     """
 

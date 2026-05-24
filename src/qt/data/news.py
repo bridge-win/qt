@@ -6,8 +6,6 @@ aggregated into a daily news-stress index.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pandas as pd
 
 from qt.core.logging import get_logger
@@ -39,7 +37,7 @@ def fetch_cryptopanic(
                 "public": "true" if public else "false",
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("cryptopanic_failed", error=str(e))
         return pd.DataFrame()
     rows = data.get("results", [])
@@ -47,7 +45,7 @@ def fetch_cryptopanic(
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     df["ts"] = pd.to_datetime(df["created_at"], utc=True)
-    votes = pd.json_normalize(df["votes"])  # type: ignore[arg-type]
+    votes = pd.json_normalize(df["votes"])
     df = pd.concat([df[["ts", "title", "url"]], votes.add_prefix("votes_")], axis=1)
     return coerce_utc_index(df)
 
@@ -82,7 +80,7 @@ def fetch_gdelt_btc_tone(timespan: str = "30d") -> pd.DataFrame:
                 "timespan": timespan,
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("gdelt_failed", error=str(e))
         return pd.DataFrame(columns=["news_tone"])
     series = (data.get("timeline") or [{}])[0].get("data", [])

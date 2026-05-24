@@ -36,10 +36,11 @@ and only their joint occurrence triggers a trade.
 Five factor groups, each contributing a single 0/1 condition:
 
 1. **Price action** — RSI(14) < 20 *or* BB-Z ≤ −2.5σ *or* lower-wick:body
-   ≥ 3 *or* 30d drawdown ≥ 15%.
+   ≥ 3 *or* 30d drawdown ≥ 15% *or* high-volume capitulation down bar.
 2. **Volatility** — short/long realized-vol ratio ≥ 2 (acute regime shock).
 3. **Derivatives** — funding-rate Z ≤ −2 *or* funding ≤ −0.05%/8h
-   sustained 3 prints *or* 24h OI drop ≥ 10%.
+   sustained 3 prints *or* 24h OI drop ≥ 10% *or* global long/short ratio
+   in the lowest 10th percentile.
 4. **On-chain** — aSOPR < 0.97 *or* MVRV-Z < 0.5 *or* NUPL < 0 *or* Puell
    < 0.5 *or* Reserve Risk < 0.002 *or* Exchange-netflow Z ≤ −2 *or* Pi
    Cycle Bottom fired in last 72h.
@@ -50,7 +51,9 @@ Macro veto (must all hold to enter):
 - VIX < 35
 - DXY 20d ROC Z-score < 2.0
 
-**Composite score** = (groups fired) / (groups with available data).
+**Composite score** = (groups fired) / (groups with available data). A
+configured-but-quiet group remains in the denominator; only genuinely
+missing optional data is dropped.
 **Entry trigger**: score ≥ `entry_score_min` (default 0.60) *and*
 ≥ `min_factor_groups` (default 4) groups firing *and* macro_ok.
 

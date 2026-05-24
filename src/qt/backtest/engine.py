@@ -54,6 +54,7 @@ class Backtester:
         *,
         funding: pd.Series | None = None,
         oi: pd.Series | None = None,
+        long_short_ratio: pd.Series | None = None,
         sopr: pd.Series | None = None,
         mvrv_z: pd.Series | None = None,
         nupl: pd.Series | None = None,
@@ -79,6 +80,7 @@ class Backtester:
             ohlcv=ohlcv,
             funding=funding,
             oi=oi,
+            long_short_ratio=long_short_ratio,
             sopr=sopr,
             mvrv_z=mvrv_z,
             nupl=nupl,
@@ -100,7 +102,7 @@ class Backtester:
         cash = self.initial_cash
         position = Position(symbol="BTC/USDT")
         equity_records: list[tuple[datetime, float]] = []
-        trade_records: list[dict] = []
+        trade_records: list[dict[str, object]] = []
         entry_ts: datetime | None = None
         entry_price: float = 0.0
 
@@ -200,7 +202,7 @@ class Backtester:
         )
 
 
-def _trade_to_dict(t: Trade) -> dict:  # pragma: no cover - helper
+def _trade_to_dict(t: Trade) -> dict[str, object]:  # pragma: no cover - helper
     return {
         "ts": t.ts,
         "side": t.side.value,

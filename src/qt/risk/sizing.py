@@ -2,7 +2,7 @@
 
 We default to *volatility-targeted* sizing scaled by *fractional* Kelly.
 Pure Kelly is famously over-aggressive on noisy edge estimates; fractional
-Kelly (typically 0.25–0.5) is the practitioner standard. See:
+Kelly (typically 0.25-0.5) is the practitioner standard. See:
 
 - Thorp (2006), "The Kelly Criterion in Blackjack, Sports Betting, and the
   Stock Market".

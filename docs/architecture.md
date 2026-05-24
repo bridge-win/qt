@@ -44,7 +44,8 @@
 └──────────────────────────────┘    └────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  qt.monitoring (alerts + reporting)                                     │
+│  qt.monitoring (alerts + reporting + supervised heartbeat state)         │
+│  qt.dashboard  (local web UI over data sources, heartbeat, backtests)    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,8 +58,9 @@
 - **Paper mode** (`QT_ENV=paper`): a long-running process polls the same
   adapters on a schedule (e.g. once an hour), recomputes the composite
   score over the trailing window, asks the risk engine for a decision,
-  and routes orders to `PaperBroker`. State is journalled so a crash and
-  restart resume cleanly.
+  and routes orders to `PaperBroker`. The supervised loop writes
+  `data/runtime/monitor_state.json` every cycle so process health,
+  failures, next run time, latest score, and equity are visible.
 
 - **Live mode** (`QT_ENV=live`, `QT_LIVE_TRADING_ENABLED=true`): same
   loop, `LiveBroker` instead of `PaperBroker`. Live broker requires
@@ -71,6 +73,9 @@
 - The composite score is a pure function of the input series — no hidden
   state, easy to unit-test.
 - Parquet snapshots + a frozen config file = a fully reproducible backtest.
+- Each backtest exports `summary.json`, `equity.csv`, `trades.csv`, and
+  `signals.csv` under `data/backtests/`; the dashboard reads only these
+  artifacts, not in-memory state.
 
 ## Failure isolation
 
@@ -79,6 +84,10 @@
   alerts fire (`qt.monitoring.alerts`) but trading continues with reduced
   factor coverage. The `min_factor_groups` floor prevents trading on a
   small denominator.
+- **Loop failures** are caught by `qt.monitoring.supervisor`, persisted to
+  the heartbeat file, alerted, and retried with bounded backoff. Repeated
+  failures mark the process as `failed` but the loop keeps retrying unless
+  the operator stops it.
 - **Broker failures**: `LiveBroker.submit` retries with exponential
   backoff (max 4 attempts). After exhaustion, the kill-switch is armed
   and a critical alert fires.

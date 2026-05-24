@@ -52,7 +52,7 @@ def fetch_fred(
                 "observation_end": until.strftime("%Y-%m-%d"),
             },
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("fred_failed", metric=metric, error=str(e))
         return pd.DataFrame(columns=[metric])
     obs = data.get("observations", [])

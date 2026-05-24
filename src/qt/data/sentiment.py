@@ -25,7 +25,7 @@ def fetch_fear_greed(limit: int = 0) -> pd.DataFrame:
 
     try:
         data = http_get_json(FNG_API, params={"limit": limit, "format": "json"})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("fear_greed_failed", error=str(e))
         return pd.DataFrame(columns=["fear_greed", "fear_greed_label"])
     rows = data.get("data", [])
@@ -76,7 +76,7 @@ def fetch_santiment_social(
             r = c.post(SANTIMENT_GQL, json={"query": query})
             r.raise_for_status()
             payload = r.json()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("santiment_failed", metric=metric, error=str(e))
         return pd.DataFrame(columns=[metric])
 

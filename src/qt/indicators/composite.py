@@ -27,6 +27,7 @@ from qt.core.config import ThresholdConfig
 from qt.indicators.derivatives import (
     funding_sustained_negative,
     funding_zscore,
+    long_short_extreme,
     oi_drop_24h,
 )
 from qt.indicators.onchain import (
@@ -38,7 +39,13 @@ from qt.indicators.onchain import (
     reserve_risk_low,
     sopr_capitulation,
 )
-from qt.indicators.price import bollinger_zscore, drawdown_from_high, rsi, wick_ratio
+from qt.indicators.price import (
+    bollinger_zscore,
+    drawdown_from_high,
+    rsi,
+    volume_capitulation,
+    wick_ratio,
+)
 from qt.indicators.sentiment import fear_greed_extreme, social_sentiment_z
 from qt.indicators.volatility import rv_ratio
 
@@ -67,6 +74,7 @@ def compute_extreme_score(
     ohlcv: pd.DataFrame,
     funding: pd.Series | None = None,
     oi: pd.Series | None = None,
+    long_short_ratio: pd.Series | None = None,
     sopr: pd.Series | None = None,
     mvrv_z: pd.Series | None = None,
     nupl: pd.Series | None = None,
@@ -103,7 +111,19 @@ def compute_extreme_score(
     flags["price_bb"] = bbz <= -cfg.bb_std
     flags["price_wick"] = wk >= cfg.wick_body_ratio_min
     flags["price_dd"] = dd <= -cfg.drawdown_30d_min
-    price_group = flags["price_rsi"] | flags["price_bb"] | flags["price_wick"] | flags["price_dd"]
+    flags["price_volume_cap"] = volume_capitulation(
+        close,
+        ohlcv["volume"],
+        min_volume_z=cfg.volume_z_min,
+        min_drop=cfg.volume_drop_min,
+    )
+    price_group = (
+        flags["price_rsi"]
+        | flags["price_bb"]
+        | flags["price_wick"]
+        | flags["price_dd"]
+        | flags["price_volume_cap"]
+    )
 
     # --- Volatility group -------------------------------------------------
     rvr = rv_ratio(close, fast=24, slow=24 * 30)
@@ -128,6 +148,10 @@ def compute_extreme_score(
         o = oi.reindex(ohlcv.index).ffill()
         flags["deriv_oi_drop"] = oi_drop_24h(o) <= -cfg.oi_drop_24h_min
         deriv_components.append(flags["deriv_oi_drop"])
+    if long_short_ratio is not None and not long_short_ratio.empty:
+        lsr = long_short_ratio.reindex(ohlcv.index).ffill()
+        flags["deriv_lsr_crowded_short"] = long_short_extreme(lsr) <= cfg.lsr_percentile_max
+        deriv_components.append(flags["deriv_lsr_crowded_short"])
     deriv_group = _combine_or(deriv_components, default=false_template)
 
     # --- On-chain group ---------------------------------------------------
@@ -202,8 +226,14 @@ def compute_extreme_score(
         }
     ).fillna(False).astype(bool)
 
-    # Drop columns that are *entirely* False because their data was missing.
-    available = [c for c in group_df.columns if group_df[c].any()]
+    available_groups = {
+        "price": True,
+        "volatility": True,
+        "derivatives": bool(deriv_components),
+        "onchain": bool(onchain_components),
+        "sentiment": bool(sentiment_components),
+    }
+    available = [name for name, is_available in available_groups.items() if is_available]
     denom = max(len(available), 1)
     fired = group_df[available].sum(axis=1).astype(float)
     score = (fired / denom).where(macro_ok, 0.0).rename("extreme_score")

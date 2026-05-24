@@ -22,6 +22,8 @@ class ThresholdConfig(BaseModel):
     bb_std: float = 2.5
     drawdown_30d_min: float = 0.15
     wick_body_ratio_min: float = 3.0
+    volume_z_min: float = 2.0
+    volume_drop_min: float = 0.05
 
     # Volatility
     rv_ratio_min: float = 2.0
@@ -31,6 +33,7 @@ class ThresholdConfig(BaseModel):
     funding_rate_8h_max: float = -0.0005  # -0.05% per 8h or more negative
     oi_drop_24h_min: float = 0.10
     long_liq_pct_min: float = 0.95
+    lsr_percentile_max: float = 0.10
 
     # On-chain
     asopr_max: float = 1.0

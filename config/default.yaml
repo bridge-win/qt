@@ -14,11 +14,14 @@ thresholds:
   bb_std: 2.5
   drawdown_30d_min: 0.15
   wick_body_ratio_min: 3.0
+  volume_z_min: 2.0
+  volume_drop_min: 0.05
   rv_ratio_min: 2.0
   atr_ratio_min: 2.0
   funding_rate_8h_max: -0.0005    # -0.05 % per 8h
   oi_drop_24h_min: 0.10
   long_liq_pct_min: 0.95
+  lsr_percentile_max: 0.10
   asopr_max: 0.97
   mvrv_z_max: 0.5
   exchange_netflow_neg: true

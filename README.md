@@ -17,8 +17,10 @@ the practitioner consensus on N-of-K factor voting. See
 Entry requires:
 
 1. **Price action** — RSI<20 or BB-Z≤-2.5 or wick≥3× body or DD₃₀ᴅ≥15 %
+   or high-volume capitulation down bar
 2. **Volatility** — short/long realized-vol ratio ≥ 2
 3. **Derivatives** — funding Z≤-2 (or sustained negative) or OI drop ≥10 %
+   or crowded-short long/short ratio percentile
 4. **On-chain** — any of: MVRV-Z<0.5, aSOPR<0.97, NUPL<0, Puell<0.5,
    Reserve Risk<0.002, exchange-netflow Z≤-2, Pi Cycle Bottom event
 5. **Sentiment** — Fear & Greed ≤ 15 sustained 3 days, or social Z ≤ -2
@@ -43,7 +45,8 @@ src/qt/
   risk/          fractional Kelly + vol-targeting, ATR stops, kill-switch
   backtest/      event-driven Backtester, FillModel, metrics
   execution/     Broker interface; PaperBroker (live disabled by default)
-  monitoring/    reporting, alerts
+  monitoring/    reporting, alerts, durable heartbeat supervisor
+  dashboard/     local web UI for data sources, heartbeat, backtests
   cli.py         `qt data fetch-ohlcv`, `qt backtest`, `qt info`
 config/          default.yaml, thresholds_research.yaml
 docs/            strategy.md, indicators.md, architecture.md
@@ -60,10 +63,13 @@ pip install -e ".[dev]"
 # 1. backfill data into data/parquet/
 python scripts/fetch_history.py --days 1095
 
-# 2. run a backtest
+# 2. run a backtest and export dashboard artifacts
 qt backtest --config config/default.yaml
 
-# 3. paper-trade loop (1h cycles)
+# 3. inspect data sources, freshness, and latest backtest
+qt dashboard --config config/default.yaml --port 8765
+
+# 4. paper-trade loop (1h cycles) with durable monitor state
 python scripts/run_paper.py --interval 3600
 ```
 
@@ -78,6 +84,10 @@ factors silently drop out of the score denominator.
 - Drawdown kill-switch at 20 % blocks new entries; manual reset only.
 - All decisions are explainable: each `Signal` carries the firing factors
   for audit.
+- Long-running paper mode writes `data/runtime/monitor_state.json`; the
+  dashboard reads this heartbeat so deployment health is visible.
+- Backtests export `summary.json`, `equity.csv`, `trades.csv`, and
+  `signals.csv` under `data/backtests/` for reproducible review.
 
 See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the

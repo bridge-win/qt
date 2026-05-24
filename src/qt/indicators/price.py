@@ -79,3 +79,20 @@ def wick_ratio(open_: pd.Series, high: pd.Series, low: pd.Series, close: pd.Seri
     eps = (high - low).abs().clip(lower=1e-9) * 1e-3
     safe_body = body.where(body > 0, eps)
     return (lower_wick.clip(lower=0) / safe_body).rename("wick_ratio")
+
+
+def volume_capitulation(
+    close: pd.Series,
+    volume: pd.Series,
+    *,
+    volume_window: int = 24 * 30,
+    min_volume_z: float = 2.0,
+    min_drop: float = 0.05,
+) -> pd.Series:
+    """True when a sharp down bar lands on unusually high volume."""
+
+    volume_mu = volume.rolling(volume_window).mean()
+    volume_sd = volume.rolling(volume_window).std(ddof=0).replace(0, np.nan)
+    volume_z = (volume - volume_mu) / volume_sd
+    bar_return = close.pct_change()
+    return ((volume_z >= min_volume_z) & (bar_return <= -min_drop)).rename("volume_capitulation")

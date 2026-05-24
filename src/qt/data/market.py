@@ -12,9 +12,9 @@ from qt.data.base import empty_ohlcv
 log = get_logger(__name__)
 
 try:
-    import ccxt  # type: ignore
+    import ccxt
 except ImportError:  # ccxt may not be installed in minimal envs
-    ccxt = None  # type: ignore
+    ccxt = None
 
 
 _TF_MS = {
@@ -59,7 +59,7 @@ def fetch_ohlcv(
     while cursor < until_ms:
         try:
             batch = ex.fetch_ohlcv(symbol, timeframe=timeframe, since=cursor, limit=limit_per_call)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("ohlcv_batch_failed", exchange=exchange_id, error=str(e), cursor=cursor)
             break
         if not batch:

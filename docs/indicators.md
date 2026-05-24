@@ -11,7 +11,8 @@ thresholds are configurable via `ThresholdConfig` (see `config/default.yaml`).
 | Bollinger Bands Z | (close − 20D MA) / 20D σ | ≤ −2.5 | 20D for daily / 480-bar for 1h. |
 | ATR(14) | EWMA of True Range | — | Stop sizing only. |
 | 30d Drawdown | (close − 30D high) / 30D high | ≤ −15% | Caporale et al. 2018 reversal threshold. |
-| Wick / body ratio | lower_wick / |close−open| | ≥ 3 | Hammer / 插针 (insertion) detector. |
+| Wick / body ratio | lower_wick / abs(close−open) | ≥ 3 | Hammer / 插针 (insertion) detector. |
+| Volume capitulation | volume Z-score plus same-bar down move | Z ≥ 2 and return ≤ −5% | Filters for forced selling rather than quiet drift. |
 
 ## Volatility (`qt.indicators.volatility`)
 
@@ -28,7 +29,7 @@ thresholds are configurable via `ThresholdConfig` (see `config/default.yaml`).
 | Funding rate Z | Binance fapi `/fundingRate` | Z ≤ −2 | 90-print rolling window. |
 | Funding sustained negative | same | ≤ −0.05%/8h for 3 prints | Forced short squeeze setup. |
 | 24h OI change | `/openInterestHist` | ≤ −10% | Liquidation cascade flag. |
-| Long/Short ratio percentile | `/globalLongShortAccountRatio` | low percentile | Contrarian read. |
+| Long/Short ratio percentile | `/globalLongShortAccountRatio` | ≤ 10th percentile | Crowded-short contrarian read. |
 
 ## On-chain (`qt.indicators.onchain`)
 
@@ -69,6 +70,10 @@ thresholds are configurable via `ThresholdConfig` (see `config/default.yaml`).
 - **factor_flags** — boolean DataFrame, one column per atomic factor.
 - **macro_ok** — boolean Series.
 - **reasons** — dict[ts → list[str]] for inspection of high-score bars.
+
+Groups with available data stay in the denominator even when they do not
+fire. Only truly missing optional groups are dropped. This prevents a
+quiet non-confirming feed from accidentally inflating the score.
 
 The signal engine (`qt.signal.engine.SignalEngine`) converts this into
 sparse `Signal` objects with explainable factor lists for audit and live

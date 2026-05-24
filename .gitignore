@@ -29,6 +29,8 @@ htmlcov/
 data/raw/
 data/parquet/
 data/cache/
+data/backtests/
+data/runtime/
 *.parquet
 *.duckdb
 *.duckdb.wal
