@@ -30,6 +30,7 @@ from qt.execution.base import Order
 from qt.execution.paper import PaperBroker
 from qt.indicators.price import atr
 from qt.indicators.volatility import realized_vol
+from qt.monitoring.alerts import alert
 from qt.monitoring.supervisor import run_supervised_loop
 from qt.risk.engine import RiskEngine
 from qt.signal.engine import SignalEngine
@@ -103,6 +104,15 @@ def main() -> None:
         # Entry check: only on bars whose timestamp matches the latest signal.
         sig_for_now = next((s for s in sigs if s.ts == latest_ts.to_pydatetime()), None)
         if sig_for_now is not None and position.is_flat:
+            alert(
+                "BTC buy opportunity detected",
+                severity="critical",
+                symbol="BTC/USDT",
+                bar_ts=latest_ts.isoformat(),
+                mark_price=round(mark, 2),
+                score=round(float(sig_for_now.score), 3),
+                groups_fired=getattr(sig_for_now, "groups_fired", None),
+            )
             atr_val = float(atr(ohlcv["high"], ohlcv["low"], ohlcv["close"], 14).iloc[-1])
             rv_val = float(realized_vol(ohlcv["close"], window=24 * 7).iloc[-1])
             dec = risk_engine.evaluate_entry(

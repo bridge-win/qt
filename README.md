@@ -127,6 +127,29 @@ qt monitor health \
 
 Exit code is `0` only when the heartbeat is healthy.
 
+## Deploy to Aliyun Lighthouse (one line)
+
+On a fresh Ubuntu 22.04 Lighthouse / ECS instance:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bridge-win/qt/main/deploy/aliyun_bootstrap.sh | sudo bash
+```
+
+This installs Python, clones the repo to `/opt/qt`, builds the venv,
+seeds `.env`, and starts the watchdog as a `systemd` service. Then edit
+`/opt/qt/.env` to add SMTP and Telegram credentials and run
+`sudo systemctl restart qt`. Full setup notes — including how to obtain
+a Telegram bot token / chat id and how to configure Aliyun DirectMail
+SMTP — are in [`deploy/README.md`](deploy/README.md).
+
+## Buy-opportunity alerts
+
+Every paper-loop cycle that fires an entry signal sends a `critical`
+alert through every configured channel: structured log, email (SMTP),
+and Telegram. Failures in any one channel are logged but never crash the
+loop. Configure via the `QT_SMTP_*` and `QT_TELEGRAM_*` variables in
+`.env` (see [`.env.example`](.env.example)).
+
 Free tier covers OHLCV + derivatives + Coin Metrics on-chain + Fear &
 Greed. Glassnode / Santiment / FRED keys unlock more factors; missing
 factors silently drop out of the score denominator.

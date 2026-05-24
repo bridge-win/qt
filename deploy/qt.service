@@ -1,0 +1,29 @@
+[Unit]
+Description=QT BTC quant trading service (paper loop + dashboard, with watchdog)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qt
+Group=qt
+WorkingDirectory=/opt/qt
+EnvironmentFile=/opt/qt/.env
+ExecStart=/opt/qt/.venv/bin/python scripts/run_service.py \
+  --config config/default.yaml \
+  --interval 3600 \
+  --state-path data/runtime/monitor_state.json \
+  --dashboard-host 0.0.0.0 \
+  --dashboard-port 8765
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
