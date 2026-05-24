@@ -47,14 +47,16 @@ src/qt/
   execution/     Broker interface; PaperBroker (live disabled by default)
   monitoring/    reporting, alerts, durable heartbeat supervisor
   dashboard/     local web UI for data sources, heartbeat, backtests
-  cli.py         `qt data fetch-ohlcv`, `qt backtest`, `qt info`
+  cli.py         `qt data fetch-ohlcv`, `qt backtest`, `qt dashboard`,
+                 `qt monitor health`, `qt info`
 config/          default.yaml, thresholds_research.yaml
 docs/            strategy.md, indicators.md, architecture.md
-scripts/         fetch_history.py, run_backtest.py, run_paper.py
+scripts/         fetch_history.py, run_backtest.py, run_paper.py,
+                 run_dashboard.py, run_service.py
 tests/           ≥ 8 unit/integration tests w/ synthetic fixture crashes
 ```
 
-## Quick start
+## Quick Start
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -64,14 +66,66 @@ pip install -e ".[dev]"
 python scripts/fetch_history.py --days 1095
 
 # 2. run a backtest and export dashboard artifacts
-qt backtest --config config/default.yaml
+qt --config config/default.yaml backtest
 
 # 3. inspect data sources, freshness, and latest backtest
-qt dashboard --config config/default.yaml --port 8765
+qt --config config/default.yaml dashboard --port 8765
 
 # 4. paper-trade loop (1h cycles) with durable monitor state
 python scripts/run_paper.py --interval 3600
 ```
+
+## Daily Usage
+
+```bash
+# Check effective config with secrets redacted
+qt --config config/default.yaml info
+
+# See all configured data sources and local freshness
+qt --config config/default.yaml data sources
+
+# Run a reproducible backtest and export dashboard artifacts
+qt --config config/default.yaml backtest --output-dir data/backtests
+
+# Serve the local dashboard
+qt --config config/default.yaml dashboard --port 8765
+```
+
+The dashboard is available at `http://127.0.0.1:8765` and shows:
+
+- data sources, provider, usage, local row count, freshness, and missing keys
+- latest backtest metrics plus paths to exported CSV/JSON artifacts
+- current paper-loop heartbeat, latest score, equity, and last error
+
+## Unattended Operation
+
+Use the parent watchdog for continuous paper-mode operation:
+
+```bash
+python scripts/run_service.py \
+  --config config/default.yaml \
+  --interval 3600 \
+  --state-path data/runtime/monitor_state.json \
+  --stale-after-seconds 7200 \
+  --startup-grace-seconds 300 \
+  --dashboard-port 8765
+```
+
+`run_service.py` starts and monitors both the paper loop and dashboard. It
+restarts the paper loop if the process exits, the heartbeat is stale, the
+heartbeat is missing after startup grace, or the heartbeat reports a failed or
+stopped state. It also restarts the dashboard if it exits.
+
+Machine-readable health check:
+
+```bash
+qt monitor health \
+  --state-path data/runtime/monitor_state.json \
+  --stale-after-seconds 7200 \
+  --json
+```
+
+Exit code is `0` only when the heartbeat is healthy.
 
 Free tier covers OHLCV + derivatives + Coin Metrics on-chain + Fear &
 Greed. Glassnode / Santiment / FRED keys unlock more factors; missing
@@ -92,9 +146,12 @@ factors silently drop out of the score denominator.
 See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
 walk-forward validation plan that must be passed before deploying capital.
+See [`docs/operations.md`](docs/operations.md) for the full runbook.
 
 ## Tests
 
 ```bash
 pytest -q
+ruff check .
+mypy src tests scripts
 ```

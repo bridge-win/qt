@@ -61,6 +61,9 @@
   and routes orders to `PaperBroker`. The supervised loop writes
   `data/runtime/monitor_state.json` every cycle so process health,
   failures, next run time, latest score, and equity are visible.
+  `scripts/run_service.py` is the parent watchdog for unattended runs: it
+  starts the paper loop and dashboard, restarts children that exit, and
+  restarts the paper loop when the heartbeat is stale or failed.
 
 - **Live mode** (`QT_ENV=live`, `QT_LIVE_TRADING_ENABLED=true`): same
   loop, `LiveBroker` instead of `PaperBroker`. Live broker requires
@@ -88,6 +91,9 @@
   the heartbeat file, alerted, and retried with bounded backoff. Repeated
   failures mark the process as `failed` but the loop keeps retrying unless
   the operator stops it.
+- **Process death / stale heartbeat** is handled by `scripts/run_service.py`,
+  which checks `qt monitor health` semantics and restarts the paper loop if
+  the heartbeat exceeds the configured staleness threshold.
 - **Broker failures**: `LiveBroker.submit` retries with exponential
   backoff (max 4 attempts). After exhaustion, the kill-switch is armed
   and a critical alert fires.

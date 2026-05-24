@@ -4,7 +4,7 @@ Usage examples (after `pip install -e .`)::
 
     qt fetch-ohlcv --exchange binance --symbol BTC/USDT --timeframe 1h --days 365
     qt fetch-onchain --metric mvrv
-    qt backtest --config config/default.yaml
+    qt --config config/default.yaml backtest
     qt paper run --duration 1h
 """
 
@@ -24,7 +24,9 @@ from qt.core.logging import configure_logging, get_logger
 
 app = typer.Typer(help="QT — BTC quantitative trading platform")
 data_app = typer.Typer(help="Data ingestion commands")
+monitor_app = typer.Typer(help="Monitoring and health commands")
 app.add_typer(data_app, name="data")
+app.add_typer(monitor_app, name="monitor")
 
 log = get_logger(__name__)
 console = Console()
@@ -246,6 +248,36 @@ def dashboard_cmd(
         backtests_dir=backtests_dir,
         monitor_state_path=monitor_state,
     )
+
+
+@monitor_app.command("health")
+def monitor_health_cmd(
+    state_path: Annotated[
+        Path, typer.Option(help="Monitor heartbeat JSON")
+    ] = Path("data/runtime/monitor_state.json"),
+    stale_after_seconds: Annotated[
+        int, typer.Option(help="Maximum acceptable heartbeat age")
+    ] = 7200,
+    json_output: Annotated[bool, typer.Option("--json", help="Print JSON output")] = False,
+) -> None:
+    """Check whether the long-running monitor heartbeat is healthy."""
+
+    from qt.monitoring.health import evaluate_monitor_health
+
+    health = evaluate_monitor_health(state_path, stale_after_seconds=stale_after_seconds)
+    if json_output:
+        console.print_json(data=health.as_dict())
+    else:
+        style = "green" if health.ok else "red"
+        table = Table(title="Monitor health")
+        table.add_column("Field")
+        table.add_column("Value")
+        for key, value in health.as_dict().items():
+            table.add_row(key, "" if value is None else str(value))
+        console.print(table)
+        console.print(f"[{style}]{health.message}[/]")
+    if not health.ok:
+        raise typer.Exit(1)
 
 
 def main() -> None:  # pragma: no cover - entry point
