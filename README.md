@@ -96,6 +96,68 @@ The dashboard is available at `http://127.0.0.1:8765` and shows:
 - data sources, provider, usage, local row count, freshness, and missing keys
 - latest backtest metrics plus paths to exported CSV/JSON artifacts
 - current paper-loop heartbeat, latest score, equity, and last error
+- every running gallery strategy (see below) with its own status pill,
+  last opportunity, and a sub-route `/strategy/<name>` for the full
+  per-cycle metrics and configured params
+
+## Multi-strategy solution gallery
+
+QT ships four independently-configured strategies under
+`src/qt/strategies/`:
+
+| Name | Class | What it does | Default cadence |
+| --- | --- | --- | --- |
+| `dca` | `SmartDCA` | Volatility-aware weekly DCA (stress-scaled buy size) | 1 h (alerts on Mon 14:00 UTC) |
+| `capitulation` | `Capitulation` | 5-factor composite extreme-event buyer + macro veto | 30 min |
+| `trend` | `WeeklyTrend` | Faber/Clenow weekly SMA(20w) crossover | 6 h |
+| `carry` | `BasisCarry` | Market-neutral spot+perp funding-rate carry | 1 h |
+
+Each one has its own YAML at `config/strategies/<name>.yaml`. Signal
+params, cadence, on/off flag, and minimum alert severity all live there
+— change them without touching code:
+
+```yaml
+# config/strategies/dca.yaml
+enabled: true
+interval_seconds: 3600
+min_alert_severity: critical
+params:
+  base_buy_quote: 100.0
+  buy_dow: 0
+  buy_hour_utc: 14
+  multiplier_k: 2.0
+```
+
+### One-line start (all strategies + dashboard)
+
+```bash
+python scripts/run_all.py
+```
+
+This single command:
+
+1. Loads every `*.yaml` under `config/strategies/`.
+2. Spawns one daemon thread per **enabled** strategy; each writes its
+   heartbeat to `data/runtime/strategies/<name>.json`.
+3. Serves the dashboard on `127.0.0.1:8765` so each strategy gets its
+   own sub-route at `http://127.0.0.1:8765/strategy/<name>` with the
+   latest metrics, last opportunity, and the YAML params actually in
+   effect.
+4. When any strategy emits an opportunity, the existing
+   `qt.monitoring.alerts.alert(...)` plumbing sends it to stderr +
+   email (`QT_SMTP_*`) + Telegram (`QT_TELEGRAM_*`).
+
+Useful overrides:
+
+```bash
+python scripts/run_all.py \
+  --strategies-dir config/strategies \
+  --runtime-dir data/runtime \
+  --dashboard-host 0.0.0.0 \
+  --dashboard-port 8765
+```
+
+`--no-dashboard` runs only the strategy threads.
 
 ## Unattended Operation
 

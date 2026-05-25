@@ -1,0 +1,26 @@
+# Strategy A — Smart DCA (volatility-aware periodic accumulation)
+#
+# Buys a base $X every week, scaled by a stress score built from
+# Fear & Greed, 1-year drawdown, and price distance from the 200d MA.
+# `multiplier_k=2` → at maximum fear (stress=+1) you buy 3× the base;
+# at maximum greed (stress=-1) you buy 0.25× the base.
+#
+# Edit `interval_seconds` to set the dashboard refresh cadence; the
+# actual buy is gated by `buy_dow` / `buy_hour_utc` (Mon 14:00 UTC).
+enabled: true
+interval_seconds: 3600
+description: "Volatility-aware weekly DCA; signal-on-schedule only."
+min_alert_severity: critical
+params:
+  base_buy_quote: 100.0
+  buy_dow: 0                  # 0 = Monday
+  buy_hour_utc: 14
+  multiplier_k: 2.0
+  mult_min: 0.25
+  mult_max: 3.0
+  ma_long_hours: 4800         # 200 days × 24h
+  dd_window_hours: 8760       # 365 days × 24h
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 250

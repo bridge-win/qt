@@ -1,0 +1,15 @@
+# Strategy C — Weekly trend follower (Faber / Clenow style)
+#
+# Long when weekly close > SMA(20w), flat below. Vol-shock filter
+# suppresses cross-up entries during panic spikes.
+enabled: true
+interval_seconds: 21600       # 6h — weekly bars only change weekly
+description: "Weekly SMA trend follower with hourly vol-shock filter."
+min_alert_severity: warning
+params:
+  ma_weeks: 20
+  vol_shock_ratio: 1.8
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 365

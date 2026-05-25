@@ -17,6 +17,7 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--backtests-dir", default="data/backtests")
     p.add_argument("--monitor-state", default="data/runtime/monitor_state.json")
+    p.add_argument("--strategies-state-dir", default="data/runtime/strategies")
     args = p.parse_args()
 
     settings = load_settings(args.config)
@@ -27,6 +28,7 @@ def main() -> None:
         parquet_dir=settings.data.parquet_dir,
         backtests_dir=args.backtests_dir,
         monitor_state_path=args.monitor_state,
+        strategies_state_dir=args.strategies_state_dir,
     )
 
 

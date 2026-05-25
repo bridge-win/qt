@@ -1,0 +1,16 @@
+# Strategy B — Multi-factor extreme-event capitulation buyer
+#
+# Wraps the main 5-factor-group composite (price, vol, derivatives,
+# on-chain, sentiment) + macro veto. Emits a buy opportunity when
+# enough groups fire simultaneously.
+enabled: true
+interval_seconds: 1800        # half-hourly — entries are rare and time-sensitive
+description: "5-group composite extreme-event detector with macro veto."
+min_alert_severity: critical
+params:
+  score_min: 0.60
+  min_groups_firing: 4
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 180
