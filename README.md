@@ -96,6 +96,68 @@ The dashboard is available at `http://127.0.0.1:8765` and shows:
 - data sources, provider, usage, local row count, freshness, and missing keys
 - latest backtest metrics plus paths to exported CSV/JSON artifacts
 - current paper-loop heartbeat, latest score, equity, and last error
+- every running gallery strategy (see below) with its own status pill,
+  last opportunity, and a sub-route `/strategy/<name>` for the full
+  per-cycle metrics and configured params
+
+## Multi-strategy solution gallery
+
+QT ships four independently-configured strategies under
+`src/qt/strategies/`:
+
+| Name | Class | What it does | Default cadence |
+| --- | --- | --- | --- |
+| `dca` | `SmartDCA` | Volatility-aware weekly DCA (stress-scaled buy size) | 1 h (alerts on Mon 14:00 UTC) |
+| `capitulation` | `Capitulation` | 5-factor composite extreme-event buyer + macro veto | 30 min |
+| `trend` | `WeeklyTrend` | Faber/Clenow weekly SMA(20w) crossover | 6 h |
+| `carry` | `BasisCarry` | Market-neutral spot+perp funding-rate carry | 1 h |
+
+Each one has its own YAML at `config/strategies/<name>.yaml`. Signal
+params, cadence, on/off flag, and minimum alert severity all live there
+— change them without touching code:
+
+```yaml
+# config/strategies/dca.yaml
+enabled: true
+interval_seconds: 3600
+min_alert_severity: critical
+params:
+  base_buy_quote: 100.0
+  buy_dow: 0
+  buy_hour_utc: 14
+  multiplier_k: 2.0
+```
+
+### One-line start (all strategies + dashboard)
+
+```bash
+python scripts/run_all.py
+```
+
+This single command:
+
+1. Loads every `*.yaml` under `config/strategies/`.
+2. Spawns one daemon thread per **enabled** strategy; each writes its
+   heartbeat to `data/runtime/strategies/<name>.json`.
+3. Serves the dashboard on `127.0.0.1:8765` so each strategy gets its
+   own sub-route at `http://127.0.0.1:8765/strategy/<name>` with the
+   latest metrics, last opportunity, and the YAML params actually in
+   effect.
+4. When any strategy emits an opportunity, the existing
+   `qt.monitoring.alerts.alert(...)` plumbing sends it to stderr +
+   email (`QT_SMTP_*`) + Telegram (`QT_TELEGRAM_*`).
+
+Useful overrides:
+
+```bash
+python scripts/run_all.py \
+  --strategies-dir config/strategies \
+  --runtime-dir data/runtime \
+  --dashboard-host 0.0.0.0 \
+  --dashboard-port 8765
+```
+
+`--no-dashboard` runs only the strategy threads.
 
 ## Unattended Operation
 
@@ -170,6 +232,40 @@ See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
 walk-forward validation plan that must be passed before deploying capital.
 See [`docs/operations.md`](docs/operations.md) for the full runbook.
+
+## Batch backtests (`qt.strategies.sim`)
+
+`solution2.md` collects the research; `src/qt/strategies/sim/` ships
+the **batch backtest** counterparts of three live strategies (DCA,
+weekly trend, basis carry). Unlike the live signal-emitters under
+`qt.strategies.*`, these classes consume a full OHLCV history and
+return an equity curve + trade list — useful for parameter tuning and
+walk-forward analysis.
+
+| ID | Class (in `qt.strategies.sim`) | What it does |
+| --- | --- | --- |
+| **A** | `SmartDCABacktest` | Vol-aware weekly DCA replayed across history |
+| **C** | `WeeklyTrendBacktest` | Faber/Clenow weekly SMA(20w) trend replay |
+| **D** | `BasisCarryBacktest` | Spot+perp carry replay on funding history |
+
+### Run a batch backtest
+
+```bash
+# (after `qt data fetch-ohlcv`, plus optional fetch-onchain / fetch-fear-greed)
+qt strategy run dca     # SmartDCABacktest
+qt strategy run trend   # WeeklyTrendBacktest
+qt strategy run carry   # BasisCarryBacktest  (requires funding-rate history)
+```
+
+Each prints final equity, x-multiple, max drawdown, and trade count.
+For the live signal-emitting versions (`qt.strategies.SmartDCA`,
+`Capitulation`, `WeeklyTrend`, `BasisCarry`) see the "Multi-strategy
+solution gallery" section above and `python scripts/run_all.py`.
+
+> ⚠️ All four backtests use *synthetic or local* data. Before deploying
+> capital, run them through `qt.backtest.walkforward` and
+> `qt.backtest.montecarlo` (see `scripts/walk_forward.py` and
+> `scripts/stress_test.py`).
 
 ## Tests
 

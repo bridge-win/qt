@@ -1,0 +1,18 @@
+# Strategy D — Funding-rate cash-and-carry (market-neutral)
+#
+# Long-spot + short-perp when annualized funding is fat enough;
+# unwind when it compresses or flips negative. Funding-rate data
+# must be fetched (qt data fetch-derivatives) or accessible live.
+enabled: true
+interval_seconds: 3600
+description: "Long spot + short perp when funding APR ≥ enter threshold."
+min_alert_severity: warning
+params:
+  enter_apr: 0.15
+  exit_apr: 0.05
+  avg_window_bars: 24
+  negative_bars: 3
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 30

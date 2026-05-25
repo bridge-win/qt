@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -15,7 +16,7 @@ def fear_greed_extreme(fng: pd.Series, threshold: int = 15,
 
 def social_sentiment_z(sentiment: pd.Series, window: int = 30) -> pd.Series:
     mu = sentiment.rolling(window).mean()
-    sd = sentiment.rolling(window).std(ddof=0).replace(0, pd.NA)
+    sd = sentiment.rolling(window).std(ddof=0).replace(0, np.nan)
     return ((sentiment - mu) / sd).astype("float64").rename("social_z")
 
 

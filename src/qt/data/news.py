@@ -6,6 +6,7 @@ aggregated into a daily news-stress index.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from qt.core.logging import get_logger
@@ -59,7 +60,7 @@ def aggregate_news_sentiment(news_df: pd.DataFrame) -> pd.Series:
     neg = news_df.get("votes_negative", pd.Series(0, index=news_df.index)).fillna(0)
     daily_pos = pos.resample("1D").sum()
     daily_neg = neg.resample("1D").sum()
-    denom = (daily_pos + daily_neg).replace(0, pd.NA)
+    denom = (daily_pos + daily_neg).replace(0, np.nan)
     s = ((daily_pos - daily_neg) / denom).astype("float64").rename("news_sentiment")
     return s.dropna()
 
