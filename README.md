@@ -233,6 +233,40 @@ enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
 walk-forward validation plan that must be passed before deploying capital.
 See [`docs/operations.md`](docs/operations.md) for the full runbook.
 
+## Batch backtests (`qt.strategies.sim`)
+
+`solution2.md` collects the research; `src/qt/strategies/sim/` ships
+the **batch backtest** counterparts of three live strategies (DCA,
+weekly trend, basis carry). Unlike the live signal-emitters under
+`qt.strategies.*`, these classes consume a full OHLCV history and
+return an equity curve + trade list — useful for parameter tuning and
+walk-forward analysis.
+
+| ID | Class (in `qt.strategies.sim`) | What it does |
+| --- | --- | --- |
+| **A** | `SmartDCABacktest` | Vol-aware weekly DCA replayed across history |
+| **C** | `WeeklyTrendBacktest` | Faber/Clenow weekly SMA(20w) trend replay |
+| **D** | `BasisCarryBacktest` | Spot+perp carry replay on funding history |
+
+### Run a batch backtest
+
+```bash
+# (after `qt data fetch-ohlcv`, plus optional fetch-onchain / fetch-fear-greed)
+qt strategy run dca     # SmartDCABacktest
+qt strategy run trend   # WeeklyTrendBacktest
+qt strategy run carry   # BasisCarryBacktest  (requires funding-rate history)
+```
+
+Each prints final equity, x-multiple, max drawdown, and trade count.
+For the live signal-emitting versions (`qt.strategies.SmartDCA`,
+`Capitulation`, `WeeklyTrend`, `BasisCarry`) see the "Multi-strategy
+solution gallery" section above and `python scripts/run_all.py`.
+
+> ⚠️ All four backtests use *synthetic or local* data. Before deploying
+> capital, run them through `qt.backtest.walkforward` and
+> `qt.backtest.montecarlo` (see `scripts/walk_forward.py` and
+> `scripts/stress_test.py`).
+
 ## Tests
 
 ```bash

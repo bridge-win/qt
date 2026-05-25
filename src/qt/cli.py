@@ -25,8 +25,10 @@ from qt.core.logging import configure_logging, get_logger
 app = typer.Typer(help="QT — BTC quantitative trading platform")
 data_app = typer.Typer(help="Data ingestion commands")
 monitor_app = typer.Typer(help="Monitoring and health commands")
+strategy_app = typer.Typer(help="Solution-gallery batch backtests (sim package)")
 app.add_typer(data_app, name="data")
 app.add_typer(monitor_app, name="monitor")
+app.add_typer(strategy_app, name="strategy")
 
 log = get_logger(__name__)
 console = Console()
@@ -209,6 +211,82 @@ def backtest_cmd(
         },
     )
     console.print(f"[green]artifacts[/] {artifact.run_dir}")
+
+
+@strategy_app.command("run")
+def strategy_run_cmd(
+    which: str = typer.Argument(..., help="One of: dca, capitulation, trend, carry"),
+    ohlcv_key: str = typer.Option(
+        "binance_BTCUSDT_1h", help="Key into the ohlcv parquet store",
+    ),
+    initial_cash: float = 10_000.0,
+    ctx: typer.Context = None,
+) -> None:
+    """Backtest one of the four sim-package strategies on local data."""
+
+    from qt.data.store import ParquetStore
+    from qt.strategies.sim import (
+        BasisCarryBacktest,
+        BasisCarryConfig,
+        SmartDCABacktest,
+        SmartDCAConfig,
+        WeeklyTrendBacktest,
+        WeeklyTrendConfig,
+    )
+
+    settings = ctx.obj
+    store = ParquetStore(settings.data.parquet_dir)
+    ohlcv = store.read("ohlcv", ohlcv_key)
+    if ohlcv.empty:
+        console.print(f"[red]no OHLCV at key={ohlcv_key}[/]; fetch first")
+        raise typer.Exit(2)
+
+    def _read(ds: str, key: str, col: str | None = None):
+        d = store.read(ds, key)
+        if d.empty:
+            return None
+        if col and col in d.columns:
+            return d[col]
+        return d.iloc[:, 0] if d.shape[1] == 1 else d
+
+    which = which.lower()
+    if which in {"a", "dca", "smart_dca"}:
+        out = SmartDCABacktest(SmartDCAConfig(initial_cash=initial_cash)).run(
+            ohlcv,
+            fear_greed=_read("sentiment", "fear_greed", "fear_greed"),
+            mvrv_z=_read("onchain", "glassnode_mvrv_z", "mvrv_z"),
+            nupl=_read("onchain", "glassnode_nupl", "nupl"),
+        )
+    elif which in {"c", "trend", "weekly", "weekly_trend"}:
+        out = WeeklyTrendBacktest(WeeklyTrendConfig(initial_cash=initial_cash)).run(ohlcv)
+    elif which in {"d", "carry", "basis", "basis_carry"}:
+        funding = _read("derivatives", "binance_funding", "funding_rate")
+        if funding is None:
+            console.print("[red]basis carry requires funding-rate history[/]")
+            raise typer.Exit(2)
+        out = BasisCarryBacktest(BasisCarryConfig(initial_cash=initial_cash)).run(
+            ohlcv, funding=funding,
+        )
+    elif which in {"b", "cap", "capitulation"}:
+        console.print(
+            "[yellow]capitulation batch backtest was removed in the merge; "
+            "use `qt backtest` for the live capitulation engine[/]"
+        )
+        raise typer.Exit(2)
+    else:
+        console.print(f"[red]unknown strategy[/] {which!r}")
+        raise typer.Exit(2)
+
+    eq = out.equity
+    cagr_factor = (eq.iloc[-1] / eq.iloc[0]) if eq.iloc[0] > 0 else float("nan")
+    max_dd = ((eq / eq.cummax()) - 1.0).min()
+    console.print(
+        f"[green]strategy={which}[/] "
+        f"final={eq.iloc[-1]:,.2f} "
+        f"x={cagr_factor:.2f} "
+        f"max_dd={max_dd:.2%} "
+        f"trades={len(out.trades)}"
+    )
 
 
 @app.command("info")

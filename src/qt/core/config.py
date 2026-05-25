@@ -34,11 +34,24 @@ class ThresholdConfig(BaseModel):
     oi_drop_24h_min: float = 0.10
     long_liq_pct_min: float = 0.95
     lsr_percentile_max: float = 0.10
+    long_liq_24h_usd: float = 400_000_000.0    # post-FTX baseline; raise to 800M-1B pre-2022
+    long_liq_z: float = 3.0
+    flash_crash_pct: float = 0.08
+    flash_crash_bars: int = 4
+    basis_backwardation_thresh: float = 0.0
 
     # On-chain
     asopr_max: float = 1.0
     mvrv_z_max: float = 0.0
     exchange_netflow_neg: bool = True
+
+    # Smart money
+    coinbase_premium_extreme: float = -0.0005   # sustained -0.05%
+    coinbase_premium_bars: int = 4
+    ssr_z_max: float = -1.0
+    whale_ratio_z_max: float = -1.5
+    whale_net_z_max: float = -2.0
+    accumulation_trend_max: float = -0.4
 
     # Sentiment
     fear_greed_max: int = 20
