@@ -56,7 +56,31 @@ scripts/         fetch_history.py, run_backtest.py, run_paper.py,
 tests/           ≥ 8 unit/integration tests w/ synthetic fixture crashes
 ```
 
-## Quick Start
+## Easiest way to run (one command)
+
+```bash
+./start.sh
+```
+
+That's it. On first run it creates the virtualenv, installs everything,
+seeds `.env`, then starts **all four strategies + the dashboard** at
+`http://127.0.0.1:8765`. Re-running is always safe (idempotent).
+
+| Command | What it does |
+| --- | --- |
+| `./start.sh` | setup (if needed) + run everything in the foreground |
+| `./start.sh daemon` | same, in the background (log: `data/runtime/qt.log`) |
+| `./start.sh status` | is it running + live per-strategy health table |
+| `./start.sh stop` | stop the background instance |
+| `./start.sh fetch` | backfill 3 years of history into `data/parquet/` |
+| `./start.sh backtest` | run the composite-score backtest on local data |
+| `./start.sh test` | run the test suite |
+
+To get email/Telegram alerts when a strategy spots an opportunity, edit
+`.env` (auto-created from `.env.example`) and fill in the `QT_SMTP_*` /
+`QT_TELEGRAM_*` values, then restart.
+
+## Manual Quick Start
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
