@@ -255,7 +255,9 @@ factors silently drop out of the score denominator.
 See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
 walk-forward validation plan that must be passed before deploying capital.
-See [`docs/operations.md`](docs/operations.md) for the full runbook.
+See [`docs/operations.md`](docs/operations.md) for the full runbook, and
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the evidence-based plan from
+signal generation to safe live trading.
 
 ## Batch backtests (`qt.strategies.sim`)
 
