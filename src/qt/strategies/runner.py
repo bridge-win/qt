@@ -33,6 +33,28 @@ from qt.strategies.base import Opportunity, Strategy
 log = get_logger(__name__)
 
 
+def _make_broker(settings: Settings, initial_cash: float) -> object:
+    """Select a broker from config.
+
+    Defaults to PaperBroker. Only builds a LiveBroker when execution.mode is
+    'live' AND execution.live_enabled is True — and even then the LiveBroker
+    itself stays in dry_run unless explicitly disabled. Any failure to build a
+    live broker (bad key, ccxt missing, unsafe key) falls back to paper so the
+    runner never crashes and never trades unexpectedly.
+    """
+    exec_cfg = settings.execution
+    if getattr(exec_cfg, "mode", "paper") == "live" and getattr(exec_cfg, "live_enabled", False):
+        try:
+            from qt.execution.live import LiveBroker
+
+            broker = LiveBroker.from_settings(settings)
+            log.info("live_broker_selected", venue=exec_cfg.venue, dry_run=exec_cfg.dry_run)
+            return broker
+        except Exception as exc:
+            log.warning("live_broker_unavailable_falling_back_to_paper", error=str(exc))
+    return PaperBroker(initial_cash=initial_cash)
+
+
 def _opp_to_signal(opp: Opportunity, score: float = 0.6) -> Signal:
     """Convert an Opportunity to a Signal for risk engine evaluation."""
     kind = SignalKind.ENTRY_LONG if opp.action in ("buy", "open") else SignalKind.EXIT
@@ -81,12 +103,12 @@ def run_strategy_forever(
     )
     store.write(snapshot)
 
-    # Init portfolio + paper broker + risk engine
+    # Init portfolio + broker + risk engine
     runtime_path = Path(runtime_dir)
     portfolio = PortfolioLedger(strategy.name, runtime_path)
     portfolio.set_initial_cash(initial_cash)
 
-    paper_broker = PaperBroker(initial_cash=initial_cash)
+    paper_broker = _make_broker(settings, initial_cash)
     risk_engine = RiskEngine(cfg=settings.risk)
 
     cycle = 0
@@ -140,12 +162,14 @@ def run_strategy_forever(
                 qty=paper_broker.position_qty("BTC/USDT"),
                 avg_price=portfolio.avg_price.get("BTC/USDT", 0.0),
             )
+            # Broker-agnostic equity from the durable ledger.
+            cur_equity = portfolio.snapshot({"BTC/USDT": last_mark_price}).equity
 
             # Entry decision
             if opp.action == "buy":
                 decision = risk_engine.evaluate_entry(
                     signal=_opp_to_signal(opp, score=opp.confidence),
-                    equity=paper_broker.equity({"BTC/USDT": last_mark_price}),
+                    equity=cur_equity,
                     mark_price=last_mark_price,
                     atr_value=last_mark_price * 0.02,  # estimate: 2% ATR
                     realized_vol_annual=0.8,  # estimate

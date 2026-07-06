@@ -96,6 +96,17 @@ class ExecutionConfig(BaseModel):
     max_order_value_usdt: float = 100_000.0
     venue: str = "binance"
 
+    # --- Live-trading guardrails (all enforced in LiveBroker) --------------
+    # These default to *tiny* values on purpose: even if someone flips
+    # live_enabled on by accident, the blast radius is a few dollars.
+    dry_run: bool = True                    # log orders, never send them
+    max_order_quote: float = 100.0          # hard cap per single order (USDT)
+    max_daily_spend_quote: float = 500.0    # cap on total BUY notional per UTC day
+    max_total_exposure_quote: float = 1_000.0  # cap on total open position value
+    require_trade_only_key: bool = True     # refuse keys that can withdraw
+    kill_file: str = "data/runtime/KILL"    # presence of this file blocks all orders
+    symbol: str = "BTC/USDT"                # only symbol live trading is allowed on
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
