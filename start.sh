@@ -8,6 +8,7 @@
 #   ./start.sh status       health of the background instance + per-strategy state
 #   ./start.sh fetch        backfill 3y of OHLCV/funding/Fear&Greed into data/parquet/
 #   ./start.sh backtest     run the composite-score backtest on local data
+#   ./start.sh bt <name>    backtest a gallery strategy (dca|trend|carry), synthetic-ok
 #   ./start.sh test         run the test suite
 #
 # Everything is idempotent — re-running never breaks an existing setup.
@@ -88,10 +89,11 @@ case "$cmd" in
     status)   bootstrap; show_status ;;
     fetch)    bootstrap; "$PY" scripts/fetch_history.py --days 1095 "$@" ;;
     backtest) bootstrap; "$VENV/bin/qt" --config config/default.yaml backtest "$@" ;;
+    bt)       bootstrap; "$VENV/bin/qt" strategy run "${1:-dca}" "${@:2}" ;;
     test)     bootstrap; "$PY" -m pytest -q "$@" ;;
     setup)    bootstrap; echo "[qt] setup complete" ;;
     *)
-        echo "usage: ./start.sh [run|daemon|stop|status|fetch|backtest|test|setup]"
+        echo "usage: ./start.sh [run|daemon|stop|status|fetch|backtest|bt <name>|test|setup]"
         exit 2
         ;;
 esac

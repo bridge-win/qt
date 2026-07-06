@@ -277,21 +277,37 @@ walk-forward analysis.
 ### Run a batch backtest
 
 ```bash
-# (after `qt data fetch-ohlcv`, plus optional fetch-onchain / fetch-fear-greed)
-qt strategy run dca     # SmartDCABacktest
-qt strategy run trend   # WeeklyTrendBacktest
-qt strategy run carry   # BasisCarryBacktest  (requires funding-rate history)
+# Uses local Parquet data if present; otherwise falls back to deterministic
+# SYNTHETIC data so it always runs (even with no network / no API keys).
+qt strategy run dca              # SmartDCABacktest
+qt strategy run trend            # WeeklyTrendBacktest
+qt strategy run carry            # BasisCarryBacktest (synthesizes funding if none)
+
+qt strategy run dca --synthetic  # force synthetic data even if local data exists
 ```
 
-Each prints final equity, x-multiple, max drawdown, and trade count.
+Each prints final equity, x-multiple, CAGR, Sharpe, max drawdown, and trade
+count, and exports `equity.csv` / `trades.csv` / `summary.json` under
+`data/backtests/strategy_<name>_<ts>/` (plus a `strategy_latest.json`).
+Synthetic runs are clearly labeled `(SYNTHETIC data)` so results are never
+mistaken for real performance.
+
+The unified entry point is `qt.backtest.strategy_backtest.run_strategy_backtest`,
+which any script or notebook can call directly:
+
+```python
+from qt.backtest.strategy_backtest import run_strategy_backtest
+out = run_strategy_backtest("dca", ohlcv=None)   # None -> synthetic fallback
+print(out.summary())                             # metrics dict
+```
+
 For the live signal-emitting versions (`qt.strategies.SmartDCA`,
 `Capitulation`, `WeeklyTrend`, `BasisCarry`) see the "Multi-strategy
 solution gallery" section above and `python scripts/run_all.py`.
 
-> ⚠️ All four backtests use *synthetic or local* data. Before deploying
-> capital, run them through `qt.backtest.walkforward` and
-> `qt.backtest.montecarlo` (see `scripts/walk_forward.py` and
-> `scripts/stress_test.py`).
+> ⚠️ Backtests use *synthetic or local* data. Before deploying capital, run
+> them through `qt.backtest.walkforward` and `qt.backtest.montecarlo` (see
+> `scripts/walk_forward.py` and `scripts/stress_test.py`).
 
 ## Tests
 
