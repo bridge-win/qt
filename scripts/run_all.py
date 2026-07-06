@@ -42,6 +42,8 @@ def main() -> None:
     p.add_argument("--dashboard-host", default="127.0.0.1")
     p.add_argument("--dashboard-port", type=int, default=8765)
     p.add_argument("--backtests-dir", default="data/backtests")
+    p.add_argument("--initial-cash", type=float, default=100_000.0,
+                   help="Starting cash per strategy (default 100000 USDT)")
     p.add_argument("--no-dashboard", action="store_true")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
@@ -63,6 +65,7 @@ def main() -> None:
     threads = start_all_strategies(
         strategies, settings,
         runtime_dir=runtime_dir, stop_event=stop,
+        initial_cash=args.initial_cash,
     )
     for s in strategies:
         console.print(
@@ -94,6 +97,7 @@ def main() -> None:
             backtests_dir=args.backtests_dir,
             monitor_state_path=monitor_state,
             strategies_state_dir=runtime_dir / "strategies",
+            runtime_dir=runtime_dir,
         )
     except KeyboardInterrupt:
         console.print("[yellow]shutting down[/]")

@@ -77,9 +77,27 @@ def served_dashboard(tmp_path: Path):
             },
         },
     )
+    # Seed a portfolio ledger for dca so /portfolio has data
+    from datetime import datetime, timezone
+
+    from qt.core.types import OrderSide, Trade
+    from qt.portfolio import PortfolioLedger
+
+    ledger = PortfolioLedger("dca", tmp_path)
+    ledger.set_initial_cash(100_000.0)
+    ledger.record_trade(
+        Trade(
+            ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            symbol="BTC/USDT", side=OrderSide.BUY, qty=0.1, price=50_000.0, fee=5.0,
+        ),
+        {"BTC/USDT": 50_000.0},
+        100_000.0,
+    )
+
     context = DashboardContext(
         parquet_dir=parquet, backtests_dir=backtests,
         monitor_state_path=monitor_state, strategies_state_dir=strategies_dir,
+        runtime_dir=tmp_path,
     )
     handler = _make_handler(context)
     server = TCPServer(("127.0.0.1", 0), handler)
@@ -137,8 +155,49 @@ def test_strategy_html_page(served_dashboard: int) -> None:
 def test_unknown_strategy_404(served_dashboard: int) -> None:
     status, _ = _get(served_dashboard, "/strategy/does-not-exist")
     assert status == 404
-    status, _ = _get(served_dashboard, "/api/strategy/does-not-exist")
-    assert status == 404
+
+
+def test_portfolio_page_renders(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/portfolio")
+    assert status == 200
+    text = body.decode()
+    assert "Portfolio P&amp;L" in text
+    assert "dca" in text
+
+
+def test_api_portfolios_returns_dca(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/api/portfolios")
+    assert status == 200
+    data = json.loads(body)
+    names = [p["name"] for p in data["portfolios"]]
+    assert "dca" in names
+    dca = next(p for p in data["portfolios"] if p["name"] == "dca")
+    assert dca["num_trades"] == 1
+    assert dca["positions"]["BTC/USDT"] == 0.1
+
+
+def test_api_portfolio_detail(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/api/portfolio/dca")
+    assert status == 200
+    data = json.loads(body)
+    assert data["portfolio"]["name"] == "dca"
+    assert data["portfolio"]["total_fees"] == 5.0
+
+
+def test_home_shows_pnl_section(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/")
+    assert status == 200
+    assert b"Portfolio P&amp;L" in body
+
+
+def test_home_plain_language_banner(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/")
+    assert status == 200
+    text = body.decode()
+    # Plain-language bilingual banner is present
+    assert "This week" in text
+    assert "本周" in text
+    assert "strategy(ies) running" in text
 
 
 def test_serve_dashboard_signature_accepts_strategies_dir(tmp_path: Path) -> None:

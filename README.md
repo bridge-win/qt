@@ -56,7 +56,42 @@ scripts/         fetch_history.py, run_backtest.py, run_paper.py,
 tests/           ≥ 8 unit/integration tests w/ synthetic fixture crashes
 ```
 
-## Quick Start
+## Easiest way to run (one command)
+
+```bash
+./start.sh init     # optional: 5-question wizard (venue, budget, risk, alerts)
+./start.sh          # start all four strategies + dashboard
+```
+
+On first run it creates the virtualenv, installs everything, seeds `.env`,
+then starts **all four strategies + the dashboard** at
+`http://127.0.0.1:8765`. Re-running is always safe (idempotent). The
+dashboard home opens with a plain-language, bilingual (EN/中文) "This week"
+summary and a traffic-light health dot — you don't need to read tables to
+know if it's working.
+
+| Command | What it does |
+| --- | --- |
+| `./start.sh init` | interactive setup wizard → writes `.env` + tunes strategy presets |
+| `./start.sh` | setup (if needed) + run everything in the foreground |
+| `./start.sh daemon` | same, in the background (log: `data/runtime/qt.log`) |
+| `./start.sh status` | is it running + live per-strategy health table |
+| `./start.sh stop` | stop the background instance |
+| `./start.sh fetch` | backfill 3 years of history into `data/parquet/` |
+| `./start.sh backtest` | run the composite-score backtest on local data |
+| `./start.sh bt <name>` | backtest a gallery strategy (`dca`/`trend`/`carry`) |
+| `./start.sh test` | run the test suite |
+
+The wizard's **risk level** (conservative / balanced / aggressive) maps to
+pre-tested strategy parameters and live-trading caps, so a beginner never
+has to hand-edit YAML. Live trading stays **off** regardless — see
+[`docs/live-checklist.md`](docs/live-checklist.md).
+
+To get email/Telegram alerts when a strategy spots an opportunity, edit
+`.env` (auto-created from `.env.example`) and fill in the `QT_SMTP_*` /
+`QT_TELEGRAM_*` values, then restart.
+
+## Manual Quick Start
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -231,7 +266,9 @@ factors silently drop out of the score denominator.
 See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
 walk-forward validation plan that must be passed before deploying capital.
-See [`docs/operations.md`](docs/operations.md) for the full runbook.
+See [`docs/operations.md`](docs/operations.md) for the full runbook, and
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the evidence-based plan from
+signal generation to safe live trading.
 
 ## Batch backtests (`qt.strategies.sim`)
 
@@ -251,21 +288,37 @@ walk-forward analysis.
 ### Run a batch backtest
 
 ```bash
-# (after `qt data fetch-ohlcv`, plus optional fetch-onchain / fetch-fear-greed)
-qt strategy run dca     # SmartDCABacktest
-qt strategy run trend   # WeeklyTrendBacktest
-qt strategy run carry   # BasisCarryBacktest  (requires funding-rate history)
+# Uses local Parquet data if present; otherwise falls back to deterministic
+# SYNTHETIC data so it always runs (even with no network / no API keys).
+qt strategy run dca              # SmartDCABacktest
+qt strategy run trend            # WeeklyTrendBacktest
+qt strategy run carry            # BasisCarryBacktest (synthesizes funding if none)
+
+qt strategy run dca --synthetic  # force synthetic data even if local data exists
 ```
 
-Each prints final equity, x-multiple, max drawdown, and trade count.
+Each prints final equity, x-multiple, CAGR, Sharpe, max drawdown, and trade
+count, and exports `equity.csv` / `trades.csv` / `summary.json` under
+`data/backtests/strategy_<name>_<ts>/` (plus a `strategy_latest.json`).
+Synthetic runs are clearly labeled `(SYNTHETIC data)` so results are never
+mistaken for real performance.
+
+The unified entry point is `qt.backtest.strategy_backtest.run_strategy_backtest`,
+which any script or notebook can call directly:
+
+```python
+from qt.backtest.strategy_backtest import run_strategy_backtest
+out = run_strategy_backtest("dca", ohlcv=None)   # None -> synthetic fallback
+print(out.summary())                             # metrics dict
+```
+
 For the live signal-emitting versions (`qt.strategies.SmartDCA`,
 `Capitulation`, `WeeklyTrend`, `BasisCarry`) see the "Multi-strategy
 solution gallery" section above and `python scripts/run_all.py`.
 
-> ⚠️ All four backtests use *synthetic or local* data. Before deploying
-> capital, run them through `qt.backtest.walkforward` and
-> `qt.backtest.montecarlo` (see `scripts/walk_forward.py` and
-> `scripts/stress_test.py`).
+> ⚠️ Backtests use *synthetic or local* data. Before deploying capital, run
+> them through `qt.backtest.walkforward` and `qt.backtest.montecarlo` (see
+> `scripts/walk_forward.py` and `scripts/stress_test.py`).
 
 ## Tests
 
