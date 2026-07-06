@@ -183,11 +183,61 @@ def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
     return read_portfolio(safe, context.runtime_dir)
 
 
+def _plain_summary(strategies: list[JsonDict], portfolios: list[JsonDict]) -> tuple[str, str, str]:
+    """Return (traffic_light_class, one_line_en, one_line_zh) in plain language."""
+    running = [s for s in strategies if str(s.get("status")) in {"healthy", "starting"}]
+    failed = [s for s in strategies if str(s.get("status")) in {"failed"}]
+    degraded = [s for s in strategies if str(s.get("status")) == "degraded"]
+
+    total_realized = sum(float(p.get("realized_pnl", 0.0) or 0.0) for p in portfolios)
+    total_trades = sum(int(p.get("num_trades", 0) or 0) for p in portfolios)
+
+    if failed:
+        light = "bad"
+    elif degraded:
+        light = "warn"
+    elif running:
+        light = "good"
+    else:
+        light = "muted"
+
+    pnl_word = "up" if total_realized > 0 else "down" if total_realized < 0 else "flat"
+    pnl_word_zh = "盈利" if total_realized > 0 else "亏损" if total_realized < 0 else "持平"
+    en = (
+        f"{len(running)} strategy(ies) running, {len(failed)} failed. "
+        f"So far {total_trades} paper trade(s); realized P&L is {pnl_word} "
+        f"{abs(total_realized):,.2f} USDT."
+    )
+    zh = (
+        f"{len(running)} 个策略在运行，{len(failed)} 个故障。"
+        f"目前共 {total_trades} 笔纸面交易；已实现盈亏{pnl_word_zh} "
+        f"{abs(total_realized):,.2f} USDT。"
+    )
+    return light, en, zh
+
+
+def _render_plain_banner(strategies: list[JsonDict], portfolios: list[JsonDict]) -> str:
+    light, en, zh = _plain_summary(strategies, portfolios)
+    dot = {"good": "&#128994;", "warn": "&#128993;", "bad": "&#128308;", "muted": "&#9899;"}[light]
+    return (
+        '<div class="panel" style="border-left:4px solid var(--line)">'
+        f'<div style="font-size:15px"><strong>{dot} This week / 本周</strong></div>'
+        f'<div style="margin-top:6px">{_e(en)}</div>'
+        f'<div class="subtle" style="margin-top:4px">{_e(zh)}</div>'
+        '<div class="subtle" style="margin-top:8px">'
+        'Paper mode is safe — no real money moves until you follow '
+        '<span class="mono">docs/live-checklist.md</span>. '
+        '纸面模式安全，未接真钱。</div>'
+        '</div>'
+    )
+
+
 def _render_home(context: DashboardContext) -> str:
     sources = _sources(context)
     backtest = _latest_backtest(context)
     monitor = _monitor(context)
     strategies = _strategies(context)
+    portfolios = _portfolios(context)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -248,9 +298,10 @@ def _render_home(context: DashboardContext) -> str:
       </div>
       <div class="subtle mono"><a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
     </header>
+    {_render_plain_banner(strategies, portfolios)}
     {_render_monitor_cards(monitor)}
     <h2>Portfolio P&amp;L</h2>
-    {_render_portfolio_summary(_portfolios(context))}
+    {_render_portfolio_summary(portfolios)}
     <h2>Strategies</h2>
     {_render_strategies_table(strategies)}
     <h2>Latest Backtest</h2>

@@ -59,22 +59,33 @@ tests/           ≥ 8 unit/integration tests w/ synthetic fixture crashes
 ## Easiest way to run (one command)
 
 ```bash
-./start.sh
+./start.sh init     # optional: 5-question wizard (venue, budget, risk, alerts)
+./start.sh          # start all four strategies + dashboard
 ```
 
-That's it. On first run it creates the virtualenv, installs everything,
-seeds `.env`, then starts **all four strategies + the dashboard** at
-`http://127.0.0.1:8765`. Re-running is always safe (idempotent).
+On first run it creates the virtualenv, installs everything, seeds `.env`,
+then starts **all four strategies + the dashboard** at
+`http://127.0.0.1:8765`. Re-running is always safe (idempotent). The
+dashboard home opens with a plain-language, bilingual (EN/中文) "This week"
+summary and a traffic-light health dot — you don't need to read tables to
+know if it's working.
 
 | Command | What it does |
 | --- | --- |
+| `./start.sh init` | interactive setup wizard → writes `.env` + tunes strategy presets |
 | `./start.sh` | setup (if needed) + run everything in the foreground |
 | `./start.sh daemon` | same, in the background (log: `data/runtime/qt.log`) |
 | `./start.sh status` | is it running + live per-strategy health table |
 | `./start.sh stop` | stop the background instance |
 | `./start.sh fetch` | backfill 3 years of history into `data/parquet/` |
 | `./start.sh backtest` | run the composite-score backtest on local data |
+| `./start.sh bt <name>` | backtest a gallery strategy (`dca`/`trend`/`carry`) |
 | `./start.sh test` | run the test suite |
+
+The wizard's **risk level** (conservative / balanced / aggressive) maps to
+pre-tested strategy parameters and live-trading caps, so a beginner never
+has to hand-edit YAML. Live trading stays **off** regardless — see
+[`docs/live-checklist.md`](docs/live-checklist.md).
 
 To get email/Telegram alerts when a strategy spots an opportunity, edit
 `.env` (auto-created from `.env.example`) and fill in the `QT_SMTP_*` /

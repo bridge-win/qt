@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-command launcher for the QT multi-strategy platform.
 #
+#   ./start.sh init         interactive setup wizard (venue, budget, risk, alerts)
 #   ./start.sh              first run: creates venv + installs + seeds .env,
 #                           then starts all strategies + dashboard (foreground)
 #   ./start.sh daemon       same, but in the background (PID in data/runtime/qt.pid)
@@ -92,8 +93,9 @@ case "$cmd" in
     bt)       bootstrap; "$VENV/bin/qt" strategy run "${1:-dca}" "${@:2}" ;;
     test)     bootstrap; "$PY" -m pytest -q "$@" ;;
     setup)    bootstrap; echo "[qt] setup complete" ;;
+    init)     bootstrap; "$PY" scripts/init_wizard.py ;;
     *)
-        echo "usage: ./start.sh [run|daemon|stop|status|fetch|backtest|bt <name>|test|setup]"
+        echo "usage: ./start.sh [init|run|daemon|stop|status|fetch|backtest|bt <name>|test|setup]"
         exit 2
         ;;
 esac

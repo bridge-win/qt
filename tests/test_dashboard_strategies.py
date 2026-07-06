@@ -187,6 +187,16 @@ def test_home_shows_pnl_section(served_dashboard: int) -> None:
     status, body = _get(served_dashboard, "/")
     assert status == 200
     assert b"Portfolio P&amp;L" in body
+
+
+def test_home_plain_language_banner(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/")
+    assert status == 200
+    text = body.decode()
+    # Plain-language bilingual banner is present
+    assert "This week" in text
+    assert "本周" in text
+    assert "strategy(ies) running" in text
     status, _ = _get(served_dashboard, "/api/strategy/does-not-exist")
     assert status == 404
 
