@@ -97,6 +97,7 @@ def main() -> None:
             backtests_dir=args.backtests_dir,
             monitor_state_path=monitor_state,
             strategies_state_dir=runtime_dir / "strategies",
+            runtime_dir=runtime_dir,
         )
     except KeyboardInterrupt:
         console.print("[yellow]shutting down[/]")

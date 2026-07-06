@@ -15,6 +15,7 @@ from qt.backtest.artifacts import latest_backtest_summary
 from qt.data.catalog import data_source_statuses
 from qt.data.store import ParquetStore
 from qt.monitoring.state import MonitorStateStore
+from qt.portfolio import read_all_portfolios, read_portfolio
 
 JsonDict: TypeAlias = dict[str, object]
 
@@ -25,6 +26,7 @@ class DashboardContext:
     backtests_dir: Path
     monitor_state_path: Path
     strategies_state_dir: Path
+    runtime_dir: Path
 
 
 def serve_dashboard(
@@ -35,6 +37,7 @@ def serve_dashboard(
     backtests_dir: str | Path,
     monitor_state_path: str | Path,
     strategies_state_dir: str | Path | None = None,
+    runtime_dir: str | Path | None = None,
 ) -> None:
     context = DashboardContext(
         parquet_dir=Path(parquet_dir),
@@ -44,6 +47,7 @@ def serve_dashboard(
             strategies_state_dir
             or Path(monitor_state_path).parent / "strategies"
         ),
+        runtime_dir=Path(runtime_dir or Path(monitor_state_path).parent),
     )
     handler = _make_handler(context)
     server = ThreadingHTTPServer((host, port), handler)
@@ -72,6 +76,20 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/api/strategies":
                 self._send_json({"strategies": _strategies(context)})
                 return
+            if path == "/api/portfolios":
+                self._send_json({"portfolios": _portfolios(context)})
+                return
+            if path == "/portfolio":
+                self._send_html(_render_portfolio_overview(context))
+                return
+            if path.startswith("/api/portfolio/"):
+                name = path[len("/api/portfolio/"):].strip("/")
+                pf = _portfolio(context, name)
+                if pf is None:
+                    self.send_error(HTTPStatus.NOT_FOUND, f"no portfolio for {name}")
+                    return
+                self._send_json({"portfolio": pf})
+                return
             if path.startswith("/api/strategy/"):
                 name = path[len("/api/strategy/"):].strip("/")
                 snap = _strategy(context, name)
@@ -86,7 +104,8 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 if snap is None:
                     self.send_error(HTTPStatus.NOT_FOUND, f"no state for {name}")
                     return
-                self._send_html(_render_strategy_detail(name, snap))
+                pf = _portfolio(context, name)
+                self._send_html(_render_strategy_detail(name, snap, pf))
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -151,6 +170,19 @@ def _strategy(context: DashboardContext, name: str) -> JsonDict | None:
     return snap.as_dict() if snap else None
 
 
+def _portfolios(context: DashboardContext) -> list[JsonDict]:
+    """Return every strategy's portfolio snapshot."""
+    return read_all_portfolios(context.runtime_dir)
+
+
+def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
+    """Return one strategy's portfolio snapshot, or None."""
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if not safe:
+        return None
+    return read_portfolio(safe, context.runtime_dir)
+
+
 def _render_home(context: DashboardContext) -> str:
     sources = _sources(context)
     backtest = _latest_backtest(context)
@@ -212,11 +244,13 @@ def _render_home(context: DashboardContext) -> str:
     <header>
       <div>
         <h1>QT Monitor</h1>
-        <div class="subtle">Data coverage, live heartbeat, and latest backtest artifacts.</div>
+        <div class="subtle">Data coverage, live heartbeat, P&amp;L, and latest backtest artifacts.</div>
       </div>
-      <div class="subtle mono">refreshes every 60s</div>
+      <div class="subtle mono"><a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
     </header>
     {_render_monitor_cards(monitor)}
+    <h2>Portfolio P&amp;L</h2>
+    {_render_portfolio_summary(_portfolios(context))}
     <h2>Strategies</h2>
     {_render_strategies_table(strategies)}
     <h2>Latest Backtest</h2>
@@ -356,7 +390,7 @@ def _render_strategies_table(strategies: list[JsonDict]) -> str:
     )
 
 
-def _render_strategy_detail(name: str, snap: JsonDict) -> str:
+def _render_strategy_detail(name: str, snap: JsonDict, pf: JsonDict | None = None) -> str:
     status = str(snap.get("status", "unknown"))
     cls = "good" if status == "healthy" else "warn" if status == "degraded" else "bad" if status in {"failed", "stopped"} else "muted"
     details = snap.get("details") or {}
@@ -367,6 +401,25 @@ def _render_strategy_detail(name: str, snap: JsonDict) -> str:
     metrics = (
         last_eval.get("metrics") if isinstance(last_eval, dict) else None
     ) or {}
+    pnl_html = ""
+    if pf is not None:
+        equity = float(pf.get("last_equity", 0.0) or 0.0)
+        realized = float(pf.get("realized_pnl", 0.0) or 0.0)
+        cash = float(pf.get("cash", 0.0) or 0.0)
+        num_trades = int(pf.get("num_trades", 0) or 0)
+        rcls = _pnl_class(realized)
+        pc_equity = _card("Equity", f'<span class="mono">{_fmt_money(equity)}</span>')
+        pc_realized = _card("Realized P&L", f'<span class="pill {rcls}">{_fmt_money(realized)}</span>')
+        pc_cash = _card("Cash", f'<span class="mono">{_fmt_money(cash)}</span>')
+        pc_trades = _card("Trades", _e(str(num_trades)))
+        pnl_html = (
+            '<h2>Portfolio P&amp;L</h2>'
+            '<div class="grid">'
+            f"{pc_equity}{pc_realized}{pc_cash}{pc_trades}"
+            "</div>"
+            '<div class="subtle" style="margin-top:6px">Full account book on the '
+            '<a href="/portfolio">P&amp;L page</a>.</div>'
+        )
     opp_html = '<div class="panel subtle">No opportunity has fired yet.</div>'
     if isinstance(opp, dict):
         opp_html = (
@@ -419,13 +472,14 @@ def _render_strategy_detail(name: str, snap: JsonDict) -> str:
         <h1>{_e(name)} <span class="pill {cls}">{_e(status)}</span></h1>
         <div class="subtle">{_e(str(description))}</div>
       </div>
-      <div class="subtle mono"><a href="/">← back</a> · refreshes 60s</div>
+      <div class="subtle mono"><a href="/">← back</a> · <a href="/portfolio">P&amp;L</a> · refreshes 60s</div>
     </header>
     <div class="panel">
       <div class="subtle">cycle</div><div class="mono">{_e(str(snap.get("cycle", 0)))}</div>
       <div class="subtle" style="margin-top:8px">updated</div><div class="mono">{_e(str(snap.get("updated_at", "")))}</div>
       <div class="subtle" style="margin-top:8px">last error</div><div class="mono">{_e(str(snap.get("last_error") or "none"))}</div>
     </div>
+    {pnl_html}
     <h2>Last Opportunity</h2>
     {opp_html}
     <h2>Latest Metrics</h2>
@@ -436,6 +490,187 @@ def _render_strategy_detail(name: str, snap: JsonDict) -> str:
 </body>
 </html>
 """
+
+
+def _pnl_class(value: float) -> str:
+    return "good" if value > 0 else "bad" if value < 0 else "muted"
+
+
+def _fmt_money(value: object) -> str:
+    if not isinstance(value, int | float):
+        return "n/a"
+    return f"{value:,.2f}"
+
+
+def _render_portfolio_summary(portfolios: list[JsonDict]) -> str:
+    """Compact P&L table for the home page."""
+    if not portfolios:
+        return (
+            '<div class="panel subtle">No paper trades yet. Strategies write a '
+            'ledger under <span class="mono">data/runtime/portfolios/</span> '
+            'once they execute their first opportunity.</div>'
+        )
+    rows: list[str] = []
+    total_equity = 0.0
+    total_realized = 0.0
+    for pf in portfolios:
+        name = str(pf.get("name", "?"))
+        equity = float(pf.get("last_equity", 0.0) or 0.0)
+        realized = float(pf.get("realized_pnl", 0.0) or 0.0)
+        cash = float(pf.get("cash", 0.0) or 0.0)
+        num_trades = int(pf.get("num_trades", 0) or 0)
+        total_equity += equity
+        total_realized += realized
+        rcls = _pnl_class(realized)
+        rows.append(
+            "<tr>"
+            f'<td><a href="/strategy/{_e(name)}"><strong>{_e(name)}</strong></a></td>'
+            f'<td class="mono">{_fmt_money(equity)}</td>'
+            f'<td class="mono">{_fmt_money(cash)}</td>'
+            f'<td class="mono"><span class="pill {rcls}">{_fmt_money(realized)}</span></td>'
+            f"<td>{num_trades}</td>"
+            "</tr>"
+        )
+    tcls = _pnl_class(total_realized)
+    c_equity = _card("Total Equity", f'<span class="mono">{_fmt_money(total_equity)}</span>')
+    c_realized = _card("Total Realized P&L", f'<span class="pill {tcls}">{_fmt_money(total_realized)}</span>')
+    c_count = _card("Strategies Trading", _e(str(len(portfolios))))
+    c_detail = _card("View Detail", '<a href="/portfolio">open &rarr;</a>')
+    return (
+        '<div class="grid">'
+        f"{c_equity}{c_realized}{c_count}{c_detail}"
+        "</div>"
+        '<table style="margin-top:12px"><thead><tr><th>Strategy</th><th>Equity</th>'
+        "<th>Cash</th><th>Realized P&amp;L</th><th>Trades</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _render_portfolio_overview(context: DashboardContext) -> str:
+    """Full /portfolio page: per-strategy P&L + recent trades."""
+    portfolios = _portfolios(context)
+    blocks: list[str] = []
+    for pf in portfolios:
+        blocks.append(_render_portfolio_block(pf))
+    body = "".join(blocks) if blocks else (
+        '<div class="panel subtle">No paper trades recorded yet.</div>'
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>QT — Portfolio P&amp;L</title>
+  <style>
+    :root {{ color-scheme: light; --bg:#f6f7f3; --ink:#15201b; --muted:#66736c; --line:#dce2dd;
+              --accent:#0b7a75; --warn:#ad5a00; --bad:#a73737; --good:#197447;
+              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }}
+    body {{ margin:0; background: var(--bg); color: var(--ink); }}
+    main {{ width: min(1080px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 48px; }}
+    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:18px; }}
+    h1 {{ font-size: 24px; line-height:1.1; margin:0; }}
+    h2 {{ font-size: 16px; margin: 24px 0 10px; }}
+    a {{ color: var(--accent); }}
+    .subtle {{ color: var(--muted); font-size: 14px; }}
+    .grid {{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; }}
+    .panel {{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:14px; }}
+    .metric {{ font-size:22px; font-weight:700; margin-top:6px; }}
+    table {{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }}
+    th, td {{ border-bottom:1px solid var(--line); padding:9px; text-align:left; font-size:13px; }}
+    th {{ color: var(--muted); font-weight:700; background:#fbfcfa; }}
+    .pill {{ display:inline-flex; border-radius:999px; padding:2px 8px; font-weight:700; font-size:12px; }}
+    .good {{ color: var(--good); background:#e8f3ed; }}
+    .warn {{ color: var(--warn); background:#fff0dd; }}
+    .bad  {{ color: var(--bad); background:#f8e7e7; }}
+    .muted {{ color: var(--muted); background:#eef1ee; }}
+    .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    @media (max-width: 900px) {{ .grid {{ grid-template-columns: repeat(2,minmax(0,1fr)); }} table {{ display:block; overflow-x:auto; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Portfolio P&amp;L</h1>
+        <div class="subtle">Paper-trading account book per strategy. Are we making money?</div>
+      </div>
+      <div class="subtle mono"><a href="/">← back</a> · refreshes 60s</div>
+    </header>
+    {body}
+  </main>
+</body>
+</html>
+"""
+
+
+def _render_portfolio_block(pf: JsonDict) -> str:
+    name = str(pf.get("name", "?"))
+    equity = float(pf.get("last_equity", 0.0) or 0.0)
+    realized = float(pf.get("realized_pnl", 0.0) or 0.0)
+    cash = float(pf.get("cash", 0.0) or 0.0)
+    fees = float(pf.get("total_fees", 0.0) or 0.0)
+    peak = float(pf.get("equity_peak", 0.0) or 0.0)
+    dd = ((equity - peak) / peak) if peak > 0 else 0.0
+    positions = pf.get("positions") or {}
+    trades = pf.get("trades") or []
+    rcls = _pnl_class(realized)
+
+    pos_html = "<span class=\"subtle\">flat (no open position)</span>"
+    if isinstance(positions, dict) and positions:
+        parts = []
+        avg = pf.get("avg_price") or {}
+        for sym, qty in positions.items():
+            if isinstance(qty, int | float) and qty > 1e-12:
+                ap = avg.get(sym, 0.0) if isinstance(avg, dict) else 0.0
+                parts.append(f'{_e(sym)}: {qty:.6f} @ {_fmt_money(ap)}')
+        if parts:
+            pos_html = '<span class="mono">' + "; ".join(parts) + "</span>"
+
+    trade_rows = ""
+    if isinstance(trades, list) and trades:
+        recent = trades[-15:][::-1]
+        for t in recent:
+            if not isinstance(t, dict):
+                continue
+            side = str(t.get("side", ""))
+            scls = "good" if side == "buy" else "warn"
+            trade_rows += (
+                "<tr>"
+                f'<td class="subtle">{_e(str(t.get("ts", "")))}</td>'
+                f'<td><span class="pill {scls}">{_e(side)}</span></td>'
+                f'<td class="mono">{_fmt_num_generic(t.get("qty"))}</td>'
+                f'<td class="mono">{_fmt_money(t.get("price"))}</td>'
+                f'<td class="mono">{_fmt_money(t.get("fee"))}</td>'
+                f'<td class="mono">{_fmt_money(t.get("equity"))}</td>'
+                "</tr>"
+            )
+    trades_table = (
+        '<table style="margin-top:10px"><thead><tr><th>Time</th><th>Side</th>'
+        "<th>Qty</th><th>Price</th><th>Fee</th><th>Equity After</th></tr></thead>"
+        f"<tbody>{trade_rows}</tbody></table>"
+        if trade_rows else '<div class="subtle" style="margin-top:8px">No trades yet.</div>'
+    )
+
+    c_equity = _card("Equity", f'<span class="mono">{_fmt_money(equity)}</span>')
+    c_realized = _card("Realized P&L", f'<span class="pill {rcls}">{_fmt_money(realized)}</span>')
+    c_cash = _card("Cash", f'<span class="mono">{_fmt_money(cash)}</span>')
+    c_dd = _card("Drawdown", f'<span class="mono">{dd:.2%}</span>')
+    return (
+        f'<h2><a href="/strategy/{_e(name)}">{_e(name)}</a></h2>'
+        '<div class="grid">'
+        f"{c_equity}{c_realized}{c_cash}{c_dd}"
+        "</div>"
+        f'<div class="subtle" style="margin-top:8px">Open position: {pos_html} '
+        f'&middot; total fees paid: <span class="mono">{_fmt_money(fees)}</span></div>'
+        f"{trades_table}"
+    )
+
+
+def _fmt_num_generic(value: object) -> str:
+    if not isinstance(value, int | float):
+        return _e(str(value)) if value is not None else "n/a"
+    return f"{value:.6f}"
 
 
 def _card(label: str, value: str) -> str:

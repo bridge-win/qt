@@ -325,6 +325,7 @@ def dashboard_cmd(
         parquet_dir=settings.data.parquet_dir,
         backtests_dir=backtests_dir,
         monitor_state_path=monitor_state,
+        runtime_dir=monitor_state.parent,
     )
 
 
