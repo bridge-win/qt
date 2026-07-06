@@ -18,11 +18,12 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import Literal
 
 from qt.core.config import Settings
 from qt.core.logging import get_logger
 from qt.core.types import OrderSide, OrderType, Position, Signal, SignalKind
-from qt.execution.base import Order
+from qt.execution.base import Broker, Order
 from qt.execution.paper import PaperBroker
 from qt.monitoring.alerts import alert
 from qt.monitoring.state import MonitorStateStore, new_snapshot, with_update
@@ -33,7 +34,7 @@ from qt.strategies.base import Opportunity, Strategy
 log = get_logger(__name__)
 
 
-def _make_broker(settings: Settings, initial_cash: float) -> object:
+def _make_broker(settings: Settings, initial_cash: float) -> Broker:
     """Select a broker from config.
 
     Defaults to PaperBroker. Only builds a LiveBroker when execution.mode is
@@ -123,9 +124,11 @@ def run_strategy_forever(
         except Exception as exc:
             consecutive_failures += 1
             backoff = min(max_backoff_seconds, interval * consecutive_failures)
-            status = "failed" if consecutive_failures >= 5 else "degraded"
+            fail_status: Literal["failed", "degraded"] = (
+                "failed" if consecutive_failures >= 5 else "degraded"
+            )
             snapshot = with_update(
-                snapshot, status=status, cycle=cycle,
+                snapshot, status=fail_status, cycle=cycle,
                 consecutive_failures=consecutive_failures, last_error=str(exc),
             )
             store.write(snapshot)

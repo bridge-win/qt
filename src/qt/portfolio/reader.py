@@ -62,10 +62,12 @@ def read_portfolio(strategy_name: str, runtime_dir: str | Path = "data/runtime")
                         with contextlib.suppress(TypeError, ValueError):
                             row[k] = float(row[k])
                 trades.append(row)
-                if isinstance(row.get("fee"), float):
-                    total_fees += row["fee"]
-                if isinstance(row.get("equity"), float):
-                    last_equity = row["equity"]
+                fee_val = row.get("fee")
+                if isinstance(fee_val, float):
+                    total_fees += fee_val
+                eq_val = row.get("equity")
+                if isinstance(eq_val, float):
+                    last_equity = eq_val
 
     return {
         "name": strategy_name,

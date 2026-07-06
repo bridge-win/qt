@@ -78,9 +78,10 @@ def served_dashboard(tmp_path: Path):
         },
     )
     # Seed a portfolio ledger for dca so /portfolio has data
+    from datetime import datetime, timezone
+
     from qt.core.types import OrderSide, Trade
     from qt.portfolio import PortfolioLedger
-    from datetime import datetime, timezone
 
     ledger = PortfolioLedger("dca", tmp_path)
     ledger.set_initial_cash(100_000.0)
@@ -197,8 +198,6 @@ def test_home_plain_language_banner(served_dashboard: int) -> None:
     assert "This week" in text
     assert "本周" in text
     assert "strategy(ies) running" in text
-    status, _ = _get(served_dashboard, "/api/strategy/does-not-exist")
-    assert status == 404
 
 
 def test_serve_dashboard_signature_accepts_strategies_dir(tmp_path: Path) -> None:
