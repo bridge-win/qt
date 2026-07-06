@@ -10,6 +10,7 @@
 #   ./start.sh fetch        backfill 3y of OHLCV/funding/Fear&Greed into data/parquet/
 #   ./start.sh backtest     run the composite-score backtest on local data
 #   ./start.sh bt <name>    backtest a gallery strategy (dca|trend|carry), synthetic-ok
+#   ./start.sh report       monthly honesty report: each strategy vs plain DCA + P&L
 #   ./start.sh test         run the test suite
 #
 # Everything is idempotent — re-running never breaks an existing setup.
@@ -91,11 +92,12 @@ case "$cmd" in
     fetch)    bootstrap; "$PY" scripts/fetch_history.py --days 1095 "$@" ;;
     backtest) bootstrap; "$VENV/bin/qt" --config config/default.yaml backtest "$@" ;;
     bt)       bootstrap; "$VENV/bin/qt" strategy run "${1:-dca}" "${@:2}" ;;
+    report)   bootstrap; "$PY" scripts/monthly_report.py "$@" ;;
     test)     bootstrap; "$PY" -m pytest -q "$@" ;;
     setup)    bootstrap; echo "[qt] setup complete" ;;
     init)     bootstrap; "$PY" scripts/init_wizard.py ;;
     *)
-        echo "usage: ./start.sh [init|run|daemon|stop|status|fetch|backtest|bt <name>|test|setup]"
+        echo "usage: ./start.sh [init|run|daemon|stop|status|fetch|backtest|bt <name>|report|test|setup]"
         exit 2
         ;;
 esac

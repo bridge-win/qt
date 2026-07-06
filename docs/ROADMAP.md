@@ -70,6 +70,19 @@ Sources: [NFTevening 2025 survey](https://nftevening.com/84-percent-of-retail-cr
 
 ---
 
+## Implementation status (2026-07)
+
+| Phase | Status | What shipped |
+| --- | --- | --- |
+| **1 — Paper execution loop** | ✅ Done | `qt.portfolio` durable ledger; Opportunity → RiskEngine → PaperBroker → ledger in the runner; `/portfolio` dashboard page + P&L APIs + per-strategy P&L cards |
+| **Backtest** | ✅ Done | `qt.backtest.strategy_backtest`: unified `run_strategy_backtest()` with deterministic synthetic-data fallback (runs offline), artifact export, `qt strategy run` + `./start.sh bt` |
+| **2 — Live execution MVP** | ✅ Done | `LiveBroker` (ccxt) with 8 layered safety gates, trade-only key verification, `docs/live-checklist.md`, config-driven caps defaulting to tiny values |
+| **3 — Anyone can use it** | ✅ Done | `./start.sh init` 5-question wizard with risk presets; plain-language bilingual (EN/中文) dashboard banner with traffic-light health |
+| **4 — Trust & measurement** | ✅ Done | `qt.reporting` DCA-benchmark comparison with honest verdict; `qt report benchmark` + `scripts/monthly_report.py` (`./start.sh report`) |
+
+The remaining work is operational, not code: run paper mode for 4+ weeks,
+then walk the live rollout ladder in `docs/live-checklist.md`.
+
 ## Part 3 — The plan (phased; each phase is releasable on its own)
 
 ### Phase 1 — Paper execution loop (closes G2, G3, G4, G5)

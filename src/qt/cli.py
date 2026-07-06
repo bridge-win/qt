@@ -26,9 +26,11 @@ app = typer.Typer(help="QT — BTC quantitative trading platform")
 data_app = typer.Typer(help="Data ingestion commands")
 monitor_app = typer.Typer(help="Monitoring and health commands")
 strategy_app = typer.Typer(help="Solution-gallery batch backtests (sim package)")
+report_app = typer.Typer(help="Reports: strategy-vs-benchmark, digests")
 app.add_typer(data_app, name="data")
 app.add_typer(monitor_app, name="monitor")
 app.add_typer(strategy_app, name="strategy")
+app.add_typer(report_app, name="report")
 
 log = get_logger(__name__)
 console = Console()
@@ -287,6 +289,65 @@ def strategy_run_cmd(
         f"trades={m.num_trades}"
     )
     console.print(f"[green]artifacts[/] {run_dir}")
+
+
+@report_app.command("benchmark")
+def report_benchmark_cmd(
+    which: str = typer.Argument("dca", help="Strategy to compare: dca, trend, carry"),
+    ohlcv_key: str = typer.Option("binance_BTCUSDT_1h", help="Key into ohlcv parquet"),
+    synthetic: Annotated[
+        bool, typer.Option("--synthetic", help="Use synthetic data")
+    ] = False,
+    weekly_buy: float = typer.Option(100.0, help="Benchmark weekly buy (USDT)"),
+    initial_cash: float = 10_000.0,
+    ctx: typer.Context = None,
+) -> None:
+    """Answer the honest question: did the strategy beat *just buying* (DCA)?"""
+
+    from qt.backtest.strategy_backtest import (
+        canonical_strategy,
+        run_strategy_backtest,
+        synthetic_btc_ohlcv,
+    )
+    from qt.data.store import ParquetStore
+    from qt.reporting import compare_to_dca_benchmark
+
+    try:
+        strat = canonical_strategy(which)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+
+    settings = ctx.obj if isinstance(ctx.obj, Settings) else load_settings()
+    ohlcv = None
+    if not synthetic:
+        store = ParquetStore(settings.data.parquet_dir)
+        ohlcv = store.read("ohlcv", ohlcv_key)
+        if ohlcv.empty:
+            ohlcv = None
+
+    outcome = run_strategy_backtest(
+        strat, ohlcv, initial_cash=initial_cash, allow_synthetic=True,
+    )
+    # Reuse whatever OHLCV the backtest actually ran on (synthetic or real).
+    used_ohlcv = ohlcv if ohlcv is not None and not outcome.synthetic else synthetic_btc_ohlcv()
+    cmp = compare_to_dca_benchmark(
+        strat, outcome.equity, used_ohlcv,
+        initial_cash=initial_cash, weekly_buy_quote=weekly_buy,
+    )
+
+    tag = " [yellow](SYNTHETIC)[/]" if outcome.synthetic else ""
+    color = "green" if cmp.beats_benchmark else "yellow" if cmp.strategy_final > cmp.benchmark_final else "red"
+    table = Table(title=f"{strat} vs plain DCA{tag}")
+    table.add_column("Metric")
+    table.add_column(strat)
+    table.add_column("DCA benchmark")
+    table.add_row("Final equity", f"{cmp.strategy_final:,.2f}", f"{cmp.benchmark_final:,.2f}")
+    table.add_row("Total return", f"{cmp.strategy_return:.2%}", f"{cmp.benchmark_return:.2%}")
+    table.add_row("Max drawdown", f"{cmp.strategy_max_dd:.2%}", f"{cmp.benchmark_max_dd:.2%}")
+    table.add_row("Sharpe", f"{cmp.strategy_sharpe:.2f}", f"{cmp.benchmark_sharpe:.2f}")
+    console.print(table)
+    console.print(f"[{color}]{cmp.verdict}[/]")
 
 
 @app.command("info")
