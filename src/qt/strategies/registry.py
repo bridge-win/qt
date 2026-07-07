@@ -11,12 +11,14 @@ from qt.strategies.capitulation import Capitulation
 from qt.strategies.carry import BasisCarry
 from qt.strategies.dca import SmartDCA
 from qt.strategies.trend import WeeklyTrend
+from qt.strategies.wick_catcher import WickCatcher
 
 REGISTRY: dict[str, type[Strategy]] = {
     SmartDCA.name: SmartDCA,
     Capitulation.name: Capitulation,
     WeeklyTrend.name: WeeklyTrend,
     BasisCarry.name: BasisCarry,
+    WickCatcher.name: WickCatcher,
 }
 
 

@@ -1,0 +1,24 @@
+# Strategy E — Wick Catcher (earn the liquidation wick)
+#
+# A ladder of deep limit-buy levels below a rolling reference price.
+# When a liquidation cascade wicks through a rung, the rung fills at
+# panic prices; exits are mechanical (take-profit / hard stop / time stop).
+# Evidence + honest constraints: docs/RESEARCH-EARNING.md §2.
+#
+# Sizing is intentionally small (3% of equity per rung): the strategy is
+# supposed to be boring for months and paid in minutes.
+enabled: true
+interval_seconds: 300           # check every 5 min — wicks are fast
+description: "Deep limit-buy ladder that monetizes liquidation wicks; mechanical exits."
+min_alert_severity: critical
+params:
+  rungs_pct: [0.05, 0.08, 0.12] # 5% / 8% / 12% below rolling reference
+  reference_hours: 24
+  take_profit_pct: 0.05         # +5% reversion target
+  hard_stop_pct: 0.05           # 5% below deepest rung = regime break, bail
+  max_hold_hours: 72
+  per_rung_alloc: 0.03
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 10

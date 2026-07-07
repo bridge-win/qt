@@ -30,6 +30,8 @@ from qt.strategies.sim import (
     SmartDCAConfig,
     WeeklyTrendBacktest,
     WeeklyTrendConfig,
+    WickCatcherBacktest,
+    WickCatcherConfig,
 )
 
 # Canonical strategy ids and their aliases.
@@ -37,9 +39,10 @@ STRATEGY_ALIASES: dict[str, str] = {
     "a": "dca", "dca": "dca", "smart_dca": "dca",
     "c": "trend", "trend": "trend", "weekly": "trend", "weekly_trend": "trend",
     "d": "carry", "carry": "carry", "basis": "carry", "basis_carry": "carry",
+    "e": "wick", "wick": "wick", "wick_catcher": "wick",
 }
 
-SUPPORTED = ("dca", "trend", "carry")
+SUPPORTED = ("dca", "trend", "carry", "wick")
 
 
 @dataclass
@@ -209,6 +212,8 @@ def run_strategy_backtest(
         result = BasisCarryBacktest(BasisCarryConfig(initial_cash=initial_cash)).run(
             ohlcv, funding=funding,
         )
+    elif strat == "wick":
+        result = WickCatcherBacktest(WickCatcherConfig(initial_cash=initial_cash)).run(ohlcv)
     else:  # pragma: no cover - guarded by canonical_strategy
         raise ValueError(f"unsupported strategy {strat}")
 

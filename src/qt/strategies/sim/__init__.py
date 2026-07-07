@@ -24,6 +24,8 @@ from qt.strategies.sim.smart_dca import SmartDCA as SmartDCABacktest
 from qt.strategies.sim.smart_dca import SmartDCAConfig
 from qt.strategies.sim.trend_weekly import WeeklyTrend as WeeklyTrendBacktest
 from qt.strategies.sim.trend_weekly import WeeklyTrendConfig
+from qt.strategies.sim.wick_catcher import WickCatcher as WickCatcherBacktest
+from qt.strategies.sim.wick_catcher import WickCatcherConfig
 
 __all__ = [
     "BasisCarryBacktest",
@@ -33,6 +35,8 @@ __all__ = [
     "StrategyResult",
     "WeeklyTrendBacktest",
     "WeeklyTrendConfig",
+    "WickCatcherBacktest",
+    "WickCatcherConfig",
     "simulate_target_positions",
     "vol_target_weight",
 ]
