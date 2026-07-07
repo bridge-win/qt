@@ -82,6 +82,12 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/portfolio":
                 self._send_html(_render_portfolio_overview(context))
                 return
+            if path == "/api/intel":
+                self._send_json({"findings": _intel(context)})
+                return
+            if path == "/intel":
+                self._send_html(_render_intel_page(context))
+                return
             if path.startswith("/api/portfolio/"):
                 name = path[len("/api/portfolio/"):].strip("/")
                 pf = _portfolio(context, name)
@@ -181,6 +187,94 @@ def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
     if not safe:
         return None
     return read_portfolio(safe, context.runtime_dir)
+
+
+def _intel(context: DashboardContext) -> list[JsonDict]:
+    """Latest ranked intel findings from the runtime dir."""
+    from qt.intel.ranker import read_findings
+
+    return read_findings(context.runtime_dir)
+
+
+def _render_intel_page(context: DashboardContext) -> str:
+    findings = _intel(context)
+    rows = ""
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        kind = str(f.get("kind", ""))
+        kcls = {
+            "funding_carry": "good", "funding_diff": "good", "basis": "good",
+            "spread": "warn", "depeg": "bad", "wick_regime": "warn",
+        }.get(kind, "muted")
+        net = f.get("net_edge_bps", 0)
+        rows += (
+            "<tr>"
+            f'<td><span class="pill {kcls}">{_e(kind)}</span></td>'
+            f'<td class="mono">{_e(str(f.get("symbol", "")))}<br>'
+            f'<span class="subtle">{_e(", ".join(str(v) for v in f.get("venues", [])))}</span></td>'
+            f'<td class="mono">{net}</td>'
+            f'<td class="mono">{f.get("confidence", 0)}</td>'
+            f'<td>{_e(str(f.get("reason", "")))}<br>'
+            f'<span class="subtle">{_e(str(f.get("action_hint", "")))}</span></td>'
+            f'<td class="subtle">{_e(str(f.get("ts", "")))}</td>'
+            "</tr>"
+        )
+    table = (
+        "<table><thead><tr><th>Kind</th><th>Symbol / Venues</th><th>Net edge (bps)</th>"
+        "<th>Conf.</th><th>Why / What to do</th><th>Seen</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        if rows else
+        '<div class="panel subtle">No opportunities detected yet. The intel scanner '
+        'runs every 15 minutes (config/strategies/intel.yaml); findings appear here '
+        'ranked by net edge after fees. In network-restricted environments the '
+        'scanners degrade gracefully and this list stays empty.</div>'
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>QT — Intelligence</title>
+  <style>
+    :root {{ color-scheme: light; --bg:#f6f7f3; --ink:#15201b; --muted:#66736c; --line:#dce2dd;
+              --accent:#0b7a75; --warn:#ad5a00; --bad:#a73737; --good:#197447;
+              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }}
+    body {{ margin:0; background: var(--bg); color: var(--ink); }}
+    main {{ width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 48px; }}
+    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:18px; }}
+    h1 {{ font-size: 24px; margin:0; }}
+    a {{ color: var(--accent); }}
+    .subtle {{ color: var(--muted); font-size: 13px; }}
+    .panel {{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:14px; }}
+    table {{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }}
+    th, td {{ border-bottom:1px solid var(--line); padding:9px; text-align:left; font-size:13px; vertical-align:top; }}
+    th {{ color: var(--muted); font-weight:700; background:#fbfcfa; }}
+    .pill {{ display:inline-flex; border-radius:999px; padding:2px 8px; font-weight:700; font-size:12px; }}
+    .good {{ color: var(--good); background:#e8f3ed; }}
+    .warn {{ color: var(--warn); background:#fff0dd; }}
+    .bad  {{ color: var(--bad); background:#f8e7e7; }}
+    .muted {{ color: var(--muted); background:#eef1ee; }}
+    .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    @media (max-width: 900px) {{ table {{ display:block; overflow-x:auto; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Intelligence Discovery</h1>
+        <div class="subtle">Detected opportunities, ranked by net edge after fees.
+        Detection only — execution stays with strategies or you. 只发现，不自动下单。</div>
+      </div>
+      <div class="subtle mono"><a href="/">&larr; back</a> · refreshes 60s</div>
+    </header>
+    {table}
+  </main>
+</body>
+</html>
+"""
 
 
 def _plain_summary(strategies: list[JsonDict], portfolios: list[JsonDict]) -> tuple[str, str, str]:
@@ -296,7 +390,7 @@ def _render_home(context: DashboardContext) -> str:
         <h1>QT Monitor</h1>
         <div class="subtle">Data coverage, live heartbeat, P&amp;L, and latest backtest artifacts.</div>
       </div>
-      <div class="subtle mono"><a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
+      <div class="subtle mono"><a href="/portfolio">P&amp;L</a> · <a href="/intel">Intel</a> · refreshes every 60s</div>
     </header>
     {_render_plain_banner(strategies, portfolios)}
     {_render_monitor_cards(monitor)}

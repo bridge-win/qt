@@ -20,7 +20,19 @@ REGISTRY: dict[str, type[Strategy]] = {
 }
 
 
+def _register_extensions() -> None:
+    """Register strategies that live outside qt.strategies.
+
+    Imported lazily: qt.intel.strategy itself imports qt.strategies.base,
+    so a module-level import here would be circular.
+    """
+    from qt.intel.strategy import IntelDiscovery
+
+    REGISTRY.setdefault(IntelDiscovery.name, IntelDiscovery)
+
+
 def strategy_class(name: str) -> type[Strategy]:
+    _register_extensions()
     if name not in REGISTRY:
         raise KeyError(f"unknown strategy {name!r}; known: {sorted(REGISTRY)}")
     return REGISTRY[name]

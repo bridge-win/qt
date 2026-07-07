@@ -200,6 +200,16 @@ def test_home_plain_language_banner(served_dashboard: int) -> None:
     assert "strategy(ies) running" in text
 
 
+def test_intel_page_and_api(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/intel")
+    assert status == 200
+    assert b"Intelligence Discovery" in body
+    status, body = _get(served_dashboard, "/api/intel")
+    assert status == 200
+    data = json.loads(body)
+    assert "findings" in data  # empty list is fine — no scan ran
+
+
 def test_serve_dashboard_signature_accepts_strategies_dir(tmp_path: Path) -> None:
     """Just verify the signature accepts the new kwarg (we don't actually serve)."""
     import inspect

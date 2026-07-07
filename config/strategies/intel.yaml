@@ -1,0 +1,25 @@
+# Intelligence Discovery — scans, ranks (net of fees), alerts. NEVER executes.
+#
+# Scanners: funding carry APR per venue, cross-venue funding differential,
+# cross-venue spot spread, dated-futures basis, stablecoin depeg, wick regime.
+# Ranked results are persisted to data/runtime/intel/opportunities.json and
+# rendered at http://127.0.0.1:8765/intel .
+#
+# `alert_min_net_bps`: only push an email/Telegram alert when the best finding
+# clears this many basis points NET of all fees (50 = 0.5%).
+enabled: true
+interval_seconds: 900          # scan every 15 min
+description: "Opportunity scanner: funding/spread/basis/depeg/wick, ranked net of fees."
+min_alert_severity: warning
+params:
+  venues: ["binance", "okx", "bybit"]
+  symbol: "BTC/USDT"
+  stables: ["USDC", "DAI"]
+  min_carry_apr: 0.10          # surface carry ≥ 10% APR
+  min_diff_apr: 0.05           # surface cross-venue funding spread ≥ 5% APR
+  min_spread_net_bps: 10.0     # surface spot spreads ≥ 10 bps net
+  min_depeg_bps: 30.0          # surface stablecoin deviation ≥ 30 bps
+  alert_min_net_bps: 50.0      # alert threshold (net)
+  ohlcv_history_hours: 96
+  exchange: "binance"
+  timeframe: "1h"
