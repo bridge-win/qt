@@ -1,0 +1,15 @@
+enabled: true
+interval_seconds: 60
+description: Deep-limit wick ladder for liquidation-cascade mean reversion.
+min_alert_severity: warning
+params:
+  ladder_drawdowns:
+    - 0.05
+    - 0.08
+    - 0.12
+  take_profit_pct: 0.03
+  rung_quote: 100.0
+  symbol: BTC/USDT
+  exchange: binance
+  timeframe: 1m
+  history_days: 2

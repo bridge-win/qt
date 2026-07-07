@@ -23,6 +23,8 @@ def load_strategy_configs(directory: str | Path) -> list[StrategyConfig]:
         return []
     out: list[StrategyConfig] = []
     for path in sorted(d.glob("*.yaml")):
+        if path.stem == "intel":
+            continue
         with path.open(encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
         raw.setdefault("name", path.stem)

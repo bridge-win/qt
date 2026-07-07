@@ -83,6 +83,21 @@ Sources: [NFTevening 2025 survey](https://nftevening.com/84-percent-of-retail-cr
 The remaining work is operational, not code: run paper mode for 4+ weeks,
 then walk the live rollout ladder in `docs/live-checklist.md`.
 
+## Part 2.5 — Intelligence discovery + wick catcher (2026-07)
+
+This tranche adds a research-to-runtime loop for finding edges before they
+become live strategies.
+
+| Phase | Status | What shipped |
+| --- | --- | --- |
+| **5 — Research intelligence layer** | Done | `docs/RESEARCH-EARNING.md`; `qt.intel` package with funding, spread, basis, depeg, and wick scanners; ranked JSON output under `data/runtime/intel/opportunities.json`; `/intel` and `/api/intel` dashboard views |
+| **6 — Wick catcher strategy** | Done | Live `wick` signal strategy, YAML config, sim backtester, registry/export wiring, and `qt strategy run wick --synthetic` |
+| **7 — Capital readiness gates** | Planned | Exchange-specific capacity checks, fee/slippage calibration from live fills, and paper-trading acceptance reports before any increase in order size |
+
+Operating rule: the intel layer is discovery, not execution. A candidate must
+graduate through a strategy-specific paper ledger, benchmark comparison, and
+walk-forward/stress evidence before it can enter the live rollout ladder.
+
 ## Part 3 — The plan (phased; each phase is releasable on its own)
 
 ### Phase 1 — Paper execution loop (closes G2, G3, G4, G5)

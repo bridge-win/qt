@@ -35,6 +35,7 @@ from qt.strategies.runner import (
     wait_for_shutdown,
 )
 from qt.strategies.trend import WeeklyTrend
+from qt.strategies.wick_catcher import WickCatcher
 
 __all__ = [
     "REGISTRY",
@@ -46,6 +47,7 @@ __all__ = [
     "Strategy",
     "StrategyConfig",
     "WeeklyTrend",
+    "WickCatcher",
     "build_strategies",
     "load_strategy_configs",
     "run_strategy_forever",

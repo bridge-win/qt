@@ -23,7 +23,7 @@ def test_summary_all_healthy_positive_pnl() -> None:
 
 def test_summary_failed_is_red() -> None:
     strategies = [{"name": "dca", "status": "failed"}]
-    portfolios = []
+    portfolios: list[dict[str, object]] = []
     light, en, _ = _plain_summary(strategies, portfolios)
     assert light == "bad"
     assert "1 failed" in en

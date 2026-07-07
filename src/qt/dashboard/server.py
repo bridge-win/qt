@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +15,7 @@ from urllib.parse import urlparse
 from qt.backtest.artifacts import latest_backtest_summary
 from qt.data.catalog import data_source_statuses
 from qt.data.store import ParquetStore
+from qt.intel.ranker import read_opportunities
 from qt.monitoring.state import MonitorStateStore
 from qt.portfolio import read_all_portfolios, read_portfolio
 
@@ -76,8 +78,14 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/api/strategies":
                 self._send_json({"strategies": _strategies(context)})
                 return
+            if path == "/api/intel":
+                self._send_json({"intel": _intel(context)})
+                return
             if path == "/api/portfolios":
                 self._send_json({"portfolios": _portfolios(context)})
+                return
+            if path == "/intel":
+                self._send_html(_render_intel_page(context))
                 return
             if path == "/portfolio":
                 self._send_html(_render_portfolio_overview(context))
@@ -170,6 +178,11 @@ def _strategy(context: DashboardContext, name: str) -> JsonDict | None:
     return snap.as_dict() if snap else None
 
 
+def _intel(context: DashboardContext) -> JsonDict:
+    """Return the latest ranked intelligence opportunities."""
+    return read_opportunities(context.runtime_dir)
+
+
 def _portfolios(context: DashboardContext) -> list[JsonDict]:
     """Return every strategy's portfolio snapshot."""
     return read_all_portfolios(context.runtime_dir)
@@ -183,14 +196,17 @@ def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
     return read_portfolio(safe, context.runtime_dir)
 
 
-def _plain_summary(strategies: list[JsonDict], portfolios: list[JsonDict]) -> tuple[str, str, str]:
+def _plain_summary(
+    strategies: Sequence[Mapping[str, object]],
+    portfolios: Sequence[Mapping[str, object]],
+) -> tuple[str, str, str]:
     """Return (traffic_light_class, one_line_en, one_line_zh) in plain language."""
     running = [s for s in strategies if str(s.get("status")) in {"healthy", "starting"}]
     failed = [s for s in strategies if str(s.get("status")) in {"failed"}]
     degraded = [s for s in strategies if str(s.get("status")) == "degraded"]
 
-    total_realized = sum(float(p.get("realized_pnl", 0.0) or 0.0) for p in portfolios)
-    total_trades = sum(int(p.get("num_trades", 0) or 0) for p in portfolios)
+    total_realized = sum((_as_float(p.get("realized_pnl")) for p in portfolios), 0.0)
+    total_trades = sum((_as_int(p.get("num_trades")) for p in portfolios), 0)
 
     if failed:
         light = "bad"
@@ -238,6 +254,7 @@ def _render_home(context: DashboardContext) -> str:
     monitor = _monitor(context)
     strategies = _strategies(context)
     portfolios = _portfolios(context)
+    intel = _intel(context)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -300,6 +317,8 @@ def _render_home(context: DashboardContext) -> str:
     </header>
     {_render_plain_banner(strategies, portfolios)}
     {_render_monitor_cards(monitor)}
+    <h2>Intelligence</h2>
+    {_render_intel_summary(intel)}
     <h2>Portfolio P&amp;L</h2>
     {_render_portfolio_summary(portfolios)}
     <h2>Strategies</h2>
@@ -362,6 +381,106 @@ def _render_backtest(backtest: JsonDict | None) -> str:
       </tbody>
     </table>
     """
+
+
+def _render_intel_summary(intel: JsonDict) -> str:
+    opportunities = intel.get("opportunities")
+    if not isinstance(opportunities, list) or not opportunities:
+        return (
+            '<div class="panel subtle">No ranked opportunities yet. '
+            'Start the intel scanner with <span class="mono">python scripts/run_all.py</span>.</div>'
+        )
+    top = opportunities[0] if isinstance(opportunities[0], dict) else {}
+    kind = _e(str(top.get("kind", "unknown")))
+    symbol = _e(str(top.get("symbol", "")))
+    edge = _fmt_num(top.get("edge_bps"))
+    score = _fmt_num(top.get("score"))
+    generated = _e(str(intel.get("generated_at") or "unknown"))
+    top_card = _card("Top", f"<span>{kind} {symbol}</span>")
+    edge_card = _card("Edge", f'<span class="mono">{edge} bps</span>')
+    score_card = _card("Score", f'<span class="mono">{score}</span>')
+    generated_card = _card("Generated", f'<span class="mono">{generated}</span>')
+    return (
+        '<div class="grid">'
+        f"{top_card}{edge_card}{score_card}{generated_card}"
+        "</div>"
+        '<div class="subtle" style="margin-top:8px">'
+        f'<a href="/intel">open intelligence dashboard &rarr;</a> '
+        f'({len(opportunities)} ranked candidate(s))</div>'
+    )
+
+
+def _render_intel_table(intel: JsonDict) -> str:
+    opportunities = intel.get("opportunities")
+    if not isinstance(opportunities, list) or not opportunities:
+        return '<div class="panel subtle">No opportunities recorded yet.</div>'
+    rows: list[str] = []
+    for raw in opportunities:
+        if not isinstance(raw, dict):
+            continue
+        rows.append(
+            "<tr>"
+            f'<td><span class="pill good">{_e(str(raw.get("kind", "")))}</span></td>'
+            f'<td><strong>{_e(str(raw.get("symbol", "")))}</strong><br>'
+            f'<span class="subtle">{_e(str(raw.get("venue", "")))}</span></td>'
+            f'<td class="mono">{_fmt_num(raw.get("edge_bps"))}</td>'
+            f'<td class="mono">{_fmt_num(raw.get("score"))}</td>'
+            f'<td>{_e(str(raw.get("action", "")))}</td>'
+            f'<td>{_e(str(raw.get("why", "")))}</td>'
+            f'<td class="mono">{_fmt_num(raw.get("capacity_usd"))}</td>'
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>Type</th><th>Market</th><th>Edge bps</th>"
+        "<th>Score</th><th>Action</th><th>Why</th><th>Capacity USD</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _render_intel_page(context: DashboardContext) -> str:
+    intel = _intel(context)
+    generated = _e(str(intel.get("generated_at") or "not generated"))
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>QT - Intelligence</title>
+  <style>
+    :root {{ color-scheme: light; --bg:#f6f7f3; --ink:#15201b; --muted:#66736c; --line:#dce2dd;
+              --accent:#0b7a75; --warn:#ad5a00; --bad:#a73737; --good:#197447;
+              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }}
+    body {{ margin:0; background: var(--bg); color: var(--ink); }}
+    main {{ width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 28px 0 48px; }}
+    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:18px; }}
+    h1 {{ font-size: 24px; line-height:1.1; margin:0; }}
+    a {{ color: var(--accent); }}
+    .subtle {{ color: var(--muted); font-size: 14px; }}
+    .panel {{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:14px; }}
+    table {{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }}
+    th, td {{ border-bottom:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; font-size:13px; }}
+    th {{ color: var(--muted); font-weight:700; background:#fbfcfa; }}
+    .pill {{ display:inline-flex; border-radius:999px; padding:2px 8px; font-weight:700; font-size:12px; }}
+    .good {{ color: var(--good); background:#e8f3ed; }}
+    .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    @media (max-width: 900px) {{ table {{ display:block; overflow-x:auto; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Intelligence</h1>
+        <div class="subtle">Ranked funding, spread, basis, depeg, and wick candidates.</div>
+      </div>
+      <div class="subtle mono"><a href="/">back</a> · generated {generated}</div>
+    </header>
+    {_render_intel_table(intel)}
+  </main>
+</body>
+</html>
+"""
 
 
 def _render_sources_table(sources: list[JsonDict]) -> str:
@@ -454,10 +573,10 @@ def _render_strategy_detail(name: str, snap: JsonDict, pf: JsonDict | None = Non
     ) or {}
     pnl_html = ""
     if pf is not None:
-        equity = float(pf.get("last_equity", 0.0) or 0.0)
-        realized = float(pf.get("realized_pnl", 0.0) or 0.0)
-        cash = float(pf.get("cash", 0.0) or 0.0)
-        num_trades = int(pf.get("num_trades", 0) or 0)
+        equity = _as_float(pf.get("last_equity"))
+        realized = _as_float(pf.get("realized_pnl"))
+        cash = _as_float(pf.get("cash"))
+        num_trades = _as_int(pf.get("num_trades"))
         rcls = _pnl_class(realized)
         pc_equity = _card("Equity", f'<span class="mono">{_fmt_money(equity)}</span>')
         pc_realized = _card("Realized P&L", f'<span class="pill {rcls}">{_fmt_money(realized)}</span>')
@@ -566,10 +685,10 @@ def _render_portfolio_summary(portfolios: list[JsonDict]) -> str:
     total_realized = 0.0
     for pf in portfolios:
         name = str(pf.get("name", "?"))
-        equity = float(pf.get("last_equity", 0.0) or 0.0)
-        realized = float(pf.get("realized_pnl", 0.0) or 0.0)
-        cash = float(pf.get("cash", 0.0) or 0.0)
-        num_trades = int(pf.get("num_trades", 0) or 0)
+        equity = _as_float(pf.get("last_equity"))
+        realized = _as_float(pf.get("realized_pnl"))
+        cash = _as_float(pf.get("cash"))
+        num_trades = _as_int(pf.get("num_trades"))
         total_equity += equity
         total_realized += realized
         rcls = _pnl_class(realized)
@@ -657,11 +776,11 @@ def _render_portfolio_overview(context: DashboardContext) -> str:
 
 def _render_portfolio_block(pf: JsonDict) -> str:
     name = str(pf.get("name", "?"))
-    equity = float(pf.get("last_equity", 0.0) or 0.0)
-    realized = float(pf.get("realized_pnl", 0.0) or 0.0)
-    cash = float(pf.get("cash", 0.0) or 0.0)
-    fees = float(pf.get("total_fees", 0.0) or 0.0)
-    peak = float(pf.get("equity_peak", 0.0) or 0.0)
+    equity = _as_float(pf.get("last_equity"))
+    realized = _as_float(pf.get("realized_pnl"))
+    cash = _as_float(pf.get("cash"))
+    fees = _as_float(pf.get("total_fees"))
+    peak = _as_float(pf.get("equity_peak"))
     dd = ((equity - peak) / peak) if peak > 0 else 0.0
     positions = pf.get("positions") or {}
     trades = pf.get("trades") or []
@@ -722,6 +841,23 @@ def _fmt_num_generic(value: object) -> str:
     if not isinstance(value, int | float):
         return _e(str(value)) if value is not None else "n/a"
     return f"{value:.6f}"
+
+
+def _as_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value is None:
+        return default
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    return int(_as_float(value, float(default)))
 
 
 def _card(label: str, value: str) -> str:

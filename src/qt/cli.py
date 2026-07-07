@@ -217,7 +217,8 @@ def backtest_cmd(
 
 @strategy_app.command("run")
 def strategy_run_cmd(
-    which: str = typer.Argument(..., help="One of: dca, trend, carry"),
+    ctx: typer.Context,
+    which: str = typer.Argument(..., help="One of: dca, trend, carry, wick"),
     ohlcv_key: str = typer.Option(
         "binance_BTCUSDT_1h", help="Key into the ohlcv parquet store",
     ),
@@ -228,7 +229,6 @@ def strategy_run_cmd(
     output_dir: Annotated[
         Path, typer.Option(help="Where to export equity.csv/trades.csv/summary.json")
     ] = Path("data/backtests"),
-    ctx: typer.Context = None,
 ) -> None:
     """Backtest a gallery strategy — uses local data, else synthetic fallback.
 
@@ -253,13 +253,13 @@ def strategy_run_cmd(
     settings = ctx.obj if isinstance(ctx.obj, Settings) else load_settings()
     store = ParquetStore(settings.data.parquet_dir)
 
-    def _read(ds: str, key: str, col: str | None = None):
+    def _read(ds: str, key: str, col: str | None = None) -> pd.Series | None:
         d = store.read(ds, key)
         if d.empty:
             return None
         if col and col in d.columns:
             return d[col]
-        return d.iloc[:, 0] if d.shape[1] == 1 else d
+        return d.iloc[:, 0]
 
     ohlcv = None if synthetic else store.read("ohlcv", ohlcv_key)
     funding = None if synthetic else _read("derivatives", "binance_funding", "funding_rate")
@@ -293,14 +293,14 @@ def strategy_run_cmd(
 
 @report_app.command("benchmark")
 def report_benchmark_cmd(
-    which: str = typer.Argument("dca", help="Strategy to compare: dca, trend, carry"),
+    ctx: typer.Context,
+    which: str = typer.Argument("dca", help="Strategy to compare: dca, trend, carry, wick"),
     ohlcv_key: str = typer.Option("binance_BTCUSDT_1h", help="Key into ohlcv parquet"),
     synthetic: Annotated[
         bool, typer.Option("--synthetic", help="Use synthetic data")
     ] = False,
     weekly_buy: float = typer.Option(100.0, help="Benchmark weekly buy (USDT)"),
     initial_cash: float = 10_000.0,
-    ctx: typer.Context = None,
 ) -> None:
     """Answer the honest question: did the strategy beat *just buying* (DCA)?"""
 

@@ -1,0 +1,36 @@
+name: intel
+enabled: true
+interval_seconds: 300
+description: Continuous funding, spread, basis, depeg, and wick opportunity scanner.
+min_alert_severity: warning
+params:
+  scanners:
+    - funding
+    - spread
+    - basis
+    - depeg
+    - wick
+  top_n: 20
+  venues:
+    - binance
+    - okx
+    - bybit
+  symbols:
+    - BTC/USDT
+  stable_symbols:
+    - USDC/USDT
+    - DAI/USDT
+  funding_apr_threshold: 0.12
+  funding_diff_apr_threshold: 0.15
+  taker_fee_bps: 7.5
+  spread_buffer_bps: 5.0
+  depeg_threshold_bps: 30.0
+  basis_apr_threshold: 0.10
+  basis_contracts: []
+  wick_exchange: binance
+  wick_timeframe: 1m
+  wick_history_days: 2
+  wick_recent_bars: 6
+  wick_ratio_min: 2.0
+  wick_cluster_count: 1
+  default_capacity_usd: 10000.0

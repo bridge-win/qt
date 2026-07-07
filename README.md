@@ -42,6 +42,7 @@ src/qt/
                  + ParquetStore for replay-deterministic backtests
   indicators/    price / vol / derivatives / on-chain / sentiment / composite
   signal/        SignalEngine — turns composite score into sparse Signals
+  intel/         research scanners for funding, spread, basis, depeg, wick edges
   risk/          fractional Kelly + vol-targeting, ATR stops, kill-switch
   backtest/      event-driven Backtester, FillModel, metrics
   execution/     Broker interface; PaperBroker (live disabled by default)
@@ -60,11 +61,11 @@ tests/           ≥ 8 unit/integration tests w/ synthetic fixture crashes
 
 ```bash
 ./start.sh init     # optional: 5-question wizard (venue, budget, risk, alerts)
-./start.sh          # start all four strategies + dashboard
+./start.sh          # start all five strategies + intel scanner + dashboard
 ```
 
 On first run it creates the virtualenv, installs everything, seeds `.env`,
-then starts **all four strategies + the dashboard** at
+then starts **all five strategies + the intel scanner + dashboard** at
 `http://127.0.0.1:8765`. Re-running is always safe (idempotent). The
 dashboard home opens with a plain-language, bilingual (EN/中文) "This week"
 summary and a traffic-light health dot — you don't need to read tables to
@@ -79,7 +80,7 @@ know if it's working.
 | `./start.sh stop` | stop the background instance |
 | `./start.sh fetch` | backfill 3 years of history into `data/parquet/` |
 | `./start.sh backtest` | run the composite-score backtest on local data |
-| `./start.sh bt <name>` | backtest a gallery strategy (`dca`/`trend`/`carry`) |
+| `./start.sh bt <name>` | backtest a gallery strategy (`dca`/`trend`/`carry`/`wick`) |
 | `./start.sh test` | run the test suite |
 
 The wizard's **risk level** (conservative / balanced / aggressive) maps to
@@ -134,10 +135,11 @@ The dashboard is available at `http://127.0.0.1:8765` and shows:
 - every running gallery strategy (see below) with its own status pill,
   last opportunity, and a sub-route `/strategy/<name>` for the full
   per-cycle metrics and configured params
+- ranked intelligence discoveries at `/intel` and `/api/intel`
 
 ## Multi-strategy solution gallery
 
-QT ships four independently-configured strategies under
+QT ships five independently-configured strategies under
 `src/qt/strategies/`:
 
 | Name | Class | What it does | Default cadence |
@@ -146,6 +148,7 @@ QT ships four independently-configured strategies under
 | `capitulation` | `Capitulation` | 5-factor composite extreme-event buyer + macro veto | 30 min |
 | `trend` | `WeeklyTrend` | Faber/Clenow weekly SMA(20w) crossover | 6 h |
 | `carry` | `BasisCarry` | Market-neutral spot+perp funding-rate carry | 1 h |
+| `wick` | `WickCatcher` | Deep-limit ladder for liquidation-wick mean reversion | 1 min |
 
 Each one has its own YAML at `config/strategies/<name>.yaml`. Signal
 params, cadence, on/off flag, and minimum alert severity all live there
@@ -171,14 +174,17 @@ python scripts/run_all.py
 
 This single command:
 
-1. Loads every `*.yaml` under `config/strategies/`.
+1. Loads every strategy `*.yaml` under `config/strategies/` plus the
+   `intel.yaml` discovery scanner config.
 2. Spawns one daemon thread per **enabled** strategy; each writes its
    heartbeat to `data/runtime/strategies/<name>.json`.
-3. Serves the dashboard on `127.0.0.1:8765` so each strategy gets its
+3. Runs the intel scanner, which writes ranked opportunities under
+   `data/runtime/intel/opportunities.json`.
+4. Serves the dashboard on `127.0.0.1:8765` so each strategy gets its
    own sub-route at `http://127.0.0.1:8765/strategy/<name>` with the
    latest metrics, last opportunity, and the YAML params actually in
    effect.
-4. When any strategy emits an opportunity, the existing
+5. When any strategy or intel scanner emits an opportunity, the existing
    `qt.monitoring.alerts.alert(...)` plumbing sends it to stderr +
    email (`QT_SMTP_*`) + Telegram (`QT_TELEGRAM_*`).
 
@@ -269,12 +275,14 @@ walk-forward validation plan that must be passed before deploying capital.
 See [`docs/operations.md`](docs/operations.md) for the full runbook, and
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the evidence-based plan from
 signal generation to safe live trading.
+See [`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md) for the
+research-backed opportunity map behind the intel scanners and wick catcher.
 
 ## Batch backtests (`qt.strategies.sim`)
 
-`solution2.md` collects the research; `src/qt/strategies/sim/` ships
-the **batch backtest** counterparts of three live strategies (DCA,
-weekly trend, basis carry). Unlike the live signal-emitters under
+`solution2.md` collects the original research; `src/qt/strategies/sim/` ships
+the **batch backtest** counterparts of four live strategies (DCA,
+weekly trend, basis carry, wick catcher). Unlike the live signal-emitters under
 `qt.strategies.*`, these classes consume a full OHLCV history and
 return an equity curve + trade list — useful for parameter tuning and
 walk-forward analysis.
@@ -284,6 +292,7 @@ walk-forward analysis.
 | **A** | `SmartDCABacktest` | Vol-aware weekly DCA replayed across history |
 | **C** | `WeeklyTrendBacktest` | Faber/Clenow weekly SMA(20w) trend replay |
 | **D** | `BasisCarryBacktest` | Spot+perp carry replay on funding history |
+| **E** | `WickCatcherBacktest` | Deep wick limit-ladder replay with take-profit/time exits |
 
 ### Run a batch backtest
 
@@ -293,8 +302,10 @@ walk-forward analysis.
 qt strategy run dca              # SmartDCABacktest
 qt strategy run trend            # WeeklyTrendBacktest
 qt strategy run carry            # BasisCarryBacktest (synthesizes funding if none)
+qt strategy run wick             # WickCatcherBacktest
 
 qt strategy run dca --synthetic  # force synthetic data even if local data exists
+qt strategy run wick --synthetic # smoke-test wick catcher offline
 ```
 
 Each prints final equity, x-multiple, CAGR, Sharpe, max drawdown, and trade
@@ -313,7 +324,7 @@ print(out.summary())                             # metrics dict
 ```
 
 For the live signal-emitting versions (`qt.strategies.SmartDCA`,
-`Capitulation`, `WeeklyTrend`, `BasisCarry`) see the "Multi-strategy
+`Capitulation`, `WeeklyTrend`, `BasisCarry`, `WickCatcher`) see the "Multi-strategy
 solution gallery" section above and `python scripts/run_all.py`.
 
 > ⚠️ Backtests use *synthetic or local* data. Before deploying capital, run

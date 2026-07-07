@@ -30,6 +30,8 @@ from qt.strategies.sim import (
     SmartDCAConfig,
     WeeklyTrendBacktest,
     WeeklyTrendConfig,
+    WickCatcherBacktest,
+    WickCatcherConfig,
 )
 
 # Canonical strategy ids and their aliases.
@@ -37,9 +39,10 @@ STRATEGY_ALIASES: dict[str, str] = {
     "a": "dca", "dca": "dca", "smart_dca": "dca",
     "c": "trend", "trend": "trend", "weekly": "trend", "weekly_trend": "trend",
     "d": "carry", "carry": "carry", "basis": "carry", "basis_carry": "carry",
+    "e": "wick", "wick": "wick", "wick_catcher": "wick",
 }
 
-SUPPORTED = ("dca", "trend", "carry")
+SUPPORTED = ("dca", "trend", "carry", "wick")
 
 
 @dataclass
@@ -140,6 +143,16 @@ def synthetic_btc_ohlcv(
     low = np.minimum(open_, close) - wick
     volume = rng.uniform(50, 500, size=periods) * (1 + np.abs(shocks) * 20)
 
+    # Deterministic lower-tail stress events so offline smoke tests exercise
+    # wick-ladder strategies instead of producing a no-trade path.
+    for frac in (0.18, 0.42, 0.58, 0.78):
+        i = int(periods * frac)
+        if 1 <= i < periods - 1:
+            base = close[i - 1]
+            low[i] = min(low[i], base * 0.86)
+            high[i + 1] = max(high[i + 1], base * 0.99)
+            volume[i] *= 4.0
+
     return pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
         index=idx,
@@ -209,6 +222,10 @@ def run_strategy_backtest(
         result = BasisCarryBacktest(BasisCarryConfig(initial_cash=initial_cash)).run(
             ohlcv, funding=funding,
         )
+    elif strat == "wick":
+        result = WickCatcherBacktest(
+            WickCatcherConfig(initial_cash=initial_cash)
+        ).run(ohlcv)
     else:  # pragma: no cover - guarded by canonical_strategy
         raise ValueError(f"unsupported strategy {strat}")
 

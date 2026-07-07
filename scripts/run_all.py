@@ -25,6 +25,7 @@ from rich.console import Console
 from qt.core.config import load_settings
 from qt.core.logging import configure_logging
 from qt.dashboard import serve_dashboard
+from qt.intel.runner import load_intel_config, start_intel_thread
 from qt.strategies import (
     build_strategies,
     load_strategy_configs,
@@ -52,14 +53,17 @@ def main() -> None:
     settings = load_settings(args.config)
     configs = load_strategy_configs(args.strategies_dir)
     strategies = build_strategies(configs)
-    if not strategies:
+    intel_config_path = Path(args.strategies_dir) / "intel.yaml"
+    intel_config = load_intel_config(intel_config_path)
+    if not strategies and not intel_config.enabled:
         console.print(
-            f"[yellow]no enabled strategies found in {args.strategies_dir}[/]"
+            f"[yellow]no enabled strategies or intel scanner found in {args.strategies_dir}[/]"
         )
         return
 
     runtime_dir = Path(args.runtime_dir)
     (runtime_dir / "strategies").mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "intel").mkdir(parents=True, exist_ok=True)
 
     stop = threading.Event()
     threads = start_all_strategies(
@@ -72,6 +76,20 @@ def main() -> None:
             f"[green]started[/] {s.name} "
             f"interval={s.config.interval_seconds}s "
             f"alert={s.config.min_alert_severity}"
+        )
+    if intel_config.enabled:
+        threads.append(
+            start_intel_thread(
+                settings=settings,
+                runtime_dir=runtime_dir,
+                config_path=intel_config_path,
+                stop_event=stop,
+            )
+        )
+        console.print(
+            f"[green]started[/] intel "
+            f"interval={intel_config.interval_seconds}s "
+            f"alert={intel_config.min_alert_severity}"
         )
 
     if args.no_dashboard:

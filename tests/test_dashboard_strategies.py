@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Iterator
 from http.client import HTTPConnection
 from pathlib import Path
 from socketserver import TCPServer
@@ -43,7 +44,7 @@ def _write_state(dir_: Path, name: str, **overrides: object) -> Path:
 
 
 @pytest.fixture()
-def served_dashboard(tmp_path: Path):
+def served_dashboard(tmp_path: Path) -> Iterator[int]:
     parquet = tmp_path / "parquet"
     parquet.mkdir()
     backtests = tmp_path / "backtests"
@@ -94,6 +95,26 @@ def served_dashboard(tmp_path: Path):
         100_000.0,
     )
 
+    intel_dir = tmp_path / "intel"
+    intel_dir.mkdir()
+    (intel_dir / "opportunities.json").write_text(json.dumps({
+        "generated_at": "2024-01-01T00:00:00+00:00",
+        "count": 1,
+        "opportunities": [
+            {
+                "kind": "funding",
+                "venue": "binance",
+                "symbol": "BTC/USDT",
+                "edge_bps": 12.5,
+                "capacity_usd": 100_000.0,
+                "confidence": 0.8,
+                "action": "open basis carry",
+                "why": "positive funding spread",
+                "score": 10.0,
+            }
+        ],
+    }))
+
     context = DashboardContext(
         parquet_dir=parquet, backtests_dir=backtests,
         monitor_state_path=monitor_state, strategies_state_dir=strategies_dir,
@@ -125,6 +146,7 @@ def test_home_lists_strategies(served_dashboard: int) -> None:
     assert status == 200
     text = body.decode()
     assert "Strategies" in text
+    assert "Intelligence" in text
     assert ">dca<" in text
     assert ">carry<" in text
 
@@ -182,6 +204,20 @@ def test_api_portfolio_detail(served_dashboard: int) -> None:
     data = json.loads(body)
     assert data["portfolio"]["name"] == "dca"
     assert data["portfolio"]["total_fees"] == 5.0
+
+
+def test_intel_api_and_page(served_dashboard: int) -> None:
+    status, body = _get(served_dashboard, "/api/intel")
+    assert status == 200
+    data = json.loads(body)
+    assert data["intel"]["count"] == 1
+    assert data["intel"]["opportunities"][0]["kind"] == "funding"
+
+    status, body = _get(served_dashboard, "/intel")
+    assert status == 200
+    text = body.decode()
+    assert "Intelligence" in text
+    assert "positive funding spread" in text
 
 
 def test_home_shows_pnl_section(served_dashboard: int) -> None:

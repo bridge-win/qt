@@ -32,7 +32,7 @@ from qt.strategies import (
 
 
 def test_registry_has_all_four() -> None:
-    assert set(REGISTRY) == {"dca", "capitulation", "trend", "carry"}
+    assert set(REGISTRY) == {"dca", "capitulation", "trend", "carry", "wick"}
 
 
 def test_load_strategy_configs_reads_yaml(tmp_path: Path) -> None:
