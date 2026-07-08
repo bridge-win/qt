@@ -134,10 +134,15 @@ The dashboard is available at `http://127.0.0.1:8765` and shows:
 - every running gallery strategy (see below) with its own status pill,
   last opportunity, and a sub-route `/strategy/<name>` for the full
   per-cycle metrics and configured params
+- `/portfolio` — per-strategy paper P&L (equity, realized/unrealized,
+  drawdown, positions, recent trades)
+- `/intel` — Intelligence Discovery: detected opportunities ranked by net
+  edge after fees (funding carry, cross-venue spread, basis, depeg, wick
+  regime), each with a plain-language "why" and "what to do"
 
 ## Multi-strategy solution gallery
 
-QT ships four independently-configured strategies under
+QT ships six independently-configured strategies under
 `src/qt/strategies/`:
 
 | Name | Class | What it does | Default cadence |
@@ -146,6 +151,12 @@ QT ships four independently-configured strategies under
 | `capitulation` | `Capitulation` | 5-factor composite extreme-event buyer + macro veto | 30 min |
 | `trend` | `WeeklyTrend` | Faber/Clenow weekly SMA(20w) crossover | 6 h |
 | `carry` | `BasisCarry` | Market-neutral spot+perp funding-rate carry | 1 h |
+| `wick` | `WickCatcher` | Deep limit-buy ladder (-5/-8/-12%) that fills on liquidation wicks; mechanical exits | 5 min |
+| `intel` | `IntelDiscovery` | Intelligence Discovery scanner (funding/spread/basis/depeg/wick), ranked net-of-fees; watch-only | 15 min |
+
+The evidence behind `carry`, `capitulation`, `wick`, and `intel` — what
+actually earns at personal scale and what doesn't — is documented with
+citations in [`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md).
 
 Each one has its own YAML at `config/strategies/<name>.yaml`. Signal
 params, cadence, on/off flag, and minimum alert severity all live there
@@ -193,6 +204,30 @@ python scripts/run_all.py \
 ```
 
 `--no-dashboard` runs only the strategy threads.
+
+## Intelligence Discovery (`qt.intel`)
+
+The `intel` strategy continuously scans for opportunities and ranks them by
+**net edge after fees** — it never trades, it only surfaces and alerts:
+
+| Scanner | What it detects | Who acts on it |
+| --- | --- | --- |
+| `FundingScanner` | per-venue carry APR + cross-venue funding differential | `carry` strategy / you |
+| `SpreadScanner` | cross-venue spot spread net of 2× taker + slippage | you (needs inventory on both venues) |
+| `BasisScanner` | dated-futures cash-and-carry APR | you |
+| `DepegScanner` | stablecoin deviation from \$1 | **you** — verify issuer solvency first (USDC-2023 recovered; UST didn't) |
+| `WickScanner` | live liquidation-cascade / wick regime | `wick` + `capitulation` strategies |
+
+Findings land at `http://127.0.0.1:8765/intel` and in
+`data/runtime/intel/opportunities.json`, ranked by `net_edge_bps ×
+confidence`. Anything whose edge doesn't clear the fee line is never shown.
+Thresholds live in `config/strategies/intel.yaml`. See
+[`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md) for why each scanner
+exists and what its real risks are.
+
+> In network-restricted environments (no exchange API access) the scanners
+> degrade gracefully and the list stays empty — real scanning needs a host
+> that can reach the exchanges.
 
 ## Unattended Operation
 

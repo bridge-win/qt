@@ -65,7 +65,7 @@ class WickCatcher:
         taker = (cfg.taker_fee_bps + cfg.slippage_bps) / 10_000.0
 
         equity_pts: list[float] = []
-        trade_rows: list[dict] = []
+        trade_rows: list[dict[str, object]] = []
 
         for ts in ohlcv.index:
             px = float(close.loc[ts])

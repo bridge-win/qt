@@ -80,8 +80,18 @@ Sources: [NFTevening 2025 survey](https://nftevening.com/84-percent-of-retail-cr
 | **3 — Anyone can use it** | ✅ Done | `./start.sh init` 5-question wizard with risk presets; plain-language bilingual (EN/中文) dashboard banner with traffic-light health |
 | **4 — Trust & measurement** | ✅ Done | `qt.reporting` DCA-benchmark comparison with honest verdict; `qt report benchmark` + `scripts/monthly_report.py` (`./start.sh report`) |
 
-The remaining work is operational, not code: run paper mode for 4+ weeks,
-then walk the live rollout ladder in `docs/live-checklist.md`.
+| **5 — Intelligence Discovery** | ✅ Done | `qt.intel`: 5 scanners (funding carry/differential, cross-venue spread, dated-futures basis, stablecoin depeg, wick regime) ranked by net-of-fees edge; `/intel` dashboard page; `intel` runs as a watch-only strategy thread (`config/strategies/intel.yaml`); evidence in `docs/RESEARCH-EARNING.md` |
+| **5b — Wick Catcher** | ✅ Done | `wick` strategy: deep limit-buy ladder (-5/-8/-12%) that fills on liquidation wicks; frozen-ladder hard stop, take-profit, time stop; live + sim backtest (`qt strategy run wick`) |
+
+Remaining phases:
+
+- **Phase 6 — Data realism (operational)**: on a machine with exchange access,
+  `./start.sh fetch`, re-run all backtests + `qt report benchmark` on real
+  history; walk-forward tune carry thresholds and wick ladder depths; turn off
+  anything that loses to plain DCA.
+- **Phase 7 — Live ladder (operational)**: follow `docs/live-checklist.md` —
+  carry + dca first (strongest evidence per RESEARCH-EARNING.md), wick only
+  after 4 clean paper weeks, depeg trades always human-confirmed.
 
 ## Part 3 — The plan (phased; each phase is releasable on its own)
 
