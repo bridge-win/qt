@@ -227,9 +227,10 @@ The `qt.intel` discovery scanner continuously scans for opportunities and ranks 
 | `WickScanner` | live liquidation-cascade / wick regime | `wick` + `capitulation` strategies |
 
 Findings land at `http://127.0.0.1:8765/intel` and in
-`data/runtime/intel/opportunities.json`, ranked by `net_edge_bps ×
-confidence`. Anything whose edge doesn't clear the fee line is never shown.
-Thresholds live in `config/strategies/intel.yaml`. See
+`data/runtime/intel/opportunities.json`, ranked by a capacity-adjusted `score`
+from positive net edge, confidence, and venue capacity. Anything whose edge
+doesn't clear the fee line is never shown. Thresholds live in
+`config/strategies/intel.yaml`. See
 [`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md) for why each scanner
 exists and what its real risks are.
 
