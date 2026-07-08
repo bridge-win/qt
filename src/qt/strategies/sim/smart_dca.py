@@ -154,7 +154,7 @@ class SmartDCA:
         cash = cfg.initial_cash
         qty = 0.0
         equity_pts: list[float] = []
-        trades: list[dict] = []
+        trades: list[dict[str, object]] = []
         for ts, px in close.items():
             px_f = float(px)
             if bool(buy_bars.loc[ts]):

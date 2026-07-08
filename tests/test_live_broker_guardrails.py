@@ -20,20 +20,25 @@ from qt.execution.live import (
 class FakeClient:
     """Minimal ccxt-like client for tests."""
 
-    def __init__(self, *, can_withdraw: bool = False, balance: dict | None = None):
+    def __init__(
+        self,
+        *,
+        can_withdraw: bool = False,
+        balance: dict[str, object] | None = None,
+    ) -> None:
         self._can_withdraw = can_withdraw
         self._balance = balance or {"free": {"USDT": 1000.0}, "total": {"BTC": 0.0}}
-        self.orders: list[dict] = []
+        self.orders: list[dict[str, object]] = []
 
-    def sapiGetAccountApirestrictions(self) -> dict:  # noqa: N802 (mirror ccxt name)
+    def sapiGetAccountApirestrictions(self) -> dict[str, object]:  # noqa: N802 (mirror ccxt name)
         return {"enableWithdrawals": self._can_withdraw}
 
-    def create_order(self, **kwargs) -> dict:
+    def create_order(self, **kwargs: object) -> dict[str, object]:
         self.orders.append(kwargs)
         amount = kwargs["amount"]
         return {"average": 50_000.0, "filled": amount, "fee": {"cost": 0.5}}
 
-    def fetch_balance(self) -> dict:
+    def fetch_balance(self) -> dict[str, object]:
         return self._balance
 
 

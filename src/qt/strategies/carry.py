@@ -91,7 +91,7 @@ class BasisCarry(Strategy):
         ann = latest_avg * self.params.funding_periods_per_year
         recent_neg = int((fund.tail(self.params.negative_bars) < 0).sum())
 
-        metrics = {
+        metrics: dict[str, object] = {
             "ann_funding": round(ann, 4),
             "enter_apr": self.params.enter_apr,
             "exit_apr": self.params.exit_apr,

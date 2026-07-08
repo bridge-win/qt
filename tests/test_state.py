@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from qt.core.types import Position
 from qt.state import StateStore
 
 
-def test_save_load_position(tmp_path) -> None:
+def test_save_load_position(tmp_path: Path) -> None:
     s = StateStore(tmp_path / "state.sqlite")
     p = Position(
         symbol="BTC/USDT", qty=0.1, avg_price=40_000,
@@ -28,7 +29,7 @@ def test_save_load_position(tmp_path) -> None:
     assert q.opened_ts == datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
-def test_kv_roundtrip(tmp_path) -> None:
+def test_kv_roundtrip(tmp_path: Path) -> None:
     s = StateStore(tmp_path / "state.sqlite")
     s.kv_set("kill_switch_armed", True)
     s.kv_set("equity_peak", 105_000.5)
@@ -42,7 +43,7 @@ def test_kv_roundtrip(tmp_path) -> None:
     assert s2.kv_get("missing", "fallback") == "fallback"
 
 
-def test_record_signal_and_order(tmp_path) -> None:
+def test_record_signal_and_order(tmp_path: Path) -> None:
     s = StateStore(tmp_path / "state.sqlite")
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
     s.record_signal(ts, "entry_long", 0.7, 0.4, {"price_rsi": 1.0}, ["price_rsi"])

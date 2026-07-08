@@ -19,7 +19,7 @@ References:
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -92,7 +92,7 @@ def generate_windows(
     return out
 
 
-def default_threshold_grid() -> list[dict]:
+def default_threshold_grid() -> list[dict[str, object]]:
     """Conservative-to-aggressive grid over a handful of knobs."""
 
     return [
@@ -134,7 +134,7 @@ def run_walk_forward(
     train_days: int = 730,
     test_days: int = 180,
     step_days: int = 90,
-    grid: list[dict] | None = None,
+    grid: Sequence[Mapping[str, object]] | None = None,
     selector: Callable[[Metrics], float] | None = None,
     min_trades_to_select: int = 3,
 ) -> WalkForwardResult:

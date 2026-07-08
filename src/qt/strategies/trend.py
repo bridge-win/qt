@@ -106,7 +106,7 @@ class WeeklyTrend(Strategy):
         )
         vol_shock = rv_short / rv_long if rv_long and not np.isnan(rv_long) else 0.0
 
-        metrics = {
+        metrics: dict[str, object] = {
             "weekly_close": last_close,
             "ma": last_ma,
             "distance_pct": round((last_close / last_ma - 1.0) * 100.0, 2) if last_ma else None,

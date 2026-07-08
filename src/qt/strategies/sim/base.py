@@ -102,7 +102,7 @@ def simulate_target_positions(
     short_avg = 0.0         # weighted average entry price for the short leg
     cost = (fee_bps + slippage_bps) / 10_000.0
     equity_pts: list[float] = []
-    trade_rows: list[dict] = []
+    trade_rows: list[dict[str, object]] = []
 
     def _equity(px: float) -> float:
         long_val = qty_long * px

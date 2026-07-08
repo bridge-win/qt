@@ -141,7 +141,7 @@ class WeeklyTrend:
         peak = 0.0
         weekly_equity: list[float] = []
         weekly_tw: list[float] = []
-        trades: list[dict] = []
+        trades: list[dict[str, object]] = []
 
         # Inverse-vol sizing on weekly bars
         wret = wclose.pct_change()

@@ -3,9 +3,11 @@ each strategy's evaluate() under controlled synthetic data."""
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
@@ -13,10 +15,13 @@ import pandas as pd
 import pytest
 
 from qt.core.config import Settings
+from qt.core.types import Trade
+from qt.execution.base import Broker, Order
 from qt.strategies import (
     REGISTRY,
     BasisCarry,
     Capitulation,
+    EvaluationResult,
     Opportunity,
     SmartDCA,
     Strategy,
@@ -27,6 +32,7 @@ from qt.strategies import (
     run_strategy_forever,
     strategy_state_path,
 )
+from qt.strategies.base import Action
 
 # ---------------------- loader & registry --------------------------------
 
@@ -124,7 +130,9 @@ def test_dca_emits_buy_on_schedule() -> None:
         out = s.evaluate({"ohlcv": ohlcv})
     assert out.opportunity is not None
     assert out.opportunity.action == "buy"
-    assert out.opportunity.details["amount_quote"] > 0
+    amount_quote = out.opportunity.details["amount_quote"]
+    assert isinstance(amount_quote, int | float)
+    assert amount_quote > 0
 
 
 def test_dca_multiplier_higher_in_fear() -> None:
@@ -140,7 +148,11 @@ def test_dca_multiplier_higher_in_fear() -> None:
     out_fearful = s.evaluate({"ohlcv": falling, "fear_greed": fg})
     fg_calm = pd.DataFrame({"fear_greed": np.full(len(idx), 60.0)}, index=idx)
     out_calm = s.evaluate({"ohlcv": falling, "fear_greed": fg_calm})
-    assert out_fearful.metrics["multiplier"] > out_calm.metrics["multiplier"]
+    fearful_multiplier = out_fearful.metrics["multiplier"]
+    calm_multiplier = out_calm.metrics["multiplier"]
+    assert isinstance(fearful_multiplier, int | float)
+    assert isinstance(calm_multiplier, int | float)
+    assert fearful_multiplier > calm_multiplier
 
 
 def test_capitulation_evaluates_without_data() -> None:
@@ -221,11 +233,10 @@ class _StubStrategy(Strategy):
     name = "stub"
     description = "test stub strategy"
 
-    def fetch_data(self, settings: Settings) -> dict:
+    def fetch_data(self, settings: Settings) -> dict[str, object]:
         return {}
 
-    def evaluate(self, data: dict):
-        from qt.strategies.base import EvaluationResult
+    def evaluate(self, data: dict[str, object]) -> EvaluationResult:
         opp = Opportunity(
             ts=datetime.now(timezone.utc), action="buy",
             confidence=0.5, reason="test fire", details={"x": 1},
@@ -234,6 +245,188 @@ class _StubStrategy(Strategy):
             ts=datetime.now(timezone.utc), opportunity=opp,
             metrics={"x": 1.0},
         )
+
+
+class _OneShotOpportunityStrategy(Strategy):
+    name = "oneshot"
+    description = "one-shot test strategy"
+
+    def __init__(
+        self,
+        config: StrategyConfig,
+        *,
+        data: dict[str, object],
+        action: Action | tuple[Action, ...],
+        stop_event: threading.Event,
+        auto_stop: bool = True,
+    ) -> None:
+        super().__init__(config)
+        self._data = data
+        self._actions: tuple[Action, ...] = (action,) if isinstance(action, str) else action
+        self._cycle = 0
+        self._stop_event = stop_event
+        self._auto_stop = auto_stop
+
+    def fetch_data(self, settings: Settings) -> dict[str, object]:
+        return self._data
+
+    def evaluate(self, data: dict[str, object]) -> EvaluationResult:
+        action = self._actions[min(self._cycle, len(self._actions) - 1)]
+        self._cycle += 1
+        if self._auto_stop and self._cycle >= len(self._actions):
+            self._stop_event.set()
+        opp = Opportunity(
+            ts=datetime.now(timezone.utc),
+            action=action,
+            confidence=0.9,
+            reason="runner regression",
+            details={"symbol": "BTC/USDT", "amount_quote": 500.0},
+        )
+        return EvaluationResult(
+            ts=datetime.now(timezone.utc),
+            opportunity=opp,
+            metrics={"close": 42_000.0},
+        )
+
+
+class _FailingBroker(Broker):
+    def submit(self, order: Order, mark_price: float) -> Trade:
+        raise RuntimeError("broker blocked order")
+
+    def cash(self) -> float:
+        return 100_000.0
+
+    def position_qty(self, symbol: str) -> float:
+        return 0.0
+
+
+def _run_strategy_once(strategy: Strategy, tmp_path: Path, stop: threading.Event) -> dict[str, object]:
+    with patch("qt.strategies.runner.alert"):
+        t = threading.Thread(
+            target=run_strategy_forever,
+            args=(strategy, Settings()),
+            kwargs={"runtime_dir": tmp_path, "stop_event": stop, "max_backoff_seconds": 1},
+            daemon=True,
+        )
+        t.start()
+        t.join(timeout=5)
+    assert not t.is_alive()
+    path = strategy_state_path(tmp_path, strategy.name)
+    assert path.exists()
+    payload: object = json.loads(path.read_text())
+    assert isinstance(payload, dict)
+    return cast(dict[str, object], payload)
+
+
+def test_runner_executes_open_opportunity_as_entry(tmp_path: Path) -> None:
+    stop = threading.Event()
+    strat = _OneShotOpportunityStrategy(
+        StrategyConfig(name="oneshot", interval_seconds=1, params={}),
+        data={"mark_price": 42_000.0},
+        action="open",
+        stop_event=stop,
+    )
+
+    snap = _run_strategy_once(strat, tmp_path, stop)
+
+    trades = snap["details"]["last_trades"]  # type: ignore[index]
+    assert isinstance(trades, list)
+    assert len(trades) == 1
+    assert trades[0]["side"] == "buy"
+    assert trades[0]["price"] == pytest.approx(42_000.0 * 1.0008)
+
+
+def test_runner_prices_order_from_latest_ohlcv_close(tmp_path: Path) -> None:
+    stop = threading.Event()
+    ohlcv = pd.DataFrame(
+        {"close": [41_000.0, 42_000.0]},
+        index=pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC"),
+    )
+    strat = _OneShotOpportunityStrategy(
+        StrategyConfig(name="oneshot", interval_seconds=1, params={}),
+        data={"ohlcv": ohlcv},
+        action="buy",
+        stop_event=stop,
+    )
+
+    snap = _run_strategy_once(strat, tmp_path, stop)
+
+    trades = snap["details"]["last_trades"]  # type: ignore[index]
+    assert isinstance(trades, list)
+    assert len(trades) == 1
+    assert trades[0]["price"] == pytest.approx(42_000.0 * 1.0008)
+
+
+def test_runner_respects_opportunity_amount_quote(tmp_path: Path) -> None:
+    stop = threading.Event()
+    strat = _OneShotOpportunityStrategy(
+        StrategyConfig(name="oneshot", interval_seconds=1, params={}),
+        data={"mark_price": 42_000.0},
+        action="buy",
+        stop_event=stop,
+    )
+
+    snap = _run_strategy_once(strat, tmp_path, stop)
+
+    trades = snap["details"]["last_trades"]  # type: ignore[index]
+    assert isinstance(trades, list)
+    assert len(trades) == 1
+    assert trades[0]["qty"] * 42_000.0 == pytest.approx(500.0)
+
+
+def test_runner_executes_close_opportunity_as_exit(tmp_path: Path) -> None:
+    stop = threading.Event()
+    strat = _OneShotOpportunityStrategy(
+        StrategyConfig(name="oneshot", interval_seconds=1, params={}),
+        data={"mark_price": 42_000.0},
+        action=("buy", "close"),
+        stop_event=stop,
+    )
+
+    snap = _run_strategy_once(strat, tmp_path, stop)
+
+    trades = snap["details"]["last_trades"]  # type: ignore[index]
+    assert isinstance(trades, list)
+    assert len(trades) == 1
+    assert trades[0]["side"] == "sell"
+    positions = snap["details"]["portfolio"]["positions"]  # type: ignore[index]
+    assert positions["BTC/USDT"] == pytest.approx(0.0)
+
+
+def test_runner_records_broker_error_in_heartbeat(tmp_path: Path) -> None:
+    stop = threading.Event()
+    strat = _OneShotOpportunityStrategy(
+        StrategyConfig(name="oneshot", interval_seconds=1, params={}),
+        data={"mark_price": 42_000.0},
+        action="buy",
+        stop_event=stop,
+        auto_stop=False,
+    )
+
+    path = strategy_state_path(tmp_path, "oneshot")
+    with patch("qt.strategies.runner.alert"), patch(
+        "qt.strategies.runner._make_broker", return_value=_FailingBroker()
+    ):
+        t = threading.Thread(
+            target=run_strategy_forever,
+            args=(strat, Settings()),
+            kwargs={"runtime_dir": tmp_path, "stop_event": stop, "max_backoff_seconds": 1},
+            daemon=True,
+        )
+        t.start()
+        snap: dict[str, object] = {}
+        for _ in range(50):
+            if path.exists():
+                snap = json.loads(path.read_text())
+                if snap.get("cycle") == 1 or not t.is_alive():
+                    break
+            stop.wait(0.05)
+        stop.set()
+        t.join(timeout=5)
+
+    assert snap["cycle"] == 1
+    assert snap["status"] == "degraded"
+    assert "broker blocked order" in str(snap["last_error"])
 
 
 def test_run_strategy_writes_heartbeat(tmp_path: Path) -> None:

@@ -162,7 +162,8 @@ class StateStore:
         row = self.conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
         if row is None:
             return default
-        return json.loads(row[0])
+        value: object = json.loads(row[0])
+        return value
 
     def ts_now(self) -> str:
         return datetime.now(tz=timezone.utc).isoformat()

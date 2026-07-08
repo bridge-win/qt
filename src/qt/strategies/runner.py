@@ -15,10 +15,14 @@ dashboard with no extra orchestration.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, SupportsFloat, SupportsIndex, cast
+
+import pandas as pd
 
 from qt.core.config import Settings
 from qt.core.logging import get_logger
@@ -29,9 +33,14 @@ from qt.monitoring.alerts import alert
 from qt.monitoring.state import MonitorStateStore, new_snapshot, with_update
 from qt.portfolio import PortfolioLedger
 from qt.risk.engine import RiskEngine
-from qt.strategies.base import Opportunity, Strategy
+from qt.strategies.base import EvaluationResult, Opportunity, Strategy
 
 log = get_logger(__name__)
+
+ENTRY_ACTIONS = frozenset({"buy", "open"})
+EXIT_ACTIONS = frozenset({"sell", "close"})
+PRICE_KEYS = ("mark_price", "close", "price", "spot_price", "last_price", "weekly_close")
+QUOTE_KEYS = ("amount_quote", "rung_quote", "target_quote", "quote")
 
 
 def _make_broker(settings: Settings, initial_cash: float) -> Broker:
@@ -56,7 +65,11 @@ def _make_broker(settings: Settings, initial_cash: float) -> Broker:
     return PaperBroker(initial_cash=initial_cash)
 
 
-def _opp_to_signal(opp: Opportunity, score: float = 0.6) -> Signal:
+def _opp_to_signal(
+    opp: Opportunity,
+    score: float = 0.6,
+    target_quote_alloc: float = 0.05,
+) -> Signal:
     """Convert an Opportunity to a Signal for risk engine evaluation."""
     kind = SignalKind.ENTRY_LONG if opp.action in ("buy", "open") else SignalKind.EXIT
     return Signal(
@@ -64,8 +77,71 @@ def _opp_to_signal(opp: Opportunity, score: float = 0.6) -> Signal:
         kind=kind,
         score=score,
         reasons=(opp.reason,),
-        target_quote_alloc=0.05,  # 5% default allocation per trade
+        target_quote_alloc=target_quote_alloc,
     )
+
+
+def _positive_float(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = float(cast(SupportsFloat | SupportsIndex | str, value))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(out) or out <= 0:
+        return None
+    return out
+
+
+def _latest_ohlcv_close(value: object) -> float | None:
+    if not isinstance(value, pd.DataFrame) or value.empty or "close" not in value:
+        return None
+    return _positive_float(value["close"].iloc[-1])
+
+
+def _extract_mark_price(
+    data: Mapping[str, object],
+    result: EvaluationResult,
+    fallback: float,
+) -> float:
+    for key in PRICE_KEYS:
+        price = _positive_float(data.get(key))
+        if price is not None:
+            return price
+
+    ohlcv_price = _latest_ohlcv_close(data.get("ohlcv"))
+    if ohlcv_price is not None:
+        return ohlcv_price
+
+    for key in PRICE_KEYS:
+        price = _positive_float(result.metrics.get(key))
+        if price is not None:
+            return price
+
+    if result.opportunity is not None:
+        for key in PRICE_KEYS:
+            price = _positive_float(result.opportunity.details.get(key))
+            if price is not None:
+                return price
+
+    return fallback
+
+
+def _opportunity_symbol(opp: Opportunity, settings: Settings) -> str:
+    symbol = opp.details.get("symbol")
+    if isinstance(symbol, str) and symbol.strip():
+        return symbol.strip()
+    return settings.execution.symbol
+
+
+def _target_quote_alloc(opp: Opportunity, equity: float, default: float = 0.05) -> float:
+    if equity <= 0:
+        return default
+    for key in QUOTE_KEYS:
+        amount_quote = _positive_float(opp.details.get(key))
+        if amount_quote is not None:
+            return min(1.0, amount_quote / equity)
+    return default
 
 
 def strategy_state_dir(runtime_dir: str | Path) -> Path:
@@ -142,13 +218,7 @@ def run_strategy_forever(
             stop_event.wait(timeout=backoff)
             continue
 
-        consecutive_failures = 0
-
-        # Extract mark price from data (if available; fallback to last_mark_price)
-        if "mark_price" in data:
-            last_mark_price = data["mark_price"]
-        if "close" in data:
-            last_mark_price = data["close"]
+        last_mark_price = _extract_mark_price(data, result, last_mark_price)
 
         details: dict[str, object] = {
             "description": strategy.description,
@@ -158,97 +228,140 @@ def run_strategy_forever(
 
         # Route opportunity through risk engine → broker → ledger
         trades_executed = []
+        cycle_status: Literal["healthy", "degraded", "failed"] = "healthy"
+        cycle_error: str | None = None
+        sleep_seconds = interval
+        active_symbol = settings.execution.symbol
         if result.opportunity is not None:
             opp = result.opportunity
-            pos = Position(
-                symbol="BTC/USDT",
-                qty=paper_broker.position_qty("BTC/USDT"),
-                avg_price=portfolio.avg_price.get("BTC/USDT", 0.0),
-            )
-            # Broker-agnostic equity from the durable ledger.
-            cur_equity = portfolio.snapshot({"BTC/USDT": last_mark_price}).equity
-
-            # Entry decision
-            if opp.action == "buy":
-                decision = risk_engine.evaluate_entry(
-                    signal=_opp_to_signal(opp, score=opp.confidence),
-                    equity=cur_equity,
-                    mark_price=last_mark_price,
-                    atr_value=last_mark_price * 0.02,  # estimate: 2% ATR
-                    realized_vol_annual=0.8,  # estimate
-                    position=pos,
+            symbol = _opportunity_symbol(opp, settings)
+            active_symbol = symbol
+            mark_prices = {symbol: last_mark_price}
+            try:
+                pos = Position(
+                    symbol=symbol,
+                    qty=paper_broker.position_qty(symbol),
+                    avg_price=portfolio.avg_price.get(symbol, 0.0),
                 )
-                if decision.action == "open" and decision.size_quote > 10:  # min 10 USD
-                    qty = decision.size_quote / last_mark_price
-                    order = Order(
-                        symbol="BTC/USDT",
-                        side=OrderSide.BUY,
-                        type=OrderType.MARKET,
-                        qty=qty,
-                        note=f"[{strategy.name}] {opp.reason}",
-                    )
-                    trade = paper_broker.submit(order, last_mark_price)
-                    portfolio.record_trade(
-                        trade,
-                        mark_prices={"BTC/USDT": last_mark_price},
-                        total_initial_cash=initial_cash,
-                    )
-                    trades_executed.append(trade)
-                    log.info(
-                        "trade_executed",
-                        strategy=strategy.name,
-                        symbol=order.symbol,
-                        side="buy",
-                        qty=qty,
-                        price=last_mark_price,
-                    )
+                # Broker-agnostic equity from the durable ledger.
+                cur_equity = portfolio.snapshot(mark_prices).equity
 
-            # Exit decision (if position is open)
-            elif opp.action == "sell" and not pos.is_flat:
-                pos_qty = paper_broker.position_qty("BTC/USDT")
-                if pos_qty > 1e-8:
-                    order = Order(
-                        symbol="BTC/USDT",
-                        side=OrderSide.SELL,
-                        type=OrderType.MARKET,
-                        qty=pos_qty,
-                        note=f"[{strategy.name}] {opp.reason}",
+                # Entry decision
+                if opp.action in ENTRY_ACTIONS:
+                    decision = risk_engine.evaluate_entry(
+                        signal=_opp_to_signal(
+                            opp,
+                            score=opp.confidence,
+                            target_quote_alloc=_target_quote_alloc(opp, cur_equity),
+                        ),
+                        equity=cur_equity,
+                        mark_price=last_mark_price,
+                        atr_value=last_mark_price * 0.02,  # estimate: 2% ATR
+                        realized_vol_annual=0.8,  # estimate
+                        position=pos,
                     )
-                    trade = paper_broker.submit(order, last_mark_price)
-                    portfolio.record_trade(
-                        trade,
-                        mark_prices={"BTC/USDT": last_mark_price},
-                        total_initial_cash=initial_cash,
-                    )
-                    trades_executed.append(trade)
-                    log.info(
-                        "trade_executed",
-                        strategy=strategy.name,
-                        symbol=order.symbol,
-                        side="sell",
-                        qty=pos_qty,
-                        price=last_mark_price,
-                    )
+                    if decision.action == "open" and decision.size_quote > 10:  # min 10 USD
+                        qty = decision.size_quote / last_mark_price
+                        order = Order(
+                            symbol=symbol,
+                            side=OrderSide.BUY,
+                            type=OrderType.MARKET,
+                            qty=qty,
+                            note=f"[{strategy.name}] {opp.reason}",
+                        )
+                        trade = paper_broker.submit(order, last_mark_price)
+                        portfolio.record_trade(
+                            trade,
+                            mark_prices=mark_prices,
+                            total_initial_cash=initial_cash,
+                        )
+                        trades_executed.append(trade)
+                        log.info(
+                            "trade_executed",
+                            strategy=strategy.name,
+                            symbol=order.symbol,
+                            side="buy",
+                            qty=qty,
+                            price=last_mark_price,
+                        )
 
-            # Alert on trade
-            alert(
-                f"{strategy.name} {opp.action} opportunity → {len(trades_executed)} trade(s) executed: {opp.reason}",
-                severity=strategy.config.min_alert_severity,
-                strategy=strategy.name,
-                action=opp.action,
-                trades=len(trades_executed),
-                **{k: v for k, v in opp.details.items()},
-            )
+                # Exit decision (if position is open)
+                elif opp.action in EXIT_ACTIONS and not pos.is_flat:
+                    pos_qty = paper_broker.position_qty(symbol)
+                    if pos_qty > 1e-8:
+                        order = Order(
+                            symbol=symbol,
+                            side=OrderSide.SELL,
+                            type=OrderType.MARKET,
+                            qty=pos_qty,
+                            note=f"[{strategy.name}] {opp.reason}",
+                        )
+                        trade = paper_broker.submit(order, last_mark_price)
+                        portfolio.record_trade(
+                            trade,
+                            mark_prices=mark_prices,
+                            total_initial_cash=initial_cash,
+                        )
+                        trades_executed.append(trade)
+                        log.info(
+                            "trade_executed",
+                            strategy=strategy.name,
+                            symbol=order.symbol,
+                            side="sell",
+                            qty=pos_qty,
+                            price=last_mark_price,
+                        )
+            except Exception as exc:
+                consecutive_failures += 1
+                cycle_status = "failed" if consecutive_failures >= 5 else "degraded"
+                cycle_error = str(exc)
+                sleep_seconds = min(max_backoff_seconds, interval * consecutive_failures)
+                details["execution_error"] = cycle_error
+                log.warning(
+                    "strategy_execution_failed",
+                    strategy=strategy.name,
+                    action=opp.action,
+                    error=cycle_error,
+                )
+                alert(
+                    f"strategy {strategy.name} execution failed",
+                    severity="warning",
+                    strategy=strategy.name,
+                    action=opp.action,
+                    cycle=cycle,
+                    error=cycle_error,
+                    backoff_seconds=sleep_seconds,
+                )
+            else:
+                consecutive_failures = 0
+
+            if cycle_error is None:
+                # Alert on trade
+                alert(
+                    f"{strategy.name} {opp.action} opportunity → {len(trades_executed)} trade(s) executed: {opp.reason}",
+                    severity=strategy.config.min_alert_severity,
+                    strategy=strategy.name,
+                    action=opp.action,
+                    trades=len(trades_executed),
+                    **{k: v for k, v in opp.details.items()},
+                )
+                details["last_trades"] = [
+                    {"ts": t.ts.isoformat(), "side": t.side.value, "qty": t.qty, "price": t.price}
+                    for t in trades_executed
+                ]
+            else:
+                details["last_trades"] = []
+
             details["last_opportunity"] = opp.as_dict()
-            details["last_trades"] = [
-                {"ts": t.ts.isoformat(), "side": t.side.value, "qty": t.qty, "price": t.price}
-                for t in trades_executed
-            ]
-        elif "last_opportunity" in snapshot.details:
-            details["last_opportunity"] = snapshot.details["last_opportunity"]
+        else:
+            consecutive_failures = 0
+            if "last_opportunity" in snapshot.details:
+                details["last_opportunity"] = snapshot.details["last_opportunity"]
 
         # Update portfolio snapshot in details
-        snap = portfolio.snapshot({"BTC/USDT": last_mark_price})
+        portfolio_mark_prices = {symbol: last_mark_price for symbol in portfolio.positions}
+        portfolio_mark_prices.setdefault(active_symbol, last_mark_price)
+        snap = portfolio.snapshot(portfolio_mark_prices)
         details["portfolio"] = {
             "cash": snap.cash,
             "equity": snap.equity,
@@ -258,11 +371,11 @@ def run_strategy_forever(
         }
 
         snapshot = with_update(
-            snapshot, status="healthy", cycle=cycle,
-            consecutive_failures=0, last_error=None, details=details,
+            snapshot, status=cycle_status, cycle=cycle,
+            consecutive_failures=consecutive_failures, last_error=cycle_error, details=details,
         )
         store.write(snapshot)
-        stop_event.wait(timeout=interval)
+        stop_event.wait(timeout=sleep_seconds)
 
     snapshot = with_update(snapshot, status="stopped", cycle=cycle)
     store.write(snapshot)
