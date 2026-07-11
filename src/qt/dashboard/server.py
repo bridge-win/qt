@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from qt.backtest.artifacts import latest_backtest_summary
 from qt.dashboard.learning import render_learning_page
+from qt.dashboard.platform import build_trading_demo, render_demo_page, render_platform_page
 from qt.data.catalog import data_source_statuses
 from qt.data.store import ParquetStore
 from qt.intel.ranker import read_opportunities
@@ -70,8 +71,17 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/learn":
                 self._send_html(render_learning_page())
                 return
+            if path == "/platform":
+                self._send_html(render_platform_page())
+                return
+            if path == "/demo":
+                self._send_html(render_demo_page())
+                return
             if path == "/api/sources":
                 self._send_json({"sources": _sources(context)})
+                return
+            if path == "/api/demo":
+                self._send_json({"demo": build_trading_demo()})
                 return
             if path == "/api/backtests/latest":
                 self._send_json({"backtest": _latest_backtest(context)})
@@ -317,7 +327,7 @@ def _render_home(context: DashboardContext) -> str:
         <h1>QT Monitor</h1>
         <div class="subtle">Data coverage, live heartbeat, P&amp;L, and latest backtest artifacts.</div>
       </div>
-      <div class="subtle mono"><a href="/learn">Learn</a> · <a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
+      <div class="subtle mono"><a href="/platform">Platform</a> · <a href="/learn">Learn</a> · <a href="/demo">Demo</a> · <a href="/intel">Intel</a> · <a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
     </header>
     {_render_plain_banner(strategies, portfolios)}
     {_render_monitor_cards(monitor)}
