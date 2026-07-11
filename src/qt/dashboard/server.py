@@ -656,6 +656,127 @@ _LEARN_LAYERS: tuple[tuple[str, str, str, str, str, str, str], ...] = (
     ),
 )
 
+# Plain-language glossary for absolute beginners: (term, meaning)
+_LEARN_GLOSSARY: tuple[tuple[str, str], ...] = (
+    ("Spot 现货", "Buying the actual coin. You pay $100, you own $100 of BTC."),
+    ("Perpetual / perp 永续合约", "A bet on the price that never expires. You "
+     "don't own the coin — you hold a contract that tracks its price."),
+    ("Long / short 做多 / 做空", "Long = you profit if price rises. "
+     "Short = you profit if price falls."),
+    ("Leverage 杠杆", "Borrowed money to trade bigger than your capital. 10x "
+     "leverage turns a 10% move against you into a 100% loss."),
+    ("Liquidation 爆仓", "When a leveraged position loses so much the exchange "
+     "force-closes it. Cascades of these cause flash crashes."),
+    ("Funding rate 资金费率", "A small payment (every 1–8h) between longs and "
+     "shorts on perps that keeps the perp price near spot. Usually longs pay "
+     "shorts — that payment is the carry trade's income."),
+    ("Limit / market order 限价单 / 市价单", "Limit: buy only at your chosen "
+     "price or better. Market: buy right now at whatever price is available."),
+    ("Drawdown 回撤", "How far your account has fallen from its peak. The "
+     "number that decides whether you survive."),
+    ("Sharpe ratio 夏普比率", "Return per unit of risk taken. 1 is decent, 2 "
+     "is very good, 5+ in a backtest usually means a bug or overfitting."),
+    ("Paper trading 纸面交易", "Trading with fake money to test a strategy. "
+     "This whole system runs paper-only until you deliberately enable live."),
+)
+
+# Beginner path — the first steps for someone with little knowledge:
+# (step, action, why)
+_LEARN_START: tuple[tuple[str, str, str], ...] = (
+    ("1", "Run <code>./start.sh</code> and open the dashboard",
+     "Everything is paper mode — no real money can move. Watching a live "
+     "system is the fastest way to make the words below concrete."),
+    ("2", "Learn the 10 glossary terms below",
+     "They cover ~90% of what this dashboard and any crypto trading text "
+     "assumes you know."),
+    ("3", "Watch the strategies paper-trade for 1–2 weeks",
+     "Read each strategy's page and the /intel &quot;why&quot; lines. Ask of "
+     "every trade: who is on the other side, and why are they losing?"),
+    ("4", "Start layer L1 of the architecture below (~10 hrs/week)",
+     "Math first, tools second, strategies last. Skipping ahead to "
+     "&quot;which indicator wins&quot; is how beginners lose money."),
+    ("5", "Only after months of study + paper results, read "
+     "<code>docs/live-checklist.md</code>",
+     "The verified methods below earn single-digit-to-low-double-digit APR. "
+     "Anyone promising more is selling you something."),
+)
+
+# Verified earning methods (evidence-ranked), condensed from
+# docs/RESEARCH-EARNING.md which carries the full per-claim source links:
+# (rank, name, how it works, realistic return, what kills it, evidence, repo)
+_LEARN_METHODS: tuple[tuple[str, str, str, str, str, str, str], ...] = (
+    (
+        "1", "Funding-rate carry 资金费率套利",
+        "Hold spot long + perp short. Price moves cancel out; you collect the "
+        "funding payments that leveraged longs pay, every 1–8 hours.",
+        "5–20% APR typical; episodic spikes to 70%+ APR in hot regimes.",
+        "Funding flips negative in bear markets (needs an exit rule); the "
+        "short leg can be margin-called in violent pumps (keep leverage ≤2x); "
+        "venue failure (FTX) — split across exchanges.",
+        "Academic full-sample ≈8%/yr low-vol (CMU, <em>The Crypto Carry "
+        "Trade</em>); 2025 peer-reviewed CEX/DEX funding-arb study: up to "
+        "115.9%/6mo with max loss &lt;2% in-window (ScienceDirect); only ~40% "
+        "of cross-venue spreads ≥20 bps survive fees (MDPI).",
+        "src/qt/strategies/carry.py · intel FundingScanner",
+    ),
+    (
+        "2", "Crash / capitulation buying 暴跌抄底",
+        "Buy only when multiple independent factor groups confirm forced "
+        "selling (liquidation cascades), and macro doesn't veto. The seller "
+        "isn't selling on information — a margin engine made them sell.",
+        "A few high-quality entries per cycle; historically strong forward "
+        "returns from capitulation lows.",
+        "Catching a falling knife in a true regime break; first bounce is "
+        "often short-covering — exit on mean reversion, don't &quot;hold "
+        "forever&quot;.",
+        "Caporale et al. 2018 (short-horizon BTC reversal); Gkillas &amp; "
+        "Katsiampa 2018 (EVT tails); Oct-2025 cascade: −12% in 8h, ~$19B "
+        "liquidated, 87% longs (CCN post-mortem) — see docs/strategy.md.",
+        "src/qt/strategies/capitulation.py",
+    ),
+    (
+        "3", "Wick catching 插针捕捉",
+        "Rest deep limit buys (−5%/−8%/−12%, off round numbers); liquidation "
+        "cascades wick through them at panic prices; take profit on the "
+        "bounce. Small, steady; pays only in flash events.",
+        "Small per-event gains; 10–30% intra-minute dips happen multiple "
+        "times a year.",
+        "Fills then keeps falling (regime break, not a wick) — small rungs, "
+        "hard stop below the ladder, macro veto; no fill guarantee in gaps.",
+        "Cascade mechanics (Bit.com); flash-crash order behavior (B2Prime, "
+        "Kraken); grid-bot literature shows the same volatility-harvesting "
+        "premium and the same trending-breakout failure mode (Bitsgap).",
+        "src/qt/strategies/wick_catcher.py",
+    ),
+    (
+        "4", "Episodic dislocations 事件性错位",
+        "Rare panics leave big mispricings open for minutes-to-days: "
+        "stablecoin depegs, cross-venue spreads in cascades. Machine scans "
+        "24/7 and alerts; a human confirms — the edge is judgment, not speed.",
+        "Rare but large: USDC Mar-2023 traded ~$0.88 while redeemable at "
+        "$1.00; peg restored in ~2 days.",
+        "The depeg can be real (UST went to zero) — you must verify issuer "
+        "solvency; capital locked mid-crisis.",
+        "CoinDesk on-chain analysis of the USDC repeg (one wallet +$16.5M); "
+        "Chainalysis 2025: ≥0.5% cross-venue gaps still occur thousands of "
+        "times daily, capturable only in the fat tail.",
+        "src/qt/intel/scanners.py (DepegScanner, SpreadScanner)",
+    ),
+    (
+        "✗", "Speed arbitrage — do NOT attempt 别做高频套利",
+        "Cross-exchange latency arb, triangular loops, CEX–DEX MEV. Windows "
+        "on majors last under ~4 seconds and require colocation or "
+        "block-builder relationships a personal operator doesn't have.",
+        "Effectively zero at personal scale, after fees and losses to "
+        "professionals.",
+        "You are the prey, not the predator: 3 MEV searchers captured ~75% "
+        "of $233.8M in CEX–DEX arb profits over 19 months.",
+        "arXiv, <em>The Darkest of the MEV Dark Forest</em>; CoinAPI 2025 "
+        "(windows &lt;4s, cross-venue variance −78% since 2020).",
+        "intel scanners detect &amp; alert only — no execution built",
+    ),
+)
+
 # 6-month spiral plan: (month, focus, deliverable)
 _LEARN_PLAN: tuple[tuple[str, str, str], ...] = (
     ("1", "Mindset + probability/stats; Python setup",
@@ -736,6 +857,46 @@ def _render_learn_intro() -> str:
     )
 
 
+def _render_learn_start() -> str:
+    rows = "".join(
+        f"<tr><td><strong>{step}</strong></td><td>{action}</td><td>{why}</td></tr>"
+        for step, action, why in _LEARN_START
+    )
+    return (
+        "<table><thead><tr><th></th><th>Do this</th><th>Why</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def _render_learn_glossary() -> str:
+    rows = "".join(
+        f"<tr><td><strong>{_e(term)}</strong></td><td>{_e(meaning)}</td></tr>"
+        for term, meaning in _LEARN_GLOSSARY
+    )
+    return (
+        "<table><thead><tr><th>Term</th><th>Plain meaning</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def _render_learn_methods() -> str:
+    cards: list[str] = []
+    for rank, name, how, ret, kills, evidence, repo in _LEARN_METHODS:
+        avoid = rank == "✗"
+        tag_cls = ' style="background:#f8e7e7;color:var(--bad)"' if avoid else ""
+        cards.append(
+            '<div class="panel prose">'
+            f'<h3><span class="tag"{tag_cls}>{rank}</span>{name}</h3>'
+            f"<p>{how}</p>"
+            f"<p><strong>Realistic return:</strong> {ret}</p>"
+            f"<p><strong>What kills it:</strong> {kills}</p>"
+            f'<p class="cite"><strong>Evidence:</strong> {evidence}</p>'
+            f'<p class="cite">In this repo: <code>{_e(repo)}</code></p>'
+            "</div>"
+        )
+    return '<div class="cards">' + "".join(cards) + "</div>"
+
+
 def _render_learn_layers() -> str:
     cards: list[str] = []
     for lid, title, why, concepts, where, how, repo in _LEARN_LAYERS:
@@ -773,6 +934,20 @@ def _render_learn_refs() -> str:
 def _render_learn_page(context: DashboardContext) -> str:
     body = f"""
     {_render_learn_intro()}
+    <h2>Start here — you have little knowledge, that's fine 从零开始</h2>
+    <div class="subtle" style="margin-bottom:10px">Five steps before any
+      textbook. The system runs in paper mode, so nothing here risks money.</div>
+    {_render_learn_start()}
+    <h2>The 10 words you must know first 必学词汇</h2>
+    {_render_learn_glossary()}
+    <h2>Verified methods that actually earn — with evidence 经过验证的赚钱方法</h2>
+    <div class="subtle" style="margin-bottom:10px">Ranked by evidence strength,
+      from <code>docs/RESEARCH-EARNING.md</code> (which carries every source
+      link). The honest meta-lesson: at personal scale the durable edges are
+      <strong>patience edges, not speed edges</strong> — carry monetizes other
+      people's leverage demand; crash/wick buying monetizes their forced
+      liquidations; depeg buying monetizes their panic.</div>
+    {_render_learn_methods()}
     <h2>The knowledge architecture — 9 layers</h2>
     <div class="subtle" style="margin-bottom:10px">Bottom-up dependencies:
       L0 mindset wraps everything; L1 math → L9 behavior. Spiral through them,

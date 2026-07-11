@@ -11,7 +11,9 @@ from socketserver import TCPServer
 import pytest
 
 from qt.dashboard.server import (
+    _LEARN_GLOSSARY,
     _LEARN_LAYERS,
+    _LEARN_METHODS,
     _LEARN_REFS,
     DashboardContext,
     _make_handler,
@@ -87,6 +89,36 @@ def test_learn_page_maps_to_repo_code(context: DashboardContext) -> None:
     # All nine architecture layers are rendered.
     for lid, *_ in _LEARN_LAYERS:
         assert f">{lid}</span>" in html
+
+
+def test_learn_page_beginner_onramp(context: DashboardContext) -> None:
+    html = _render_learn_page(context)
+    # The absolute-beginner path renders, bilingual heading included.
+    assert "Start here" in html
+    assert "从零开始" in html
+    # The glossary covers the must-know vocabulary.
+    for term, _meaning in _LEARN_GLOSSARY:
+        assert term.split()[0] in html, term
+    assert "Funding rate" in html
+    assert "Paper trading" in html
+
+
+def test_learn_page_verified_methods(context: DashboardContext) -> None:
+    html = _render_learn_page(context)
+    # All earning methods (and the explicit anti-method) render.
+    for _rank, name, *_ in _LEARN_METHODS:
+        assert name.split()[0] in html, name
+    assert "do NOT attempt" in html
+    # Each method carries evidence and realistic-return framing.
+    assert "Realistic return:" in html
+    assert "What kills it:" in html
+    assert "Evidence:" in html
+    # Grounded in the repo's research doc and the patience-edge meta-lesson.
+    assert "RESEARCH-EARNING.md" in html
+    assert "patience edges, not speed edges" in html
+    # Key cited sources appear.
+    for source in ("The Crypto Carry Trade", "MEV Dark Forest", "USDC"):
+        assert source in html, source
 
 
 def test_top_nav_marks_current() -> None:

@@ -37,6 +37,58 @@ Three rules that separate people who learn quant from people who read about it:
 
 ---
 
+## Start here — if you have little knowledge
+
+Do these five things *before* any textbook. The system runs in paper mode, so
+nothing here risks money:
+
+1. **Run `./start.sh` and open the dashboard** (`http://127.0.0.1:8765`).
+   Watching a live system is the fastest way to make the vocabulary concrete.
+2. **Learn the 10 must-know terms**: spot, perpetual, long/short, leverage,
+   liquidation, funding rate, limit/market order, drawdown, Sharpe ratio,
+   paper trading. (The `/learn` page carries a plain-language, bilingual
+   glossary of exactly these.)
+3. **Watch the strategies paper-trade for 1–2 weeks.** Read each strategy's
+   page and the `/intel` "why" lines. Ask of every trade: *who is on the other
+   side, and why are they losing?* If you can't answer, the trade has no edge.
+4. **Start layer L1 below (~10 hrs/week).** Math first, tools second,
+   strategies last. Skipping ahead to "which indicator wins" is how beginners
+   lose money.
+5. **Only after months of study and paper results**, read
+   [`docs/live-checklist.md`](live-checklist.md). Verified methods earn
+   single-digit-to-low-double-digit APR — anyone promising more is selling
+   you something.
+
+---
+
+## Verified methods that actually earn (with evidence)
+
+Theory only matters if it cashes out. These are the earning methods that
+survive scrutiny **at personal scale** (one operator, retail capital, no
+colocation), ranked by evidence strength. The deep-dive with every source
+link is [`docs/RESEARCH-EARNING.md`](RESEARCH-EARNING.md) [27]; this is the
+summary, mapped to the layers above and the code in this repo.
+
+| # | Method | Realistic net return | What kills it | Key evidence | Repo |
+|---|---|---|---|---|---|
+| 1 | **Funding-rate carry** — spot long + perp short; collect the funding leveraged longs pay | 5–20% APR typical; spikes to 70%+ APR | funding flips negative in bears; margin call on the short leg in pumps (keep ≤2x); venue failure (FTX) — split venues | CMU, *The Crypto Carry Trade* (~8%/yr full-sample, low vol) [28]; 2025 peer-reviewed funding-arb study, up to 115.9%/6mo with <2% max loss in-window [29]; only ~40% of ≥20 bps cross-venue spreads survive fees (MDPI) [30] | `src/qt/strategies/carry.py`, intel `FundingScanner` |
+| 2 | **Crash/capitulation buying** — multi-factor confirmation of forced selling + macro veto | a few high-quality entries per cycle; strong forward returns from capitulation lows | catching a falling knife in a true regime break; first bounce is short-covering → exit on reversion | Caporale et al. 2018; Gkillas & Katsiampa 2018 (see [`strategy.md`](strategy.md)); Oct-2025 cascade post-mortems: −12%/8h, ~$19B liquidated, 87% longs [27] | `src/qt/strategies/capitulation.py` |
+| 3 | **Wick catching** — deep resting limit-buy ladder filled by liquidation cascades | small, steady; 10–30% intra-minute dips happen multiple times/year | fills then keeps falling (regime break) → small rungs, hard stop below ladder, macro veto; no fill guarantee in gaps | cascade mechanics and flash-crash order behavior sources in [27]; grid-bot literature shows the same premium and same trending-breakout failure mode | `src/qt/strategies/wick_catcher.py` |
+| 4 | **Episodic dislocations** — depegs and panic spreads; machine scans, human confirms | rare but large: USDC Mar-2023 traded ~$0.88 while redeemable at $1.00, repegged in ~2 days | the depeg can be real (UST → 0): verify issuer solvency; capital locked mid-crisis | CoinDesk on-chain analysis of the USDC repeg (one wallet +$16.5M) [27]; Chainalysis 2025 via CoinAPI: fat-tail gaps persist minutes-to-days in panics | `src/qt/intel/scanners.py` |
+| ✗ | **Speed arbitrage — do not attempt**: latency arb, triangular loops, CEX–DEX MEV | ~zero at personal scale | windows <4s on majors; needs colocation / block-builder access | arXiv, *The Darkest of the MEV Dark Forest*: 3 searchers captured ~75% of $233.8M over 19 months [31] | intel scanners detect & alert only |
+
+**The meta-lesson** (and the single most transferable piece of trading
+experience in this repo): at personal scale, **durable edges are patience
+edges, not speed edges**. Carry monetizes other people's leverage demand;
+crash and wick buying monetize other people's forced liquidations; depeg
+buying monetizes other people's panic. All of them pay the *patient* side of
+the trade — and all of them connect back to the layers: sizing (L6) and
+validation (L7) are what keep these from blowing up, and microstructure (L8)
+explains why the fee line kills most of the "opportunities" a naive scanner
+finds.
+
+---
+
 ## The knowledge architecture (9 layers)
 
 ```
@@ -501,6 +553,20 @@ Full citations. Repo-internal cross-references appear inline above.
 26. Kyle, A. (1985). "Continuous Auctions and Insider Trading." *Econometrica*,
     53(6). (See also O'Hara, *Market Microstructure Theory*, and Harris,
     *Trading and Exchanges*.)
+27. This repo, [`docs/RESEARCH-EARNING.md`](RESEARCH-EARNING.md) (2026) —
+    "How a Personal Crypto Quant System Actually Earns." Carries the full,
+    per-claim source index (cascade post-mortems, USDC-repeg on-chain
+    analysis, flash-crash execution behavior, grid-bot failure modes).
+28. Carnegie Mellon University — *The Crypto Carry Trade*.
+    https://www.andrew.cmu.edu/user/azj/files/CarryTrade.v1.0.pdf
+29. *Blockchain: Research and Applications* (2025). Funding-rate arbitrage on
+    CEX/DEX. https://www.sciencedirect.com/science/article/pii/S2096720925000818
+30. *Mathematics* (MDPI, 2026). Two-tiered funding market structure and the
+    survival rate of cross-venue funding spreads after costs.
+    https://www.mdpi.com/2227-7390/14/2/346
+31. *The Darkest of the MEV Dark Forest* (arXiv, 2025).
+    https://arxiv.org/html/2507.13023v1 — concentration of CEX–DEX
+    arbitrage profits among 3 professional searchers.
 
 ---
 

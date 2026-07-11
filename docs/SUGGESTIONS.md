@@ -143,6 +143,32 @@ every module; treat as leads to confirm, not confirmed defects.
 
 ---
 
+## Learning-page follow-ups (from the second pass)
+
+### 4.1 Link glossary terms from the live pages
+- **What:** The `/learn` glossary defines funding rate, drawdown, Sharpe,
+  etc. The strategy and intel pages use those exact words with no link back.
+- **Why:** For a beginner operator, a `<a href="/learn#glossary">funding
+  rate</a>` (or a tooltip) turns every dashboard page into a teaching
+  surface. Requires adding `id=` anchors to the learn-page sections first.
+- **Effort:** ~1–2 hrs.
+
+### 4.2 Keep `_LEARN_METHODS` and `docs/RESEARCH-EARNING.md` in sync
+- **What:** The verified-methods cards condense RESEARCH-EARNING.md by hand.
+- **Why:** When the research doc gains/retires a method, the page will drift.
+  A cheap guard: a test asserting each `_LEARN_METHODS` name appears in the
+  research doc (string containment), failing loudly on drift.
+- **Effort:** ~30 min.
+
+### 4.3 Progress tracking for the study plan
+- **What:** The 6-month plan and 5-step beginner path are static tables.
+- **Why:** A tiny `localStorage`-backed checkbox per row (no backend) would
+  let the operator track progress across visits — high beginner value, zero
+  server change.
+- **Effort:** ~2 hrs (needs the `<script>` slot from item 1.3).
+
+---
+
 ## Addressed in this change
 
 - **Extracted a shared page shell** (`_PAGE_STYLE`, `_page()`,
@@ -152,5 +178,12 @@ every module; treat as leads to confirm, not confirmed defects.
   the last follow-up.)
 - **Added the `/learn` page** — a summarized, citation-backed quant-learning
   curriculum backed by `docs/LEARNING.md`.
-- **Added tests** (`tests/test_dashboard_learn.py`) for the new page, the
-  shared shell, and the navigation.
+- **Second pass (beginner + earning focus):** added to `/learn` and
+  `docs/LEARNING.md` — a 5-step "start here" path for someone with little
+  knowledge, a bilingual 10-term plain-language glossary, and a
+  **verified-methods-that-earn** section (funding carry, capitulation buying,
+  wick catching, episodic dislocations, and the explicit do-not-attempt speed
+  arbitrage) with realistic returns, failure modes, and citations condensed
+  from `docs/RESEARCH-EARNING.md`.
+- **Added tests** (`tests/test_dashboard_learn.py`) for the page, shell,
+  navigation, beginner on-ramp, and verified-methods sections.
