@@ -141,6 +141,9 @@ The dashboard is available at `http://127.0.0.1:8765` and shows:
   edge after fees (funding carry, cross-venue spread, basis, depeg, wick
   regime), each with a plain-language "why" and "what to do"
 - ranked intelligence discoveries at `/api/intel`
+- `/learn` — **Learn Quant**: a summarized, citation-backed curriculum for
+  building sound quantitative & financial knowledge from zero, mapped to the
+  code in this repo (full companion in [`docs/LEARNING.md`](docs/LEARNING.md))
 
 ## Multi-strategy solution gallery
 
@@ -315,6 +318,11 @@ See [`docs/operations.md`](docs/operations.md) for the full runbook, and
 signal generation to safe live trading.
 See [`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md) for the
 research-backed opportunity map behind the intel scanners and wick catcher.
+New to quant? Start with [`docs/LEARNING.md`](docs/LEARNING.md) — a
+citation-backed, layer-by-layer curriculum (also rendered at `/learn`) that
+maps each concept to the code in this repo. See
+[`docs/SUGGESTIONS.md`](docs/SUGGESTIONS.md) for the code-review backlog and
+future-improvement spec.
 
 ## Batch backtests (`qt.strategies.sim`)
 
