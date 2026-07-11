@@ -29,6 +29,31 @@ curl -fsSL https://raw.githubusercontent.com/bridge-win/qt/main/deploy/aliyun_bo
   | QT_REPO_REF=main QT_INSTALL_DIR=/opt/qt sudo -E bash
 ```
 
+## One-command SSH deploy from this Mac
+
+This repo also supports the same SSH access pattern as the Follow project:
+the local deploy script defaults to `SSH_HOST=follow`, syncs this checkout to
+`/opt/qt`, and runs the server-side deploy script there.
+
+```bash
+deploy/ssh-deploy.sh
+```
+
+Override the defaults when needed:
+
+```bash
+SSH_HOST=follow REMOTE_DIR=/opt/qt WEB_PORT=8765 deploy/ssh-deploy.sh
+```
+
+The sync intentionally excludes `.env`, `.git`, `.venv`, caches, logs, and
+generated runtime data. Server secrets stay in `/opt/qt/.env`; if that file
+does not exist, the remote deploy seeds it from `.env.example`.
+
+The script finishes by checking `http://localhost:8765/` on the server and
+`http://<follow-host>:8765/` from this Mac. If the public check fails while
+the localhost check passes, open `8765/tcp` in the Aliyun security group or
+Lighthouse firewall for this instance.
+
 ## Where to put your keys / passwords
 
 Edit `/opt/qt/.env` on the server (mode 600, owned by `qt`). The template
