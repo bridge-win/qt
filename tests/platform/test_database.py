@@ -7,7 +7,7 @@ from qt.platform.database import create_platform_engine, create_session_factory
 
 
 def test_create_platform_engine_connects_to_sqlite() -> None:
-    settings = PlatformSettings(database_url="sqlite+pysqlite:///:memory:")
+    settings = PlatformSettings(database_url="sqlite+pysqlite:///:memory:", _env_file=None)
 
     engine = create_platform_engine(settings)
 
@@ -16,7 +16,9 @@ def test_create_platform_engine_connects_to_sqlite() -> None:
 
 
 def test_create_session_factory_keeps_committed_values_available() -> None:
-    engine = create_platform_engine(PlatformSettings(database_url="sqlite+pysqlite:///:memory:"))
+    engine = create_platform_engine(
+        PlatformSettings(database_url="sqlite+pysqlite:///:memory:", _env_file=None)
+    )
 
     session_factory = create_session_factory(engine)
 
