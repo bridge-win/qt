@@ -11,14 +11,24 @@ from qt.platform.config import PlatformSettings
 SessionFactory = sessionmaker[Session]
 
 
+def normalize_database_url(url: str) -> str:
+    """Select psycopg explicitly for bare PostgreSQL URLs."""
+
+    bare_prefix = "postgresql://"
+    if url.startswith(bare_prefix):
+        return f"postgresql+psycopg://{url[len(bare_prefix):]}"
+    return url
+
+
 def create_platform_engine(settings: PlatformSettings) -> Engine:
     """Create the platform database engine from validated settings."""
 
+    database_url = normalize_database_url(settings.database_url)
     connect_args: dict[str, object] = {}
-    if settings.database_url.startswith("sqlite"):
+    if database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
     return create_engine(
-        settings.database_url,
+        database_url,
         echo=settings.database_echo,
         pool_pre_ping=True,
         connect_args=connect_args,

@@ -15,9 +15,13 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    event,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine.interfaces import Dialect
+from sqlalchemy.orm import DeclarativeBase, Mapped, Mapper, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from qt.platform.schemas import CommandStatus, CommandType, WorkerStatus
 
@@ -30,6 +34,29 @@ def utc_now() -> datetime:
 
 def _enum_values(enum_type: type[CommandStatus | CommandType | WorkerStatus]) -> str:
     return ", ".join(f"'{member.value}'" for member in enum_type)
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Store only aware datetimes and expose them as aware UTC values."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("UTCDateTime requires an aware UTC datetime")
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        del dialect
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -78,14 +105,14 @@ class PlatformCommand(Base):
         server_default=text("3"),
     )
     available_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     claim_owner: Mapped[str | None] = mapped_column(String(128))
     claim_token: Mapped[UUID | None] = mapped_column(Uuid)
-    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     result: Mapped[dict[str, object] | None] = mapped_column(JSON)
     error: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(
@@ -95,19 +122,19 @@ class PlatformCommand(Base):
         server_default=text("1"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
         onupdate=utc_now,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class RuntimeLease(Base):
@@ -123,7 +150,7 @@ class RuntimeLease(Base):
     owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
     fencing_token: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
@@ -135,13 +162,13 @@ class RuntimeLease(Base):
         server_default=text("1"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
@@ -166,19 +193,19 @@ class WorkerHeartbeat(Base):
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     details: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
@@ -197,8 +224,20 @@ class AuditEvent(Base):
     correlation_id: Mapped[str] = mapped_column(String(255), nullable=False)
     details: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utc_now,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+
+
+def _reject_audit_event_mutation(
+    _mapper: Mapper[AuditEvent],
+    _connection: Connection,
+    _target: AuditEvent,
+) -> None:
+    raise ValueError("AuditEvent is append-only")
+
+
+event.listen(AuditEvent, "before_update", _reject_audit_event_mutation)
+event.listen(AuditEvent, "before_delete", _reject_audit_event_mutation)

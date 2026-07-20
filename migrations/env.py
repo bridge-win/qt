@@ -8,7 +8,7 @@ from logging.config import fileConfig
 from alembic import context
 
 from qt.platform.config import PlatformSettings
-from qt.platform.database import create_platform_engine
+from qt.platform.database import create_platform_engine, normalize_database_url
 from qt.platform.models import Base
 
 config = context.config
@@ -19,16 +19,19 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def _database_url() -> str:
-    database_url = os.getenv("QT_DATABASE_URL")
-    if database_url is None:
+def _platform_settings() -> PlatformSettings:
+    if os.getenv("QT_DATABASE_URL") is None:
         raise RuntimeError("QT_DATABASE_URL is required for Alembic migrations")
-    return database_url
+    settings = PlatformSettings(_env_file=None)  # type: ignore[call-arg]
+    return settings.model_copy(
+        update={"database_url": normalize_database_url(settings.database_url)}
+    )
 
 
 def run_migrations_offline() -> None:
+    settings = _platform_settings()
     context.configure(
-        url=_database_url(),
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -41,7 +44,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    settings = PlatformSettings(database_url=_database_url())
+    settings = _platform_settings()
     engine = create_platform_engine(settings)
 
     try:

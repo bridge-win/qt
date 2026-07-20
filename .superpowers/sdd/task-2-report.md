@@ -139,3 +139,134 @@ QT_TEST_POSTGRES_URL=postgresql+psycopg://qt:qt@127.0.0.1:55432/qt_test \
 ```
 
 `git diff --check` also passed before commit.
+
+## Follow-up: Merge-Blocking Review Fixes
+
+### RED
+
+1. Engine URL normalization test:
+
+   ```bash
+   .venv/bin/pytest tests/platform/test_database.py -q
+   ```
+
+   Result:
+
+   ```text
+   ImportError: cannot import name 'normalize_database_url' from 'qt.platform.database'
+   ```
+
+2. Offline Alembic environment test, run with inherited `QT_*` variables removed:
+
+   ```bash
+   env -u QT_DATABASE_URL -u QT_PLATFORM_ENV -u QT_TEST_POSTGRES_URL \
+     .venv/bin/pytest \
+     tests/integration/test_migrations.py::test_offline_migration_uses_validated_normalized_environment_url \
+     -q
+   ```
+
+   Result:
+
+   ```text
+   assert 0 != 0
+   ```
+
+   Production SQLite incorrectly generated offline SQL because Alembic bypassed
+   `PlatformSettings` validation.
+
+3. PostgreSQL audit immutability test:
+
+   ```bash
+   QT_TEST_POSTGRES_URL=postgresql+psycopg://qt:qt@127.0.0.1:55432/qt_test \
+     .venv/bin/pytest \
+     tests/integration/test_migrations.py::test_audit_events_reject_update_and_delete_in_postgresql \
+     -q
+   ```
+
+   Result:
+
+   ```text
+   Failed: DID NOT RAISE sqlalchemy.exc.DBAPIError
+   ```
+
+4. UTC type and ORM immutability tests:
+
+   ```bash
+   .venv/bin/pytest tests/platform/test_models.py -q
+   ```
+
+   Result:
+
+   ```text
+   ImportError: cannot import name 'UTCDateTime' from 'qt.platform.models'
+   ```
+
+### GREEN
+
+- Added `normalize_database_url()` to convert only a bare `postgresql://` prefix to
+  `postgresql+psycopg://`; `create_platform_engine()` and both Alembic execution paths
+  now use the normalized URL. The engine test checks `engine.url.drivername` without a
+  database connection.
+- Alembic now builds `PlatformSettings(_env_file=None)`, rejects absent
+  `QT_DATABASE_URL`, validates the supplied environment, and runs with the same normalized
+  URL in offline and online modes. The subprocess test scrubs inherited `QT_*` variables,
+  verifies production SQLite fails, and verifies a bare PostgreSQL URL reaches SQL output.
+- Added explicit revision `20260721_0002_audit_event_immutability` with a PostgreSQL
+  `BEFORE UPDATE OR DELETE` trigger and its function. Downgrade drops the trigger and
+  function. PostgreSQL tests prove both statements raise, roll back, and leave the event
+  intact; downgrade verifies the function no longer exists.
+- Added `UTCDateTime` to reject naive bound values, normalize aware values to UTC, and
+  restore UTC information on naive SQLite results. Every ORM datetime column now uses it.
+  Commit/reload tests verify all timestamps are aware UTC and `CommandView` validates.
+- Added ORM `before_update` and `before_delete` guards for `AuditEvent`, giving SQLite and
+  application callers the same append-only behavior as the PostgreSQL trigger.
+- Pinned unit engines to `platform_env="test"` with explicit in-memory SQLite URLs, and
+  made migration tests control `QT_PLATFORM_ENV` and `QT_DATABASE_URL` explicitly.
+
+Focused verification:
+
+```text
+tests/platform/test_config.py tests/platform/test_database.py tests/platform/test_models.py
+22 passed in 0.79s
+
+tests/integration/test_migrations.py
+3 passed in 2.25s
+
+Ruff
+All checks passed!
+
+Mypy
+Success: no issues found in 8 source files
+```
+
+Full suite:
+
+```bash
+QT_TEST_POSTGRES_URL=postgresql+psycopg://qt:qt@127.0.0.1:55432/qt_test \
+  .venv/bin/pytest -q
+```
+
+```text
+174 passed in 26.36s
+```
+
+### Follow-up Files
+
+- `src/qt/platform/database.py`
+- `src/qt/platform/models.py`
+- `migrations/env.py`
+- `migrations/versions/20260721_0002_audit_event_immutability.py`
+- `tests/platform/test_database.py`
+- `tests/platform/test_models.py`
+- `tests/integration/test_migrations.py`
+
+### Self-Review
+
+- The URL rewrite is prefix-only and leaves explicit SQLAlchemy drivers and non-PostgreSQL
+  URLs unchanged.
+- The append-only database guarantee lives in a new forward migration rather than changing
+  the already-committed base revision; downgrade removes both database objects.
+- `UTCDateTime` changes Python value validation/result hydration only; its underlying SQL
+  representation remains `TIMESTAMP WITH TIME ZONE`, so no schema type migration is needed.
+- PostgreSQL tests isolate each run in a unique schema and remove it with `CASCADE`.
+- `git diff --check`, focused tests, Ruff, Mypy, and the full suite passed.
