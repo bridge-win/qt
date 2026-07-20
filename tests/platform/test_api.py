@@ -82,7 +82,7 @@ def test_liveness_has_no_dependency_side_effects(settings: PlatformSettings) -> 
     assert calls == 0
 
 
-def test_app_owned_engine_is_disposed_once_without_liveness_connecting(
+def test_app_owned_engine_is_disposed_after_every_lifespan_without_liveness_connecting(
     settings: PlatformSettings,
 ) -> None:
     app = create_app(settings=settings)
@@ -102,7 +102,9 @@ def test_app_owned_engine_is_disposed_once_without_liveness_connecting(
     event.listen(owned_engine, "engine_disposed", record_disposal)
     try:
         with TestClient(app) as client:
-            response = client.get("/api/health/live")
+            first_response = client.get("/api/health/live")
+        with TestClient(app) as client:
+            second_response = client.get("/api/health/live")
         observed_connections = connections
         observed_disposals = disposals
     finally:
@@ -111,9 +113,10 @@ def test_app_owned_engine_is_disposed_once_without_liveness_connecting(
         if disposals == 0:
             owned_engine.dispose()
 
-    assert response.json() == {"status": "alive"}
+    assert first_response.json() == {"status": "alive"}
+    assert second_response.json() == {"status": "alive"}
     assert observed_connections == 0
-    assert observed_disposals == 1
+    assert observed_disposals == 2
 
 
 def test_externally_owned_engine_is_not_disposed(

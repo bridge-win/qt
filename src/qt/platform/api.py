@@ -55,17 +55,14 @@ def create_app(
     if resolved_session_factory is None:
         engine = create_platform_engine(resolved_settings)
         resolved_session_factory = create_session_factory(engine)
-    engine_disposed = False
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        nonlocal engine_disposed
         try:
             yield
         finally:
-            if engine is not None and not engine_disposed:
+            if engine is not None:
                 engine.dispose()
-                engine_disposed = True
 
     commands = CommandRepository(resolved_session_factory, clock=clock)
     operations = OperationsRepository(resolved_session_factory, clock=clock)
