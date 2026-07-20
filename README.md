@@ -315,6 +315,9 @@ See [`docs/operations.md`](docs/operations.md) for the full runbook, and
 signal generation to safe live trading.
 See [`docs/RESEARCH-EARNING.md`](docs/RESEARCH-EARNING.md) for the
 research-backed opportunity map behind the intel scanners and wick catcher.
+See [`docs/RESEARCH-FRAMEWORKS-2026.md`](docs/RESEARCH-FRAMEWORKS-2026.md)
+for the 2026 open-source framework survey (backtesting, HFT, LLM agents,
+portfolio) and the staged upgrade plan derived from it.
 
 ## Batch backtests (`qt.strategies.sim`)
 
