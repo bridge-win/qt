@@ -163,8 +163,8 @@ python deploy/create_platform_env.py create \
 ```
 
 For production, first set `IMMUTABLE_IMAGE` to the verified registry-qualified
-digest captured in Section 13, then create the file on a host where it does not
-already exist:
+`name@sha256:<64 lowercase hex>` digest captured in Section 13, then create the
+file on a host where it does not already exist:
 
 ```bash
 python deploy/create_platform_env.py create \
@@ -187,7 +187,11 @@ docker compose --env-file .env.platform -f docker-compose.platform.yml config --
 
 Never commit `.env.platform`, generated Compose output, database archives, or
 runtime data. `QT_PLATFORM_ENV` must be `production` on production hosts and
-`staging` on staging or local hosts.
+`staging` on staging or local hosts. The helper rejects malformed references,
+control or whitespace characters, env/comment syntax, duplicate assignments,
+and mutable production tags. Staging permits only the explicit local tag
+`qt-platform:local` or a valid digest; production requires a registry-qualified
+digest reference.
 
 ## 12. Local Build And Start
 
@@ -324,9 +328,17 @@ worker is intentionally unhealthy until the service restarts.
 Keep backups outside the source repository. The helper creates the target
 directory at mode `0700` and a restrictive temporary file in that directory,
 runs `pg_dump` into the temporary name, validates it with
-`pg_restore --list`, atomically publishes it with `mv`, writes a mode-`0600`
-checksum, and verifies it with `sha256sum --check`. Its exit trap removes all
-temporary or production-looking partial artifacts on failure.
+`pg_restore --list`, and derives a per-invocation publication ID from the UTC
+timestamp, process ID, and random `mktemp` token. It publishes the archive and
+mode-`0600` checksum with an atomic hard link from same-directory temporary
+files, then verifies them with `sha256sum --check`.
+
+Concurrent invocations therefore cannot overwrite one another, even within the
+same second. Failure and signal cleanup removes a published path only when it
+is the same inode as that invocation's temporary file, so it cannot remove
+another invocation's successful archive. The helper uses no shared lock, so
+there is no stale-lock recovery procedure; interrupted temporary files are
+removed by its trap.
 
 ```bash
 QT_BACKUP_DIR=/var/backups/qt-platform deploy/platform-backup.sh
@@ -339,7 +351,7 @@ archive and schema, and remove the test database even if a check fails. Replace
 
 ```bash
 set -eu
-BACKUP=/var/backups/qt-platform/qt-platform-YYYYMMDDTHHMMSSZ.dump
+BACKUP=/var/backups/qt-platform/qt-platform-YYYYMMDDTHHMMSSZ-PID-TOKEN.dump
 CHECKSUM="${BACKUP}.sha256"
 (cd "$(dirname "$BACKUP")" && sha256sum --check "$(basename "$CHECKSUM")")
 docker compose --env-file .env.platform -f docker-compose.platform.yml exec -T postgres sh -ec 'pg_restore --list >/dev/null' < "$BACKUP"

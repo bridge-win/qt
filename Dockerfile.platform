@@ -50,7 +50,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_ROOT_USER_ACTION=ignore
 
-RUN printf 'qt:x:10001:\n' >> /etc/group \
+RUN --network=none printf 'qt:x:10001:\n' >> /etc/group \
     && printf 'qt:x:10001:10001:QT platform:/nonexistent:/bin/false\n' >> /etc/passwd
 
 COPY --from=builder /wheelhouse /wheelhouse

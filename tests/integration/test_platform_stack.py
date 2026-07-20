@@ -61,6 +61,19 @@ def _dockerfile_instructions() -> list[tuple[str, str]]:
     ]
 
 
+def _dockerfile_stages() -> list[tuple[str, list[tuple[str, str]]]]:
+    stages: list[tuple[str, list[tuple[str, str]]]] = []
+    for instruction, arguments in _dockerfile_instructions():
+        if instruction == "FROM":
+            match = re.search(r"\s+AS\s+([A-Za-z0-9._-]+)$", arguments, re.IGNORECASE)
+            assert match is not None
+            stages.append((match.group(1), []))
+            continue
+        assert stages
+        stages[-1][1].append((instruction, arguments))
+    return stages
+
+
 def _compose_config(*files: Path, image: str) -> dict[str, object]:
     environment = os.environ.copy()
     environment["QT_PLATFORM_IMAGE"] = image
@@ -234,26 +247,41 @@ def test_compose_requires_database_secrets_without_real_defaults() -> None:
 def test_platform_image_is_multistage_wheel_only_and_non_root() -> None:
     dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
     instructions = _dockerfile_instructions()
-    from_instructions = [arguments for instruction, arguments in instructions if instruction == "FROM"]
-    run_instructions = [arguments for instruction, arguments in instructions if instruction == "RUN"]
+    stages = _dockerfile_stages()
 
     assert dockerfile.startswith(
         "# syntax=docker/dockerfile:1.7@"
         "sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
     )
-    assert from_instructions == [
-        f"{PYTHON_IMAGE} AS wheelhouse",
-        f"{PYTHON_IMAGE} AS builder",
-        f"{PYTHON_IMAGE} AS runtime",
+    assert [name for name, _instructions in stages] == [
+        "wheelhouse",
+        "builder",
+        "runtime",
     ]
-    assert any("pip download" in run and "--require-hashes" in run for run in run_instructions)
-    offline_runs = [run for run in run_instructions if run.startswith("--network=none ")]
-    assert len(offline_runs) >= 3
+    dependency_download_indexes = [
+        index
+        for index, (instruction, arguments) in enumerate(instructions)
+        if instruction == "RUN"
+        and "pip download" in arguments
+        and "--require-hashes" in arguments
+    ]
+    assert len(dependency_download_indexes) == 1
+    download_index = dependency_download_indexes[0]
+    later_runs = [
+        arguments
+        for index, (instruction, arguments) in enumerate(instructions)
+        if index > download_index and instruction == "RUN"
+    ]
+    assert later_runs
+    assert all(run.startswith("--network=none ") for run in later_runs)
     assert any(
         "pip wheel" in run and "--no-build-isolation" in run and "--no-index" in run
-        for run in offline_runs
+        for run in later_runs
     )
-    assert any("pip install" in run and "setuptools==" in run and "wheel==" in run for run in offline_runs)
+    assert any(
+        "pip install" in run and "setuptools==" in run and "wheel==" in run
+        for run in later_runs
+    )
     assert "--no-cache-dir" in dockerfile
     assert "--no-compile" in dockerfile
     assert "USER qt" in dockerfile
@@ -395,6 +423,9 @@ def test_operations_runbook_covers_platform_lifecycle_and_recovery() -> None:
         "immutable digest",
         "previously recorded digest",
         "sha256sum --check",
+        "per-invocation publication ID",
+        "atomic hard link",
+        "name@sha256",
     )
     for phrase in required_phrases:
         assert phrase.lower() in operations.lower()
