@@ -18,6 +18,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     op.execute(
         """
         CREATE FUNCTION prevent_audit_event_mutation()
@@ -38,5 +40,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     op.execute("DROP TRIGGER IF EXISTS trg_audit_events_append_only ON audit_events")
     op.execute("DROP FUNCTION IF EXISTS prevent_audit_event_mutation()")

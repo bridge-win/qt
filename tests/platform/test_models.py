@@ -35,6 +35,9 @@ def engine() -> Iterator[Engine]:
         PlatformSettings(
             platform_env="test",
             database_url="sqlite+pysqlite:///:memory:",
+            database_echo=False,
+            command_lease_seconds=30,
+            worker_stale_seconds=60,
             _env_file=None,  # type: ignore[call-arg]
         )
     )

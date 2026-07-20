@@ -23,6 +23,12 @@ PLATFORM_TABLES = {
     "runtime_leases",
     "worker_heartbeats",
 }
+MIGRATION_SUBPROCESS_ENVIRONMENT = {
+    "QT_PLATFORM_ENV": "production",
+    "QT_DATABASE_ECHO": "false",
+    "QT_COMMAND_LEASE_SECONDS": "30",
+    "QT_WORKER_STALE_SECONDS": "60",
+}
 
 
 def _schema_url(database_url: str, schema_name: str) -> URL:
@@ -57,14 +63,40 @@ def _alembic_config() -> Config:
     return Config(str(PROJECT_ROOT / "alembic.ini"))
 
 
+def _set_migration_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    database_url: str,
+    platform_env: str = "test",
+) -> None:
+    monkeypatch.setenv("QT_PLATFORM_ENV", platform_env)
+    monkeypatch.setenv("QT_DATABASE_URL", database_url)
+    monkeypatch.setenv("QT_DATABASE_ECHO", "false")
+    monkeypatch.setenv("QT_COMMAND_LEASE_SECONDS", "30")
+    monkeypatch.setenv("QT_WORKER_STALE_SECONDS", "60")
+
+
+def test_sqlite_upgrade_to_head_and_downgrade_to_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'platform.db'}"
+    _set_migration_environment(monkeypatch, database_url)
+    engine = create_engine(database_url)
+
+    command.upgrade(_alembic_config(), "head")
+
+    assert set(inspect(engine).get_table_names()) >= PLATFORM_TABLES
+
+    command.downgrade(_alembic_config(), "base")
+
+    assert PLATFORM_TABLES.isdisjoint(inspect(engine).get_table_names())
+    engine.dispose()
+
+
 def _run_offline_migration(database_url: str) -> subprocess.CompletedProcess[str]:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("QT_")}
-    environment.update(
-        {
-            "QT_PLATFORM_ENV": "production",
-            "QT_DATABASE_URL": database_url,
-        }
-    )
+    environment.update(MIGRATION_SUBPROCESS_ENVIRONMENT)
+    environment["QT_DATABASE_URL"] = database_url
     return subprocess.run(
         [
             sys.executable,
@@ -95,12 +127,24 @@ def test_offline_migration_uses_validated_normalized_environment_url() -> None:
     assert "CREATE TABLE platform_commands" in valid.stdout
 
 
+def test_offline_migration_ignores_invalid_parent_platform_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QT_DATABASE_ECHO", "not-a-boolean")
+    monkeypatch.setenv("QT_COMMAND_LEASE_SECONDS", "not-an-integer")
+    monkeypatch.setenv("QT_WORKER_STALE_SECONDS", "not-an-integer")
+
+    result = _run_offline_migration("postgresql://qt:qt@127.0.0.1:55432/qt_test")
+
+    assert result.returncode == 0, result.stderr
+    assert "CREATE TABLE platform_commands" in result.stdout
+
+
 def test_audit_events_reject_update_and_delete_in_postgresql(
     isolated_postgresql_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("QT_PLATFORM_ENV", "test")
-    monkeypatch.setenv("QT_DATABASE_URL", isolated_postgresql_url)
+    _set_migration_environment(monkeypatch, isolated_postgresql_url)
     engine = create_engine(isolated_postgresql_url)
     command.upgrade(_alembic_config(), "head")
     event_id = uuid4()
@@ -155,8 +199,7 @@ def test_upgrade_from_empty_schema_and_downgrade_cleanly(
     isolated_postgresql_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("QT_PLATFORM_ENV", "test")
-    monkeypatch.setenv("QT_DATABASE_URL", isolated_postgresql_url)
+    _set_migration_environment(monkeypatch, isolated_postgresql_url)
     engine = create_engine(isolated_postgresql_url)
     assert inspect(engine).get_table_names() == []
 

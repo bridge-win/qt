@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
 
 from qt.platform.config import PlatformSettings
@@ -14,6 +15,9 @@ def test_create_platform_engine_normalizes_bare_postgresql_url() -> None:
     settings = PlatformSettings(
         platform_env="test",
         database_url="postgresql://qt:qt@127.0.0.1:55432/qt_test",
+        database_echo=False,
+        command_lease_seconds=30,
+        worker_stale_seconds=60,
         _env_file=None,  # type: ignore[call-arg]
     )
 
@@ -26,10 +30,16 @@ def test_create_platform_engine_normalizes_bare_postgresql_url() -> None:
     engine.dispose()
 
 
-def test_create_platform_engine_connects_to_sqlite() -> None:
+def test_create_platform_engine_connects_to_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("QT_DATABASE_ECHO", "not-a-boolean")
+    monkeypatch.setenv("QT_COMMAND_LEASE_SECONDS", "not-an-integer")
+    monkeypatch.setenv("QT_WORKER_STALE_SECONDS", "not-an-integer")
     settings = PlatformSettings(
         platform_env="test",
         database_url="sqlite+pysqlite:///:memory:",
+        database_echo=False,
+        command_lease_seconds=30,
+        worker_stale_seconds=60,
         _env_file=None,  # type: ignore[call-arg]
     )
 
@@ -44,6 +54,9 @@ def test_create_session_factory_keeps_committed_values_available() -> None:
         PlatformSettings(
             platform_env="test",
             database_url="sqlite+pysqlite:///:memory:",
+            database_echo=False,
+            command_lease_seconds=30,
+            worker_stale_seconds=60,
             _env_file=None,  # type: ignore[call-arg]
         )
     )
