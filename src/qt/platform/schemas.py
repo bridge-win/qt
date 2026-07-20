@@ -65,3 +65,30 @@ class LeaseGrant(BaseModel):
     owner_id: str
     fencing_token: int
     expires_at: AwareDatetime
+
+
+class WorkerHeartbeatView(BaseModel):
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    id: UUID
+    role: str
+    instance_id: str
+    status: WorkerStatus
+    version: str
+    details: dict[str, object]
+    last_seen_at: AwareDatetime
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+class AuditEventView(BaseModel):
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    id: UUID
+    actor_id: str
+    action: str
+    target_type: str
+    target_id: str
+    correlation_id: str
+    details: dict[str, object]
+    created_at: AwareDatetime
