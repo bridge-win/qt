@@ -10,6 +10,9 @@ def test_trading_environment_does_not_select_platform_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("QT_ENV", "research")
+    monkeypatch.setenv("QT_PLATFORM_ENV", "production")
+    monkeypatch.delenv("QT_PLATFORM_ENV", raising=False)
+    monkeypatch.delenv("QT_DATABASE_URL", raising=False)
 
     settings = PlatformSettings(_env_file=None)
 
