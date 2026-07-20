@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
+from sqlalchemy.orm import ORMExecuteState
 
 from qt.platform.commands import CommandRepository, StaleCommandClaimError
 from qt.platform.config import PlatformSettings
@@ -52,6 +53,21 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
 @pytest.fixture
 def repository(engine: Engine, clock: MutableClock) -> CommandRepository:
     return CommandRepository(create_session_factory(engine), clock=clock)
+
+
+def delayed_repository(
+    engine: Engine,
+    clock: MutableClock,
+    *,
+    delay_seconds: int,
+) -> CommandRepository:
+    session_factory = create_session_factory(engine)
+
+    def advance_clock(_execute_state: ORMExecuteState) -> None:
+        clock.advance(seconds=delay_seconds)
+
+    event.listen(session_factory, "do_orm_execute", advance_clock, once=True)
+    return CommandRepository(session_factory, clock=clock)
 
 
 def enqueue_noop(
@@ -115,6 +131,21 @@ def test_active_claim_cannot_be_claimed_twice(repository: CommandRepository) -> 
     assert second is None
 
 
+def test_claim_lease_starts_after_candidate_lock_returns(
+    repository: CommandRepository,
+    engine: Engine,
+    clock: MutableClock,
+) -> None:
+    enqueue_noop(repository)
+    delayed = delayed_repository(engine, clock, delay_seconds=10)
+
+    claimed = delayed.claim_next(worker_id="worker-a", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.claim_expires_at == clock.current + timedelta(seconds=30)
+    assert claimed.updated_at == clock.current
+
+
 def test_expired_claim_is_recovered_with_fresh_fencing_token(
     repository: CommandRepository,
     clock: MutableClock,
@@ -133,15 +164,28 @@ def test_expired_claim_is_recovered_with_fresh_fencing_token(
     assert recovered.claim_expires_at == clock.current + timedelta(seconds=30)
 
 
-def test_command_at_attempt_limit_is_never_reclaimed(
+def test_expired_final_attempt_is_failed_before_claiming_later_command(
     repository: CommandRepository,
     clock: MutableClock,
 ) -> None:
-    enqueue_noop(repository, max_attempts=1)
+    exhausted = enqueue_noop(repository, idempotency_key="exhausted", max_attempts=1)
     require_claim(repository)
     clock.advance(seconds=31)
+    later = enqueue_noop(repository, idempotency_key="later")
 
-    assert repository.claim_next(worker_id="worker-b", lease_seconds=30) is None
+    claimed = repository.claim_next(worker_id="worker-b", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.id == later.id
+    stored = repository.get(exhausted.id)
+    assert stored is not None
+    assert stored.status is CommandStatus.FAILED
+    assert stored.completed_at == clock.current
+    assert stored.error is not None
+    assert "expired" in stored.error
+    assert stored.claim_owner is None
+    assert stored.claim_token is None
+    assert stored.claim_expires_at is None
 
 
 def test_complete_requires_current_unexpired_claim(
@@ -158,6 +202,30 @@ def test_complete_requires_current_unexpired_claim(
     clock.advance(seconds=31)
     with pytest.raises(StaleCommandClaimError):
         repository.complete(command_id=queued.id, claim_token=claimed.claim_token, result={})
+
+
+@pytest.mark.parametrize("transition", ["complete", "fail"])
+def test_completion_transition_rejects_claim_that_expires_while_waiting_for_lock(
+    repository: CommandRepository,
+    engine: Engine,
+    clock: MutableClock,
+    transition: str,
+) -> None:
+    claimed = require_claim_after_enqueue(repository)
+    assert claimed.claim_token is not None
+    clock.advance(seconds=29)
+    delayed = delayed_repository(engine, clock, delay_seconds=2)
+
+    with pytest.raises(StaleCommandClaimError):
+        if transition == "complete":
+            delayed.complete(command_id=claimed.id, claim_token=claimed.claim_token, result={})
+        else:
+            delayed.fail(
+                command_id=claimed.id,
+                claim_token=claimed.claim_token,
+                error="late failure",
+                retry_delay_seconds=None,
+            )
 
 
 def test_complete_commits_terminal_result_and_clears_claim(

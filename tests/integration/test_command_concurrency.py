@@ -7,13 +7,14 @@ from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.orm import Session
 
 from qt.platform.commands import CommandRepository
 from qt.platform.config import PlatformSettings
 from qt.platform.database import create_platform_engine, create_session_factory
-from qt.platform.models import Base
+from qt.platform.models import Base, PlatformCommand
 from qt.platform.schemas import CommandType
 
 pytestmark = pytest.mark.integration
@@ -64,9 +65,22 @@ def postgresql_engine(isolated_postgresql_url: str) -> Iterator[Engine]:
 def test_concurrent_enqueue_replays_committed_command(postgresql_engine: Engine) -> None:
     barrier = Barrier(2)
 
+    def wait_before_command_flush(
+        session: Session,
+        _flush_context: object,
+        _instances: object,
+    ) -> None:
+        if session.info.get("waited_for_command_flush"):
+            return
+        if not any(isinstance(instance, PlatformCommand) for instance in session.new):
+            return
+        session.info["waited_for_command_flush"] = True
+        barrier.wait(timeout=5)
+
     def enqueue() -> UUID:
-        repository = CommandRepository(create_session_factory(postgresql_engine))
-        barrier.wait()
+        session_factory = create_session_factory(postgresql_engine)
+        event.listen(session_factory, "before_flush", wait_before_command_flush)
+        repository = CommandRepository(session_factory)
         return repository.enqueue(
             owner_id="operator",
             command_type=CommandType.START,
@@ -81,6 +95,44 @@ def test_concurrent_enqueue_replays_committed_command(postgresql_engine: Engine)
 
     assert command_ids[0] == command_ids[1]
     assert len(CommandRepository(create_session_factory(postgresql_engine)).list_recent()) == 1
+
+
+def test_claim_skips_pending_row_locked_by_another_transaction(
+    postgresql_engine: Engine,
+) -> None:
+    session_factory = create_session_factory(postgresql_engine)
+    command_id = CommandRepository(session_factory).enqueue(
+        owner_id="operator",
+        command_type=CommandType.NOOP,
+        target="worker",
+        payload={},
+        idempotency_key="locked-noop-1",
+    ).id
+    holder = session_factory()
+    holder.begin()
+    locked = holder.scalar(
+        select(PlatformCommand)
+        .where(PlatformCommand.id == command_id)
+        .with_for_update()
+    )
+    assert locked is not None
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    try:
+        repository = CommandRepository(create_session_factory(postgresql_engine))
+        future = executor.submit(repository.claim_next, worker_id="worker-b", lease_seconds=30)
+        assert future.result(timeout=2) is None
+    finally:
+        holder.rollback()
+        holder.close()
+        executor.shutdown(wait=True)
+
+    claimed = CommandRepository(create_session_factory(postgresql_engine)).claim_next(
+        worker_id="worker-b",
+        lease_seconds=30,
+    )
+    assert claimed is not None
+    assert claimed.id == command_id
 
 
 def test_two_workers_claim_one_command_once(postgresql_engine: Engine) -> None:

@@ -73,47 +73,60 @@ class CommandRepository:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
 
-        now = self._now()
-        claimable = or_(
-            and_(
-                PlatformCommand.status.in_(
-                    (CommandStatus.PENDING.value, CommandStatus.RETRY_WAIT.value)
-                ),
-                PlatformCommand.available_at <= now,
-            ),
-            and_(
-                PlatformCommand.status == CommandStatus.PROCESSING.value,
-                PlatformCommand.claim_expires_at <= now,
-            ),
-        )
-        statement = (
-            select(PlatformCommand)
-            .where(
-                claimable,
-                PlatformCommand.attempts < PlatformCommand.max_attempts,
-            )
-            .order_by(PlatformCommand.available_at, PlatformCommand.created_at)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-
         with self._session_factory() as session:
-            command = session.scalar(statement)
-            if command is None:
-                return None
+            while True:
+                candidate_time = self._now()
+                claimable = or_(
+                    and_(
+                        PlatformCommand.status.in_(
+                            (CommandStatus.PENDING.value, CommandStatus.RETRY_WAIT.value)
+                        ),
+                        PlatformCommand.available_at <= candidate_time,
+                        PlatformCommand.attempts < PlatformCommand.max_attempts,
+                    ),
+                    and_(
+                        PlatformCommand.status == CommandStatus.PROCESSING.value,
+                        PlatformCommand.claim_expires_at <= candidate_time,
+                    ),
+                )
+                statement = (
+                    select(PlatformCommand)
+                    .where(claimable)
+                    .order_by(PlatformCommand.available_at, PlatformCommand.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+                command = session.scalar(statement)
+                if command is None:
+                    return None
 
-            command.status = CommandStatus.PROCESSING.value
-            command.attempts += 1
-            command.claim_owner = worker_id
-            command.claim_token = uuid4()
-            command.claim_expires_at = now + timedelta(seconds=lease_seconds)
-            command.result = None
-            command.error = None
-            command.completed_at = None
-            command.version += 1
-            command.updated_at = now
-            session.commit()
-            return _to_view(command)
+                locked_at = self._now()
+                if (
+                    command.status == CommandStatus.PROCESSING.value
+                    and command.attempts >= command.max_attempts
+                ):
+                    command.status = CommandStatus.FAILED.value
+                    command.result = None
+                    command.error = "command claim expired after maximum attempts"
+                    command.completed_at = locked_at
+                    self._clear_claim(command)
+                    command.version += 1
+                    command.updated_at = locked_at
+                    session.commit()
+                    continue
+
+                command.status = CommandStatus.PROCESSING.value
+                command.attempts += 1
+                command.claim_owner = worker_id
+                command.claim_token = uuid4()
+                command.claim_expires_at = locked_at + timedelta(seconds=lease_seconds)
+                command.result = None
+                command.error = None
+                command.completed_at = None
+                command.version += 1
+                command.updated_at = locked_at
+                session.commit()
+                return _to_view(command)
 
     def complete(
         self,
@@ -122,9 +135,10 @@ class CommandRepository:
         claim_token: UUID,
         result: Mapping[str, object],
     ) -> CommandView:
-        now = self._now()
         with self._session_factory() as session:
-            command = self._lock_owned_claim(session, command_id, claim_token, now)
+            command = self._lock_claim(session, command_id)
+            now = self._now()
+            command = self._require_active_claim(command, command_id, claim_token, now)
             command.status = CommandStatus.SUCCEEDED.value
             command.result = dict(result)
             command.error = None
@@ -146,9 +160,10 @@ class CommandRepository:
         if retry_delay_seconds is not None and retry_delay_seconds < 0:
             raise ValueError("retry_delay_seconds cannot be negative")
 
-        now = self._now()
         with self._session_factory() as session:
-            command = self._lock_owned_claim(session, command_id, claim_token, now)
+            command = self._lock_claim(session, command_id)
+            now = self._now()
+            command = self._require_active_claim(command, command_id, claim_token, now)
             command.result = None
             command.error = error
             self._clear_claim(command)
@@ -201,18 +216,24 @@ class CommandRepository:
             )
         )
 
-    def _lock_owned_claim(
+    def _lock_claim(
         self,
         session: Session,
         command_id: UUID,
-        claim_token: UUID,
-        now: datetime,
-    ) -> PlatformCommand:
-        command = session.scalar(
+    ) -> PlatformCommand | None:
+        return session.scalar(
             select(PlatformCommand)
             .where(PlatformCommand.id == command_id)
             .with_for_update()
         )
+
+    @staticmethod
+    def _require_active_claim(
+        command: PlatformCommand | None,
+        command_id: UUID,
+        claim_token: UUID,
+        now: datetime,
+    ) -> PlatformCommand:
         if (
             command is None
             or command.status != CommandStatus.PROCESSING.value
