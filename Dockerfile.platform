@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.12.11-slim-bookworm AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+WORKDIR /build
+
+COPY requirements-platform.lock ./
+RUN python -m pip wheel \
+    --require-hashes \
+    --wheel-dir /wheels \
+    --requirement requirements-platform.lock
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN python -m pip wheel --no-deps --wheel-dir /wheels .
+
+
+FROM python:3.12.11-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+RUN printf 'qt:x:10001:\n' >> /etc/group \
+    && printf 'qt:x:10001:10001:QT platform:/nonexistent:/bin/false\n' >> /etc/passwd
+
+COPY --from=builder /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-compile --no-index --find-links=/wheels qt==0.1.0 \
+    && python -c "import shutil; shutil.rmtree('/wheels')"
+
+WORKDIR /app
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY scripts/run_platform_api.py scripts/run_trading_worker.py ./scripts/
+COPY --chmod=0555 deploy/platform-entrypoint.sh /usr/local/bin/platform-entrypoint
+
+USER qt
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/platform-entrypoint"]
+CMD ["api", "--host", "0.0.0.0", "--port", "8876"]

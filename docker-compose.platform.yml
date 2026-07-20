@@ -1,0 +1,131 @@
+x-platform-image: &platform-image
+  image: qt-platform:${QT_PLATFORM_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: Dockerfile.platform
+
+x-platform-environment: &platform-environment
+  QT_PLATFORM_ENV: ${QT_PLATFORM_ENV:?set QT_PLATFORM_ENV}
+  QT_DATABASE_URL: ${QT_DATABASE_URL:?set QT_DATABASE_URL}
+  QT_DATABASE_ECHO: ${QT_DATABASE_ECHO:-false}
+  QT_COMMAND_LEASE_SECONDS: ${QT_COMMAND_LEASE_SECONDS:-30}
+  QT_WORKER_STALE_SECONDS: ${QT_WORKER_STALE_SECONDS:-60}
+
+x-platform-runtime: &platform-runtime
+  <<: *platform-image
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+
+services:
+  postgres:
+    image: postgres:17.9-bookworm
+    init: true
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 60s
+
+  migrate:
+    <<: *platform-runtime
+    command: ["migrate"]
+    restart: "no"
+    environment: *platform-environment
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *platform-runtime
+    command:
+      - api
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8876"
+      - --expected-worker
+      - trading:${QT_TRADING_WORKER_ID:?set QT_TRADING_WORKER_ID}
+    restart: unless-stopped
+    environment: *platform-environment
+    networks:
+      - backend
+      - edge
+    ports:
+      - ${QT_PLATFORM_API_BIND:-127.0.0.1}:${QT_PLATFORM_API_PORT:-8876}:8876
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - qt.platform.probe
+        - api
+        - --base-url
+        - http://127.0.0.1:8876
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 30s
+
+  trading-worker:
+    <<: *platform-runtime
+    command:
+      - trading-worker
+      - --worker-id
+      - ${QT_TRADING_WORKER_ID:?set QT_TRADING_WORKER_ID}
+      - --poll-seconds
+      - ${QT_TRADING_WORKER_POLL_SECONDS:-1}
+    restart: unless-stopped
+    environment: *platform-environment
+    networks:
+      - backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - qt.platform.probe
+        - worker
+        - --role
+        - trading
+        - --instance-id
+        - ${QT_TRADING_WORKER_ID:?set QT_TRADING_WORKER_ID}
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:
+
+networks:
+  backend:
+    internal: true
+  edge:

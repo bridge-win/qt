@@ -26,3 +26,34 @@ jobs:
         run: ruff check src tests
       - name: Test
         run: pytest -q
+
+  platform-postgresql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.9-bookworm
+        env:
+          POSTGRES_DB: qt_test
+          POSTGRES_USER: qt_test
+          POSTGRES_PASSWORD: qt_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qt_test -d qt_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: PostgreSQL integration tests
+        env:
+          QT_TEST_POSTGRES_URL: postgresql+psycopg://qt_test:qt_test_only@127.0.0.1:5432/qt_test
+        run: pytest tests/integration -q
