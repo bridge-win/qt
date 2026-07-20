@@ -17,7 +17,7 @@
 - Workers claim commands before side effects and complete them only with the active claim token.
 - Runtime ownership uses renewable leases and monotonically increasing fencing tokens.
 - All timestamps are timezone-aware UTC values.
-- Production configuration must fail closed when `QT_ENV=production` uses a non-PostgreSQL URL.
+- Production configuration must fail closed when `QT_PLATFORM_ENV=production` uses a non-PostgreSQL URL.
 - No direct QuantDinger source is copied in this phase.
 - Each task follows red-green-refactor and ends with a focused commit.
 
@@ -65,12 +65,12 @@
 ```python
 def test_production_requires_postgresql() -> None:
     with pytest.raises(ValidationError, match="PostgreSQL"):
-        PlatformSettings(env="production", database_url="sqlite+pysqlite:///:memory:")
+        PlatformSettings(platform_env="production", database_url="sqlite+pysqlite:///:memory:")
 
 
 def test_development_accepts_sqlite() -> None:
     settings = PlatformSettings(
-        env="development",
+        platform_env="development",
         database_url="sqlite+pysqlite:///:memory:",
     )
     assert settings.database_url.startswith("sqlite")
@@ -100,18 +100,18 @@ Add to `[project].dependencies` in `pyproject.toml`:
 class PlatformSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
 
-    env: str = "development"
+    platform_env: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "sqlite+pysqlite:///data/runtime/platform.db"
     database_echo: bool = False
     command_lease_seconds: int = Field(default=30, ge=5, le=3600)
     worker_stale_seconds: int = Field(default=60, ge=10, le=3600)
 
     @model_validator(mode="after")
-    def require_postgresql_in_production(self) -> PlatformSettings:
-        if self.env == "production" and not self.database_url.startswith(
+    def require_postgresql_in_staging_and_production(self) -> PlatformSettings:
+        if self.platform_env in ("staging", "production") and not self.database_url.startswith(
             ("postgresql://", "postgresql+psycopg://")
         ):
-            raise ValueError("production platform storage must use PostgreSQL")
+            raise ValueError("staging and production platform storage must use PostgreSQL")
         return self
 ```
 

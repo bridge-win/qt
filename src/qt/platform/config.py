@@ -15,7 +15,7 @@ class PlatformSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
 
-    env: PlatformEnvironment = "development"
+    platform_env: PlatformEnvironment = "development"
     database_url: str = "sqlite+pysqlite:///data/runtime/platform.db"
     database_echo: bool = False
     command_lease_seconds: int = Field(default=30, ge=5, le=3600)
@@ -23,7 +23,7 @@ class PlatformSettings(BaseSettings):
 
     @model_validator(mode="after")
     def require_postgresql_in_staging_and_production(self) -> PlatformSettings:
-        if self.env in ("staging", "production") and not self.database_url.startswith(
+        if self.platform_env in ("staging", "production") and not self.database_url.startswith(
             ("postgresql://", "postgresql+psycopg://")
         ):
             raise ValueError("staging and production platform storage must use PostgreSQL")
