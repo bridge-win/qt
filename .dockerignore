@@ -18,3 +18,8 @@ data
 docs
 logs
 tests
+backups
+*.dump
+*.dump.sha256
+*.dump.tmp
+*.dump.sha256.tmp

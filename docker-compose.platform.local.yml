@@ -1,0 +1,14 @@
+x-local-image: &local-image
+  image: ${QT_PLATFORM_LOCAL_IMAGE:-qt-platform:local}
+  pull_policy: never
+  build:
+    context: .
+    dockerfile: Dockerfile.platform
+
+services:
+  migrate:
+    <<: *local-image
+  api:
+    <<: *local-image
+  trading-worker:
+    <<: *local-image

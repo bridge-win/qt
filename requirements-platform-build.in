@@ -1,0 +1,3 @@
+# Keep these requirements aligned with pyproject.toml [build-system].
+setuptools>=68
+wheel

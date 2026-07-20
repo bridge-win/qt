@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -8,6 +10,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = PROJECT_ROOT / "docker-compose.platform.yml"
+LOCAL_COMPOSE_PATH = PROJECT_ROOT / "docker-compose.platform.local.yml"
 DOCKERFILE_PATH = PROJECT_ROOT / "Dockerfile.platform"
 ENTRYPOINT_PATH = PROJECT_ROOT / "deploy" / "platform-entrypoint.sh"
 ENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.platform.example"
@@ -15,6 +18,14 @@ DOCKERIGNORE_PATH = PROJECT_ROOT / ".dockerignore"
 LOCK_PATH = PROJECT_ROOT / "requirements-platform.lock"
 CI_PATH = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 OPERATIONS_PATH = PROJECT_ROOT / "docs" / "operations.md"
+PYTHON_IMAGE = (
+    "python:3.12.11-slim-bookworm@"
+    "sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
+)
+POSTGRES_IMAGE = (
+    "postgres:17.9-bookworm@"
+    "sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641"
+)
 
 
 def _yaml(path: Path) -> dict[str, object]:
@@ -28,6 +39,46 @@ def _services() -> dict[str, dict[str, object]]:
     services = compose["services"]
     assert isinstance(services, dict)
     return cast(dict[str, dict[str, object]], services)
+
+
+def _dockerfile_instructions() -> list[tuple[str, str]]:
+    logical_lines: list[str] = []
+    current = ""
+    for raw_line in DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        current = f"{current} {stripped}".strip()
+        if current.endswith("\\"):
+            current = current[:-1].rstrip()
+            continue
+        logical_lines.append(current)
+        current = ""
+    assert not current
+    return [
+        (instruction.upper(), arguments)
+        for instruction, arguments in (line.split(maxsplit=1) for line in logical_lines)
+    ]
+
+
+def _compose_config(*files: Path, image: str) -> dict[str, object]:
+    environment = os.environ.copy()
+    environment["QT_PLATFORM_IMAGE"] = image
+    command = ["docker", "compose", "--env-file", str(ENV_EXAMPLE_PATH)]
+    for path in files:
+        command.extend(("-f", str(path)))
+    command.append("config")
+    result = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    loaded = yaml.safe_load(result.stdout)
+    assert isinstance(loaded, dict)
+    return cast(dict[str, object], loaded)
 
 
 def test_compose_separates_roles_and_orders_migrations() -> None:
@@ -45,6 +96,49 @@ def test_compose_separates_roles_and_orders_migrations() -> None:
         }
 
 
+def test_compose_uses_configurable_immutable_image_and_explicit_local_build() -> None:
+    services = _services()
+    image_reference = "${QT_PLATFORM_IMAGE:?set QT_PLATFORM_IMAGE}"
+
+    for service_name in ("migrate", "api", "trading-worker"):
+        assert services[service_name]["image"] == image_reference
+        assert "build" not in services[service_name]
+    assert "qt-platform:" not in COMPOSE_PATH.read_text(encoding="utf-8")
+
+    assert LOCAL_COMPOSE_PATH.is_file()
+    local_services = cast(dict[str, dict[str, object]], _yaml(LOCAL_COMPOSE_PATH)["services"])
+    for service_name in ("migrate", "api", "trading-worker"):
+        assert local_services[service_name]["image"] == (
+            "${QT_PLATFORM_LOCAL_IMAGE:-qt-platform:local}"
+        )
+        assert local_services[service_name]["pull_policy"] == "never"
+        assert local_services[service_name]["build"] == {
+            "context": ".",
+            "dockerfile": "Dockerfile.platform",
+        }
+
+
+def test_compose_resolves_registry_digest_and_local_build_references() -> None:
+    digest_image = (
+        "registry.example.invalid/qt/platform@"
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    )
+    production = _compose_config(COMPOSE_PATH, image=digest_image)
+    production_services = cast(dict[str, dict[str, object]], production["services"])
+    for service_name in ("migrate", "api", "trading-worker"):
+        assert production_services[service_name]["image"] == digest_image
+
+    local = _compose_config(
+        COMPOSE_PATH,
+        LOCAL_COMPOSE_PATH,
+        image="qt-platform:ignored-by-local-override",
+    )
+    local_services = cast(dict[str, dict[str, object]], local["services"])
+    for service_name in ("migrate", "api", "trading-worker"):
+        assert local_services[service_name]["image"] == "qt-platform:local"
+        assert local_services[service_name]["pull_policy"] == "never"
+
+
 def test_compose_persists_only_postgresql_and_isolates_backend() -> None:
     compose = _yaml(COMPOSE_PATH)
     services = _services()
@@ -58,6 +152,7 @@ def test_compose_persists_only_postgresql_and_isolates_backend() -> None:
     assert services["postgres"]["networks"] == ["backend"]
     assert services["trading-worker"]["networks"] == ["backend"]
     assert set(cast(list[str], services["api"]["networks"])) == {"backend", "edge"}
+    assert services["postgres"]["image"] == POSTGRES_IMAGE
 
 
 def test_compose_hardens_every_application_container() -> None:
@@ -138,19 +233,34 @@ def test_compose_requires_database_secrets_without_real_defaults() -> None:
 
 def test_platform_image_is_multistage_wheel_only_and_non_root() -> None:
     dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+    instructions = _dockerfile_instructions()
+    from_instructions = [arguments for instruction, arguments in instructions if instruction == "FROM"]
+    run_instructions = [arguments for instruction, arguments in instructions if instruction == "RUN"]
 
-    assert len(re.findall(r"^FROM python:3\.12[^\n]+", dockerfile, re.MULTILINE)) == 2
-    assert " AS builder" in dockerfile
-    assert "pip wheel" in dockerfile
-    assert "--require-hashes" in dockerfile
-    assert "--no-index" in dockerfile
+    assert dockerfile.startswith(
+        "# syntax=docker/dockerfile:1.7@"
+        "sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+    )
+    assert from_instructions == [
+        f"{PYTHON_IMAGE} AS wheelhouse",
+        f"{PYTHON_IMAGE} AS builder",
+        f"{PYTHON_IMAGE} AS runtime",
+    ]
+    assert any("pip download" in run and "--require-hashes" in run for run in run_instructions)
+    offline_runs = [run for run in run_instructions if run.startswith("--network=none ")]
+    assert len(offline_runs) >= 3
+    assert any(
+        "pip wheel" in run and "--no-build-isolation" in run and "--no-index" in run
+        for run in offline_runs
+    )
+    assert any("pip install" in run and "setuptools==" in run and "wheel==" in run for run in offline_runs)
     assert "--no-cache-dir" in dockerfile
     assert "--no-compile" in dockerfile
     assert "USER qt" in dockerfile
     assert "WORKDIR /app" in dockerfile
     assert 'ENTRYPOINT ["/usr/local/bin/platform-entrypoint"]' in dockerfile
     assert "STOPSIGNAL SIGTERM" in dockerfile
-    runtime = dockerfile.split("FROM ", maxsplit=2)[-1]
+    runtime = dockerfile.rsplit("\nFROM ", maxsplit=1)[-1]
     assert "build-essential" not in runtime
     assert "gcc" not in runtime
     assert "COPY --from=builder" in runtime
@@ -166,7 +276,34 @@ def test_platform_dependencies_are_fully_pinned_and_build_context_is_clean() -> 
     assert requirement_lines
     assert all("==" in line for line in requirement_lines)
     assert "--hash=sha256:" in lock
+    assert re.search(r"^setuptools==[^\s]+ \\$", lock, re.MULTILINE)
+    assert re.search(r"^wheel==[^\s]+ \\$", lock, re.MULTILINE)
     assert {".env", ".env.*", ".git", ".superpowers", "data", "tests"} <= dockerignore
+
+
+def test_backup_artifacts_are_excluded_from_git_and_build_context() -> None:
+    candidates = (
+        "backups/review.dump",
+        "review.dump",
+        "review.dump.sha256",
+        "review.dump.tmp",
+        "review.dump.sha256.tmp",
+    )
+    for candidate in candidates:
+        subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", candidate],
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+
+    dockerignore = set(DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines())
+    assert {
+        "backups",
+        "*.dump",
+        "*.dump.sha256",
+        "*.dump.tmp",
+        "*.dump.sha256.tmp",
+    } <= dockerignore
 
 
 def test_entrypoint_allowlists_roles_and_execs_without_eval() -> None:
@@ -183,11 +320,14 @@ def test_entrypoint_allowlists_roles_and_execs_without_eval() -> None:
 def test_environment_example_is_safe_and_reproducible() -> None:
     example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
 
-    assert "QT_PLATFORM_ENV=production" in example
+    assert "QT_PLATFORM_ENV=staging" in example
     assert "POSTGRES_PASSWORD=__GENERATE_ME__" in example
     assert "QT_DATABASE_URL=postgresql+psycopg://" in example
     assert "__GENERATE_ME__" in example
     assert "secrets.token_urlsafe" in example
+    assert "deploy/create_platform_env.py" in example
+    assert "Path.write_text" not in example
+    assert "QT_PLATFORM_IMAGE=qt-platform:local" in example
     assert "docker compose --env-file .env.platform" in example
     assert "qt:qt" not in example
 
@@ -202,8 +342,26 @@ def test_ci_adds_postgresql_integration_without_weakening_existing_matrix() -> N
     )
     assert matrix["python-version"] == ["3.10", "3.11", "3.12"]
     integration = jobs["platform-postgresql"]
-    assert cast(dict[str, object], integration["services"])["postgres"]
+    postgres_service = cast(
+        dict[str, dict[str, object]], integration["services"]
+    )["postgres"]
+    assert postgres_service["image"] == POSTGRES_IMAGE
     assert integration["runs-on"] == "ubuntu-latest"
+    assert "platform-image" in jobs
+    image_job = jobs["platform-image"]
+    image_steps = cast(list[dict[str, object]], image_job["steps"])
+    image_commands = "\n".join(
+        str(step.get("run", "")) for step in image_steps
+    )
+    assert "docker compose" in image_commands and "config --quiet" in image_commands
+    assert "docker buildx build" in image_commands
+    assert "linux/amd64,linux/arm64" in image_commands
+
+    for job in jobs.values():
+        for step in cast(list[dict[str, object]], job["steps"]):
+            uses = step.get("uses")
+            if uses is not None:
+                assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", str(uses))
     text = CI_PATH.read_text(encoding="utf-8")
     assert "python-version: \"3.12\"" in text
     assert "QT_TEST_POSTGRES_URL" in text
@@ -230,6 +388,13 @@ def test_operations_runbook_covers_platform_lifecycle_and_recovery() -> None:
         "clean volume",
         "secret rotation",
         "run_all.py",
+        "deploy/create_platform_env.py",
+        "deploy/platform-backup.sh",
+        "docker-compose.platform.local.yml",
+        "docker buildx imagetools inspect",
+        "immutable digest",
+        "previously recorded digest",
+        "sha256sum --check",
     )
     for phrase in required_phrases:
         assert phrase.lower() in operations.lower()

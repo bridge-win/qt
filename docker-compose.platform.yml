@@ -1,8 +1,5 @@
 x-platform-image: &platform-image
-  image: qt-platform:${QT_PLATFORM_IMAGE_TAG:-local}
-  build:
-    context: .
-    dockerfile: Dockerfile.platform
+  image: ${QT_PLATFORM_IMAGE:?set QT_PLATFORM_IMAGE}
 
 x-platform-environment: &platform-environment
   QT_PLATFORM_ENV: ${QT_PLATFORM_ENV:?set QT_PLATFORM_ENV}
@@ -25,7 +22,7 @@ x-platform-runtime: &platform-runtime
 
 services:
   postgres:
-    image: postgres:17.9-bookworm
+    image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
     init: true
     restart: unless-stopped
     environment:
