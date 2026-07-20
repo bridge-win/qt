@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, status
@@ -54,6 +55,17 @@ def create_app(
     if resolved_session_factory is None:
         engine = create_platform_engine(resolved_settings)
         resolved_session_factory = create_session_factory(engine)
+    engine_disposed = False
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal engine_disposed
+        try:
+            yield
+        finally:
+            if engine is not None and not engine_disposed:
+                engine.dispose()
+                engine_disposed = True
 
     commands = CommandRepository(resolved_session_factory, clock=clock)
     operations = OperationsRepository(resolved_session_factory, clock=clock)
@@ -65,7 +77,7 @@ def create_app(
         clock=clock,
     )
 
-    app = FastAPI(title="QT Control API", version="1.0.0")
+    app = FastAPI(title="QT Control API", version="1.0.0", lifespan=lifespan)
     app.state.platform_engine = engine
     app.state.command_repository = commands
     app.state.health_service = health

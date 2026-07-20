@@ -162,6 +162,55 @@ def test_worker_health_is_deterministic_for_fresh_stale_and_missing_workers(
     assert healthy.last_seen_at == datetime(2026, 7, 21, 7, 59, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("reported_status", list(WorkerStatus))
+def test_fresh_worker_health_respects_every_reported_status(
+    engine: Engine,
+    clock: MutableClock,
+    reported_status: WorkerStatus,
+) -> None:
+    session_factory = create_session_factory(engine)
+    operations = OperationsRepository(session_factory, clock=clock)
+    operations.record_heartbeat(
+        role="trading",
+        instance_id="trading-a",
+        status=reported_status,
+        version="1.0.0",
+        details={},
+    )
+    service = HealthService(
+        session_factory,
+        operations,
+        expected_workers=(ExpectedWorker(role="trading", instance_id="trading-a"),),
+        stale_after_seconds=60,
+        clock=clock,
+    )
+
+    report = service.worker_health()
+
+    expected_health = "healthy" if reported_status is WorkerStatus.HEALTHY else "unhealthy"
+    assert report.workers[0].status.value == expected_health
+    assert report.workers[0].reported_status is reported_status
+    assert report.status == ("healthy" if expected_health == "healthy" else "degraded")
+
+
+def test_worker_health_fails_closed_without_expected_workers(
+    engine: Engine,
+    clock: MutableClock,
+) -> None:
+    session_factory = create_session_factory(engine)
+    service = HealthService(
+        session_factory,
+        OperationsRepository(session_factory),
+        stale_after_seconds=60,
+        clock=clock,
+    )
+
+    report = service.worker_health()
+
+    assert report.status == "degraded"
+    assert report.workers == ()
+
+
 def test_worker_health_requires_an_aware_clock(engine: Engine) -> None:
     session_factory = create_session_factory(engine)
     service = HealthService(

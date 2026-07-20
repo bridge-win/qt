@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from qt.platform.database import SessionFactory
@@ -39,15 +39,16 @@ class ReadinessReport(BaseModel):
 
 class WorkerHealthStatus(str, Enum):
     HEALTHY = "healthy"
+    UNHEALTHY = "unhealthy"
     STALE = "stale"
     MISSING = "missing"
 
 
 class ExpectedWorker(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
 
-    role: str
-    instance_id: str
+    role: str = Field(min_length=1)
+    instance_id: str = Field(min_length=1)
 
 
 class WorkerHealthView(BaseModel):
@@ -121,7 +122,8 @@ class HealthService:
         )
         overall_status: Literal["healthy", "degraded"] = (
             "healthy"
-            if all(worker.status is WorkerHealthStatus.HEALTHY for worker in workers)
+            if workers
+            and all(worker.status is WorkerHealthStatus.HEALTHY for worker in workers)
             else "degraded"
         )
         return WorkerHealthReport(status=overall_status, workers=workers)
@@ -141,11 +143,12 @@ class HealthService:
                 version=None,
                 last_seen_at=None,
             )
-        health_status = (
-            WorkerHealthStatus.STALE
-            if now - heartbeat.last_seen_at > self._stale_after
-            else WorkerHealthStatus.HEALTHY
-        )
+        if now - heartbeat.last_seen_at > self._stale_after:
+            health_status = WorkerHealthStatus.STALE
+        elif heartbeat.status is WorkerStatus.HEALTHY:
+            health_status = WorkerHealthStatus.HEALTHY
+        else:
+            health_status = WorkerHealthStatus.UNHEALTHY
         return WorkerHealthView(
             role=expected.role,
             instance_id=expected.instance_id,

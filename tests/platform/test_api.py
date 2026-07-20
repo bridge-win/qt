@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, event
 
@@ -77,6 +80,63 @@ def test_liveness_has_no_dependency_side_effects(settings: PlatformSettings) -> 
     assert response.status_code == 200
     assert response.json() == {"status": "alive"}
     assert calls == 0
+
+
+def test_app_owned_engine_is_disposed_once_without_liveness_connecting(
+    settings: PlatformSettings,
+) -> None:
+    app = create_app(settings=settings)
+    owned_engine = cast(Engine, app.state.platform_engine)
+    connections = 0
+    disposals = 0
+
+    def record_connection(_dbapi_connection: object, _connection_record: object) -> None:
+        nonlocal connections
+        connections += 1
+
+    def record_disposal(_engine: Engine) -> None:
+        nonlocal disposals
+        disposals += 1
+
+    event.listen(owned_engine, "connect", record_connection)
+    event.listen(owned_engine, "engine_disposed", record_disposal)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/health/live")
+        observed_connections = connections
+        observed_disposals = disposals
+    finally:
+        event.remove(owned_engine, "connect", record_connection)
+        event.remove(owned_engine, "engine_disposed", record_disposal)
+        if disposals == 0:
+            owned_engine.dispose()
+
+    assert response.json() == {"status": "alive"}
+    assert observed_connections == 0
+    assert observed_disposals == 1
+
+
+def test_externally_owned_engine_is_not_disposed(
+    settings: PlatformSettings,
+    engine: Engine,
+) -> None:
+    disposals = 0
+
+    def record_disposal(_engine: Engine) -> None:
+        nonlocal disposals
+        disposals += 1
+
+    event.listen(engine, "engine_disposed", record_disposal)
+    try:
+        app = create_app(settings=settings, session_factory=create_session_factory(engine))
+        with TestClient(app) as client:
+            assert client.get("/api/health/live").status_code == 200
+        observed_disposals = disposals
+    finally:
+        event.remove(engine, "engine_disposed", record_disposal)
+
+    assert app.state.platform_engine is None
+    assert observed_disposals == 0
 
 
 def test_readiness_returns_503_when_database_is_unavailable(
@@ -281,3 +341,105 @@ def test_platform_api_entrypoint_is_typed_and_strategy_free() -> None:
     assert help_result.returncode == 0
     assert "--host HOST" in help_result.stdout
     assert "--port PORT" in help_result.stdout
+    assert "--expected-worker ROLE:INSTANCE" in help_result.stdout
+
+
+def test_platform_api_entrypoint_wires_expected_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_platform_api_script()
+    settings_marker = object()
+    app_marker = FastAPI()
+    captured: dict[str, object] = {}
+
+    def fake_settings() -> object:
+        return settings_marker
+
+    def fake_create_app(
+        *,
+        settings: object,
+        expected_workers: Sequence[ExpectedWorker],
+    ) -> FastAPI:
+        captured["settings"] = settings
+        captured["expected_workers"] = tuple(expected_workers)
+        return app_marker
+
+    def fake_run(app: object, *, host: str, port: int) -> None:
+        captured["app"] = app
+        captured["host"] = host
+        captured["port"] = port
+
+    monkeypatch.setattr(module, "PlatformSettings", fake_settings)
+    monkeypatch.setattr(module, "create_app", fake_create_app)
+    monkeypatch.setattr(module.uvicorn, "run", fake_run)
+    main = cast(Callable[[Sequence[str] | None], None], module.main)
+
+    main(
+        (
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--expected-worker",
+            "trading:trading-a",
+            "--expected-worker",
+            "job:job-a",
+        )
+    )
+
+    assert captured == {
+        "settings": settings_marker,
+        "expected_workers": (
+            ExpectedWorker(role="trading", instance_id="trading-a"),
+            ExpectedWorker(role="job", instance_id="job-a"),
+        ),
+        "app": app_marker,
+        "host": "0.0.0.0",
+        "port": 9000,
+    }
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (("--expected-worker", "trading"), "ROLE:INSTANCE"),
+        (("--expected-worker", "trading:worker:extra"), "exactly one ':'"),
+        (("--expected-worker", ":worker-a"), "non-empty role and instance"),
+        (("--expected-worker", "trading:"), "non-empty role and instance"),
+        (
+            (
+                "--expected-worker",
+                "trading:worker-a",
+                "--expected-worker",
+                "trading:worker-a",
+            ),
+            "duplicate expected worker",
+        ),
+    ],
+)
+def test_platform_api_entrypoint_rejects_invalid_expected_workers(
+    arguments: tuple[str, ...],
+    message: str,
+) -> None:
+    script_path = Path(__file__).parents[2] / "scripts" / "run_platform_api.py"
+
+    result = subprocess.run(
+        [sys.executable, str(script_path), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert message in result.stderr
+
+
+def _load_platform_api_script() -> ModuleType:
+    script_path = Path(__file__).parents[2] / "scripts" / "run_platform_api.py"
+    spec = importlib.util.spec_from_file_location("qt_task5_run_platform_api", script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load platform API entrypoint")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
