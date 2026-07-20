@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import uuid4
 
 import pytest
@@ -199,6 +199,7 @@ def test_concurrent_first_heartbeat_is_upserted(
 ) -> None:
     clock = MutableClock(datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc))
     barrier = Barrier(2)
+    winner_committed = Event()
 
     def heartbeat(status: WorkerStatus) -> WorkerHeartbeatView:
         session_factory = create_session_factory(postgresql_engine)
@@ -214,15 +215,20 @@ def test_concurrent_first_heartbeat_is_upserted(
                 return
             session.info["waited_for_heartbeat_flush"] = True
             barrier.wait(timeout=5)
+            if status is WorkerStatus.HEALTHY:
+                assert winner_committed.wait(timeout=5)
 
         event.listen(session_factory, "before_flush", wait_before_heartbeat_flush)
-        return OperationsRepository(session_factory, clock=clock).record_heartbeat(
+        view = OperationsRepository(session_factory, clock=clock).record_heartbeat(
             role="trading",
             instance_id="worker-a",
             status=status,
             version="1.0.0",
-            details={"status": status.value},
+            details={"requested_status": status.value},
         )
+        if status is WorkerStatus.STARTING:
+            winner_committed.set()
+        return view
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         views = [
@@ -234,6 +240,14 @@ def test_concurrent_first_heartbeat_is_upserted(
         ]
 
     assert views[0].id == views[1].id
+    assert views[0].status is WorkerStatus.STARTING
+    assert views[0].details == {"requested_status": "starting"}
+    assert views[1].status is WorkerStatus.HEALTHY
+    assert views[1].details == {"requested_status": "healthy"}
     with create_session_factory(postgresql_engine)() as session:
+        stored = session.scalar(select(WorkerHeartbeat))
         row_count = session.scalar(select(func.count()).select_from(WorkerHeartbeat))
+    assert stored is not None
     assert row_count == 1
+    assert stored.status == WorkerStatus.HEALTHY.value
+    assert stored.details == {"requested_status": "healthy"}

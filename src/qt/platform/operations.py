@@ -140,8 +140,8 @@ class OperationsRepository:
 
 
 def _to_heartbeat_view(heartbeat: WorkerHeartbeat) -> WorkerHeartbeatView:
-    return WorkerHeartbeatView.model_validate(heartbeat).model_copy(deep=True)
+    return WorkerHeartbeatView.model_validate(heartbeat)
 
 
 def _to_audit_view(audit_event: AuditEvent) -> AuditEventView:
-    return AuditEventView.model_validate(audit_event).model_copy(deep=True)
+    return AuditEventView.model_validate(audit_event)

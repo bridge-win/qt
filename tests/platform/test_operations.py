@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import cast
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -12,7 +14,7 @@ from qt.platform.config import PlatformSettings
 from qt.platform.database import create_platform_engine, create_session_factory
 from qt.platform.models import Base
 from qt.platform.operations import OperationsRepository
-from qt.platform.schemas import WorkerStatus
+from qt.platform.schemas import AuditEventView, WorkerHeartbeatView, WorkerStatus
 
 
 class MutableClock:
@@ -147,6 +149,65 @@ def test_append_audit_and_list_newest_first(
 def test_audit_limit_must_be_positive(repository: OperationsRepository) -> None:
     with pytest.raises(ValueError, match="limit must be positive"):
         repository.list_audit(limit=0)
+
+
+@pytest.mark.parametrize("view_kind", ["heartbeat", "audit"])
+def test_operation_view_details_are_recursively_immutable_and_serialize(
+    view_kind: str,
+) -> None:
+    now = datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc)
+    details: dict[str, object] = {
+        "runtime": {
+            "states": ["starting", "healthy"],
+            "owners": {"worker-a", "worker-b"},
+        }
+    }
+    if view_kind == "heartbeat":
+        view: WorkerHeartbeatView | AuditEventView = WorkerHeartbeatView.model_validate(
+            {
+                "id": uuid4(),
+                "role": "trading",
+                "instance_id": "worker-a",
+                "status": WorkerStatus.HEALTHY,
+                "version": "1.0.0",
+                "details": details,
+                "last_seen_at": now,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    else:
+        view = AuditEventView.model_validate(
+            {
+                "id": uuid4(),
+                "actor_id": "worker-a",
+                "action": "strategy.started",
+                "target_type": "strategy",
+                "target_id": "dca",
+                "correlation_id": "request-1",
+                "details": details,
+                "created_at": now,
+            }
+        )
+
+    immutable_details = view.details
+    runtime = cast(dict[str, object], immutable_details["runtime"])
+    states = cast(list[str], runtime["states"])
+    owners = cast(set[str], runtime["owners"])
+
+    with pytest.raises(TypeError):
+        cast(dict[str, object], immutable_details)["new"] = True
+    with pytest.raises(TypeError):
+        runtime["state"] = "failed"
+    with pytest.raises(AttributeError):
+        states.append("failed")
+    with pytest.raises(AttributeError):
+        owners.add("worker-c")
+
+    serialized = cast(dict[str, object], view.model_dump(mode="json")["details"])
+    serialized_runtime = cast(dict[str, object], serialized["runtime"])
+    assert serialized_runtime["states"] == ["starting", "healthy"]
+    assert set(cast(list[str], serialized_runtime["owners"])) == {"worker-a", "worker-b"}
 
 
 def test_operations_clock_must_be_aware(engine: Engine) -> None:
