@@ -58,6 +58,7 @@ class WorkerStatus(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     STOPPING = "stopping"
+    STOPPED = "stopped"
     FAILED = "failed"
 
 

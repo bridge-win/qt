@@ -222,6 +222,13 @@ def test_upgrade_from_empty_schema_and_downgrade_cleanly(
         "uq_worker_heartbeat_identity",
         "ck_worker_heartbeats_status",
     } <= _constraint_names(engine, "worker_heartbeats")
+    heartbeat_constraints = inspector.get_check_constraints("worker_heartbeats")
+    status_constraint = next(
+        constraint
+        for constraint in heartbeat_constraints
+        if constraint["name"] == "ck_worker_heartbeats_status"
+    )
+    assert "stopped" in status_constraint["sqltext"]
     assert "ix_command_claimable" in {
         index["name"] for index in inspector.get_indexes("platform_commands")
     }
