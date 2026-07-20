@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import signal
 from collections.abc import Callable, Iterator, Sequence
@@ -97,6 +98,8 @@ def _poll_seconds(value: str) -> float:
         poll_seconds = float(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("poll seconds must be a number") from error
+    if not math.isfinite(poll_seconds):
+        raise argparse.ArgumentTypeError("poll seconds must be finite")
     if poll_seconds <= 0:
         raise argparse.ArgumentTypeError("poll seconds must be greater than 0")
     if poll_seconds > 300:

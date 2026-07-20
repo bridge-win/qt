@@ -410,6 +410,9 @@ def test_stop_is_idempotent() -> None:
         ("worker-a", "1.0.0", 3601, 1.0, 1, 60, "command_lease_seconds"),
         ("worker-a", "1.0.0", 30, 0.0, 1, 60, "poll_seconds"),
         ("worker-a", "1.0.0", 30, 301.0, 1, 60, "poll_seconds"),
+        ("worker-a", "1.0.0", 30, float("nan"), 1, 60, "poll_seconds"),
+        ("worker-a", "1.0.0", 30, float("inf"), 1, 60, "poll_seconds"),
+        ("worker-a", "1.0.0", 30, float("-inf"), 1, 60, "poll_seconds"),
         ("worker-a", "1.0.0", 30, 1.0, 0, 60, "retry_base_seconds"),
         ("worker-a", "1.0.0", 30, 1.0, 10, 5, "retry_max_seconds"),
     ],
@@ -470,6 +473,37 @@ def test_worker_entrypoint_rejects_invalid_arguments(
 
     assert result.returncode == 2
     assert message in result.stderr
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_worker_entrypoint_rejects_non_finite_poll_before_runtime_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    module = _load_worker_script()
+    settings_calls = 0
+    engine_calls = 0
+
+    def fail_settings() -> object:
+        nonlocal settings_calls
+        settings_calls += 1
+        raise AssertionError("settings must not be constructed")
+
+    def fail_engine(_settings: object) -> object:
+        nonlocal engine_calls
+        engine_calls += 1
+        raise AssertionError("engine must not be constructed")
+
+    monkeypatch.setattr(module, "PlatformSettings", fail_settings)
+    monkeypatch.setattr(module, "create_platform_engine", fail_engine)
+    main = cast(Callable[[Sequence[str] | None], None], module.main)
+
+    with pytest.raises(SystemExit) as raised:
+        main(("--worker-id", "worker-a", "--poll-seconds", value))
+
+    assert raised.value.code == 2
+    assert settings_calls == 0
+    assert engine_calls == 0
 
 
 def test_worker_entrypoint_wires_once_and_disposes_owned_engine(

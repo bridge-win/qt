@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping
 from threading import Event
 from typing import Protocol, cast
@@ -88,7 +89,7 @@ class TradingWorker:
             raise ValueError(
                 f"command_lease_seconds must be between 5 and {_MAX_COMMAND_LEASE_SECONDS}"
             )
-        if not 0 < poll_seconds <= _MAX_POLL_SECONDS:
+        if not math.isfinite(poll_seconds) or not 0 < poll_seconds <= _MAX_POLL_SECONDS:
             raise ValueError(f"poll_seconds must be greater than 0 and at most {_MAX_POLL_SECONDS:g}")
         if not 1 <= retry_base_seconds <= _MAX_RETRY_SECONDS:
             raise ValueError(
