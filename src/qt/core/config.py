@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 class ThresholdConfig(BaseModel):
@@ -109,7 +109,23 @@ class ExecutionConfig(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="QT_",
+        env_file=".env",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return env_settings, dotenv_settings, init_settings, file_secret_settings
 
     env: str = "research"
     log_level: str = "INFO"
@@ -138,16 +154,6 @@ class Settings(BaseSettings):
     live_trading_enabled: bool = False
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-    for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
 def load_settings(config_path: str | Path | None = None) -> Settings:
     """Load Settings from optional YAML, then overlay env (.env / process env)."""
 
@@ -158,11 +164,7 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
             with p.open() as fh:
                 yaml_data = yaml.safe_load(fh) or {}
 
-    # Build Settings: env always wins, but YAML provides defaults for nested models.
-    env_settings = Settings()
     if not yaml_data:
-        return env_settings
+        return Settings()
 
-    base = env_settings.model_dump()
-    merged = _deep_merge(base, yaml_data)
-    return Settings(**merged)
+    return Settings(**yaml_data)
