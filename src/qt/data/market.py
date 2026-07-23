@@ -23,6 +23,13 @@ _TF_MS = {
 }
 
 
+def _as_utc_timestamp(value: datetime) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
 def fetch_ohlcv(
     exchange_id: str = "binance",
     symbol: str = "BTC/USDT",
@@ -48,8 +55,10 @@ def fetch_ohlcv(
         until = datetime.now(tz=timezone.utc)
     if since is None:
         since = until - timedelta(days=365)
-    since_ms = int(since.timestamp() * 1000)
-    until_ms = int(until.timestamp() * 1000)
+    since_utc = _as_utc_timestamp(since)
+    until_utc = _as_utc_timestamp(until)
+    since_ms = int(since_utc.timestamp() * 1000)
+    until_ms = int(until_utc.timestamp() * 1000)
     step = _TF_MS.get(timeframe)
     if step is None:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -76,6 +85,6 @@ def fetch_ohlcv(
     df = df.drop_duplicates(subset="ts_ms").sort_values("ts_ms")
     df["ts"] = pd.to_datetime(df["ts_ms"], unit="ms", utc=True)
     df = df.drop(columns="ts_ms").set_index("ts")
-    df = df[df.index <= pd.Timestamp(until, tz="UTC")]
+    df = df[df.index <= until_utc]
     return df.astype({"open": "float64", "high": "float64", "low": "float64",
                       "close": "float64", "volume": "float64"})
