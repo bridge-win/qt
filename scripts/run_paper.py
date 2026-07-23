@@ -57,20 +57,23 @@ def main() -> None:
         fills=FillModel(fee_bps=settings.execution.fee_bps,
                         slippage_bps=settings.execution.slippage_bps),
     )
+    venue = settings.execution.venue
+    symbol = settings.execution.symbol
+    market_symbol = symbol.replace("/", "")
 
-    position = Position(symbol="BTC/USDT")
+    position = Position(symbol=symbol)
 
     def run_cycle(cycle: int) -> dict[str, object]:
         nonlocal position
         now = datetime.now(tz=timezone.utc)
         since = now - timedelta(days=180)
-        ohlcv = fetch_ohlcv("binance", "BTC/USDT", "1h", since=since)
+        ohlcv = fetch_ohlcv(venue, symbol, "1h", since=since)
         if ohlcv.empty:
-            log.warning("no_ohlcv_pulled")
+            log.warning("no_ohlcv_pulled", venue=venue, symbol=symbol)
             return {"cycle": cycle, "status": "no_ohlcv", "position_qty": position.qty}
-        funding = fetch_funding_rate_history(symbol="BTCUSDT", since=since)
-        oi = fetch_open_interest_history(symbol="BTCUSDT")
-        lsr = fetch_long_short_ratio(symbol="BTCUSDT")
+        funding = fetch_funding_rate_history(symbol=market_symbol, since=since)
+        oi = fetch_open_interest_history(symbol=market_symbol)
+        lsr = fetch_long_short_ratio(symbol=market_symbol)
         fg = fetch_fear_greed(limit=0)
         mvrv = fetch_coinmetrics("mvrv", since=since)
 
@@ -85,21 +88,21 @@ def main() -> None:
         sigs = sig_engine.to_signals(score)
         latest_ts = ohlcv.index[-1]
         mark = float(ohlcv["close"].iloc[-1])
-        equity = broker.equity({"BTC/USDT": mark})
+        equity = broker.equity({symbol: mark})
 
         # Exit check
         if not position.is_flat:
             dec = risk_engine.evaluate_exit(position, mark, now)
             if dec.action == "close":
                 tr = broker.submit(
-                    Order(symbol="BTC/USDT", side=OrderSide.SELL, type=OrderType.MARKET,
+                    Order(symbol=symbol, side=OrderSide.SELL, type=OrderType.MARKET,
                           qty=position.qty, note=dec.reason),
                     mark_price=mark,
                 )
                 pnl = (tr.price - position.avg_price) * position.qty - tr.fee
                 risk_engine.record_realized(pnl, now)
                 console.print(f"[yellow]EXIT[/] {tr} pnl={pnl:.2f} reason={dec.reason}")
-                position = Position(symbol="BTC/USDT")
+                position = Position(symbol=symbol)
 
         # Entry check: only on bars whose timestamp matches the latest signal.
         sig_for_now = next((s for s in sigs if s.ts == latest_ts.to_pydatetime()), None)
@@ -107,7 +110,7 @@ def main() -> None:
             alert(
                 "BTC buy opportunity detected",
                 severity="critical",
-                symbol="BTC/USDT",
+                symbol=symbol,
                 bar_ts=latest_ts.isoformat(),
                 mark_price=round(mark, 2),
                 score=round(float(sig_for_now.score), 3),
@@ -122,12 +125,12 @@ def main() -> None:
             if dec.action == "open" and dec.size_quote > 0:
                 qty = dec.size_quote / mark
                 tr = broker.submit(
-                    Order(symbol="BTC/USDT", side=OrderSide.BUY, type=OrderType.MARKET,
+                    Order(symbol=symbol, side=OrderSide.BUY, type=OrderType.MARKET,
                           qty=qty, note=dec.reason),
                     mark_price=mark,
                 )
                 position = Position(
-                    symbol="BTC/USDT", qty=tr.qty, avg_price=tr.price, opened_ts=now,
+                    symbol=symbol, qty=tr.qty, avg_price=tr.price, opened_ts=now,
                     stop_price=dec.stop_price, take_profit_price=dec.take_profit_price,
                     time_stop_ts=dec.time_stop_ts,
                 )
