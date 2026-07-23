@@ -37,6 +37,7 @@ def test_write_backtest_artifacts(tmp_path: Path) -> None:
         tmp_path,
         ohlcv_key="binance_BTCUSDT_1h",
         initial_cash=100.0,
+        data_fingerprint="abc123",
         sources={"ohlcv": "binance_BTCUSDT_1h"},
     )
 
@@ -46,6 +47,7 @@ def test_write_backtest_artifacts(tmp_path: Path) -> None:
     assert artifact.signals_path.exists()
     summary = json.loads(artifact.summary_path.read_text())
     assert summary["metrics"]["profit_factor"] is None
+    assert summary["data_fingerprint"] == "abc123"
     latest = latest_backtest_summary(tmp_path)
     assert latest is not None
     assert latest["run_id"] == artifact.run_id

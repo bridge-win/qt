@@ -74,6 +74,7 @@ def test_run_carry_with_supplied_funding() -> None:
     out = run_strategy_backtest("carry", ohlcv, funding=funding, allow_synthetic=False)
     assert out.synthetic is False
     assert len(out.equity) > 0
+    assert out.data_fingerprint
 
 
 def test_write_artifacts(tmp_path: Path) -> None:
@@ -83,3 +84,14 @@ def test_write_artifacts(tmp_path: Path) -> None:
     assert (run_dir / "trades.csv").exists()
     assert (run_dir / "summary.json").exists()
     assert (tmp_path / "strategy_latest.json").exists()
+    summary = (run_dir / "summary.json").read_text(encoding="utf-8")
+    assert "data_fingerprint" in summary
+
+
+def test_run_strategy_backtest_rejects_invalid_real_ohlcv() -> None:
+    ohlcv = synthetic_btc_ohlcv(days=30)
+    invalid = ohlcv.copy()
+    invalid.iloc[0, invalid.columns.get_loc("low")] = invalid["close"].iloc[0] * 2.0
+
+    with pytest.raises(ValueError, match="low"):
+        run_strategy_backtest("dca", invalid, allow_synthetic=False)

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from qt.backtest.engine import Backtester
+from qt.backtest.validation import ohlcv_fingerprint
 from qt.core.config import RiskConfig, ThresholdConfig
 
 
@@ -35,3 +37,32 @@ def test_backtest_no_trades_with_strict_config(synthetic_ohlcv: pd.DataFrame) ->
     assert result.metrics.num_trades == 0
     # Equity should be flat (cash only)
     assert result.equity_curve.iloc[0] == result.equity_curve.iloc[-1] == 10_000
+
+
+def test_backtest_rejects_unsorted_real_ohlcv(synthetic_ohlcv: pd.DataFrame) -> None:
+    invalid = synthetic_ohlcv.iloc[[1, 0, *range(2, len(synthetic_ohlcv))]]
+    bt = Backtester(thresholds=ThresholdConfig(), risk_cfg=RiskConfig(), initial_cash=10_000)
+
+    with pytest.raises(ValueError, match="sorted"):
+        bt.run(ohlcv=invalid)
+
+
+def test_backtest_rejects_invalid_ohlcv_bar(synthetic_ohlcv: pd.DataFrame) -> None:
+    invalid = synthetic_ohlcv.copy()
+    invalid.iloc[0, invalid.columns.get_loc("high")] = invalid["close"].iloc[0] * 0.5
+    bt = Backtester(thresholds=ThresholdConfig(), risk_cfg=RiskConfig(), initial_cash=10_000)
+
+    with pytest.raises(ValueError, match="high"):
+        bt.run(ohlcv=invalid)
+
+
+def test_ohlcv_fingerprint_is_stable_and_changes_with_data(
+    synthetic_ohlcv: pd.DataFrame,
+) -> None:
+    original = ohlcv_fingerprint(synthetic_ohlcv)
+    same = ohlcv_fingerprint(synthetic_ohlcv.copy())
+    changed = synthetic_ohlcv.copy()
+    changed.iloc[-1, changed.columns.get_loc("close")] += 1.0
+
+    assert original == same
+    assert original != ohlcv_fingerprint(changed)

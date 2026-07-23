@@ -48,20 +48,22 @@ def _make_broker(settings: Settings, initial_cash: float) -> Broker:
 
     Defaults to PaperBroker. Only builds a LiveBroker when execution.mode is
     'live' AND execution.live_enabled is True — and even then the LiveBroker
-    itself stays in dry_run unless explicitly disabled. Any failure to build a
-    live broker (bad key, ccxt missing, unsafe key) falls back to paper so the
-    runner never crashes and never trades unexpectedly.
+    itself stays in dry_run unless explicitly disabled. Explicit live mode
+    fails closed when the live broker cannot be built, so rehearsals never
+    silently run against paper.
     """
     exec_cfg = settings.execution
-    if getattr(exec_cfg, "mode", "paper") == "live" and getattr(exec_cfg, "live_enabled", False):
-        try:
-            from qt.execution.live import LiveBroker
+    if getattr(exec_cfg, "mode", "paper") == "live":
+        from qt.execution.live import LiveBroker, LiveTradingDisabledError
 
-            broker = LiveBroker.from_settings(settings)
-            log.info("live_broker_selected", venue=exec_cfg.venue, dry_run=exec_cfg.dry_run)
-            return broker
-        except Exception as exc:
-            log.warning("live_broker_unavailable_falling_back_to_paper", error=str(exc))
+        if not getattr(exec_cfg, "live_enabled", False):
+            raise LiveTradingDisabledError(
+                "execution.live_enabled=false blocks execution.mode=live"
+            )
+
+        broker = LiveBroker.from_settings(settings)
+        log.info("live_broker_selected", venue=exec_cfg.venue, dry_run=exec_cfg.dry_run)
+        return broker
     return PaperBroker(initial_cash=initial_cash)
 
 

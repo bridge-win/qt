@@ -297,15 +297,19 @@ factors silently drop out of the score denominator.
 
 ## Safety
 
-- Live trading is **disabled** until `QT_LIVE_TRADING_ENABLED=true` and
-  per-venue `LiveBroker.submit` is wired explicitly.
+- Live trading is **disabled** until `execution.mode=live`,
+  `execution.live_enabled=true`, and `execution.dry_run=false`. `LiveBroker`
+  submits ccxt spot market orders only after preflight, trade-only key
+  verification, BTC symbol allowlisting, cash checks, exchange min-size checks,
+  per-order/daily/exposure caps, and the kill-file gate pass.
 - Drawdown kill-switch at 20 % blocks new entries; manual reset only.
 - All decisions are explainable: each `Signal` carries the firing factors
   for audit.
 - Long-running paper mode writes `data/runtime/monitor_state.json`; the
   dashboard reads this heartbeat so deployment health is visible.
 - Backtests export `summary.json`, `equity.csv`, `trades.csv`, and
-  `signals.csv` under `data/backtests/` for reproducible review.
+  `signals.csv` under `data/backtests/` for reproducible review. Summaries
+  include `data_fingerprint` for the validated OHLCV snapshot.
 
 See [`docs/architecture.md`](docs/architecture.md) for the live-trading
 enablement checklist and [`docs/strategy.md`](docs/strategy.md) for the
@@ -344,6 +348,9 @@ qt strategy run wick             # WickCatcherBacktest
 
 qt strategy run dca --synthetic  # force synthetic data even if local data exists
 qt strategy run wick --synthetic # smoke-test wick catcher offline
+
+qt strategy run dca --real-only  # fail if real local OHLCV is missing/invalid
+qt live preflight                # verify live BTC config without placing an order
 ```
 
 Each prints final equity, x-multiple, CAGR, Sharpe, max drawdown, and trade

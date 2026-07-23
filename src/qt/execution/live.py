@@ -20,9 +20,11 @@ runner treats that as "no trade" and keeps going, never crashing.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from qt.core.config import ExecutionConfig
 from qt.core.logging import get_logger
@@ -42,6 +44,10 @@ class GuardrailBlockedError(RuntimeError):
 
 class UnsafeApiKeyError(RuntimeError):
     """Raised when the API key has withdrawal permission (or perms can't be verified)."""
+
+
+class LiveOrderRejectedError(RuntimeError):
+    """Raised when the exchange accepts no usable live fill for an order."""
 
 
 @dataclass
@@ -126,6 +132,33 @@ class LiveBroker(Broker):
         self._client = klass(params)
         return self._client
 
+    def _market_limits(self, symbol: str) -> dict[str, float | None]:
+        client = self._ccxt()
+        load_markets = getattr(client, "load_markets", None)
+        if not callable(load_markets):
+            return {"amount_min": None, "cost_min": None}
+        markets = load_markets()
+        if not isinstance(markets, dict):
+            return {"amount_min": None, "cost_min": None}
+        raw_market = markets.get(symbol)
+        if not isinstance(raw_market, dict):
+            raise GuardrailBlockedError(f"symbol {symbol} is not listed on venue {self.cfg.venue}")
+        if raw_market.get("spot") is False:
+            raise GuardrailBlockedError(f"symbol {symbol} is not a spot market")
+        limits = raw_market.get("limits")
+        if not isinstance(limits, dict):
+            return {"amount_min": None, "cost_min": None}
+        amount_limits = limits.get("amount")
+        cost_limits = limits.get("cost")
+        return {
+            "amount_min": _optional_positive_float(amount_limits.get("min"))
+            if isinstance(amount_limits, dict)
+            else None,
+            "cost_min": _optional_positive_float(cost_limits.get("min"))
+            if isinstance(cost_limits, dict)
+            else None,
+        }
+
     # ---- safety gates ----------------------------------------------------
 
     def _verify_key_is_trade_only(self) -> None:
@@ -187,6 +220,10 @@ class LiveBroker(Broker):
             raise LiveTradingDisabledError(
                 "live trading is disabled (execution.live_enabled=false)"
             )
+        if not math.isfinite(order.qty) or order.qty <= 0:
+            raise GuardrailBlockedError("order must have a positive finite quantity")
+        if not math.isfinite(mark_price) or mark_price <= 0:
+            raise GuardrailBlockedError("order must have a positive finite mark_price")
         # Kill switch file
         if self.cfg.kill_file and Path(self.cfg.kill_file).exists():
             raise GuardrailBlockedError(
@@ -204,9 +241,32 @@ class LiveBroker(Broker):
         if notional > self.cfg.max_order_quote:
             raise GuardrailBlockedError(
                 f"order notional {notional:.2f} exceeds max_order_quote "
-                f"{self.cfg.max_order_quote:.2f}"
-            )
+                    f"{self.cfg.max_order_quote:.2f}"
+                )
+        if not self.cfg.dry_run:
+            limits = self._market_limits(order.symbol)
+            amount_min = limits["amount_min"]
+            cost_min = limits["cost_min"]
+            if amount_min is not None and abs(order.qty) < amount_min:
+                raise GuardrailBlockedError(
+                    f"order quantity {abs(order.qty):.12g} is below exchange minimum "
+                    f"{amount_min:.12g}"
+                )
+            if cost_min is not None and notional < cost_min:
+                raise GuardrailBlockedError(
+                    f"order notional {notional:.2f} is below exchange minimum notional "
+                    f"{cost_min:.2f}"
+                )
         if order.side == OrderSide.BUY:
+            if not self.cfg.dry_run:
+                available_cash = self.cash()
+                estimated_fee = notional * (self.cfg.fee_bps / 10_000)
+                required_cash = notional + estimated_fee
+                if available_cash + 1e-9 < required_cash:
+                    raise GuardrailBlockedError(
+                        f"available USDT {available_cash:.2f} is below required "
+                        f"{required_cash:.2f}"
+                    )
             if self._daily.would_exceed(notional, self.cfg.max_daily_spend_quote, now):
                 raise GuardrailBlockedError(
                     f"buy would exceed daily spend cap {self.cfg.max_daily_spend_quote:.2f} "
@@ -221,6 +281,14 @@ class LiveBroker(Broker):
                 raise GuardrailBlockedError(
                     f"buy would exceed total exposure cap "
                     f"{self.cfg.max_total_exposure_quote:.2f} (current {current:.2f})"
+                )
+        elif not self.cfg.dry_run:
+            available_qty = self.position_qty(order.symbol)
+            if available_qty + 1e-12 < abs(order.qty):
+                base = order.symbol.split("/")[0]
+                raise GuardrailBlockedError(
+                    f"available {base} {available_qty:.12g} is below sell quantity "
+                    f"{abs(order.qty):.12g}"
                 )
 
     # ---- broker surface --------------------------------------------------
@@ -253,14 +321,28 @@ class LiveBroker(Broker):
                 type="market",
                 side=order.side.value,
                 amount=abs(order.qty),
-                params={"clientOrderId": client_oid},
+                params=_client_order_id_params(self.cfg.venue, client_oid),
             )
         except Exception as exc:
             log.error("live_order_failed", error=str(exc), symbol=order.symbol)
             raise
 
-        fill_px = float(resp.get("average") or resp.get("price") or mark_price)
-        filled = float(resp.get("filled") or abs(order.qty))
+        if not isinstance(resp, dict):
+            raise LiveOrderRejectedError("exchange returned a non-object order response")
+        status = str(resp.get("status") or "").lower()
+        if status in {"canceled", "cancelled", "rejected", "expired"}:
+            raise LiveOrderRejectedError(f"exchange order {status} with no fill")
+
+        filled = _positive_float(resp.get("filled"))
+        if filled is None:
+            raise LiveOrderRejectedError("exchange response contains no fill quantity")
+        fill_px = _positive_float(resp.get("average") or resp.get("price"))
+        if fill_px is None:
+            cost = _positive_float(resp.get("cost"))
+            if cost is not None:
+                fill_px = cost / filled
+        if fill_px is None:
+            raise LiveOrderRejectedError("exchange response contains no fill price")
         fee_cost = 0.0
         fee = resp.get("fee") or {}
         if isinstance(fee, dict) and fee.get("cost") is not None:
@@ -307,3 +389,32 @@ class LiveBroker(Broker):
             return {"cash": 0.0, "position_qty": 0.0}
         sym = symbol or self.cfg.symbol
         return {"cash": self.cash(), "position_qty": self.position_qty(sym)}
+
+
+def _optional_positive_float(value: object) -> float | None:
+    parsed = _positive_float(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _positive_float(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(cast(Any, value))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
+
+
+def _client_order_id_params(venue: str, client_order_id: str) -> dict[str, str]:
+    if venue == "binance":
+        return {"newClientOrderId": client_order_id}
+    if venue == "okx":
+        return {"clOrdId": client_order_id}
+    if venue == "bybit":
+        return {"orderLinkId": client_order_id}
+    if venue == "coinbase":
+        return {"client_order_id": client_order_id}
+    return {"clientOrderId": client_order_id}

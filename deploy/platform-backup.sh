@@ -32,8 +32,8 @@ cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
     if [ "$complete" -ne 1 ]; then
-        remove_owned_publication "$checksum_tmp" "$checksum_final" "$checksum_owned"
         remove_owned_publication "$archive_tmp" "$archive_final" "$archive_owned"
+        remove_owned_publication "$checksum_tmp" "$checksum_final" "$checksum_owned"
     fi
     [ -z "$archive_tmp" ] || rm -f -- "$archive_tmp"
     [ -z "$checksum_tmp" ] || rm -f -- "$checksum_tmp"
@@ -71,10 +71,10 @@ digest=$(sha256sum "$archive_tmp")
 digest=${digest%% *}
 printf '%s  %s\n' "$digest" "$(basename "$archive_final")" > "$checksum_tmp"
 
-archive_owned=1
-ln "$archive_tmp" "$archive_final"
 checksum_owned=1
 ln "$checksum_tmp" "$checksum_final"
+archive_owned=1
+ln "$archive_tmp" "$archive_final"
 (cd "$backup_dir" && sha256sum --check "$(basename "$checksum_final")")
 
 complete=1

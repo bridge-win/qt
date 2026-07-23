@@ -59,3 +59,10 @@ execution:
   slippage_bps: 8.0
   max_order_value_usdt: 100000.0
   venue: binance
+  dry_run: true
+  max_order_quote: 100.0
+  max_daily_spend_quote: 500.0
+  max_total_exposure_quote: 1000.0
+  require_trade_only_key: true
+  kill_file: data/runtime/KILL
+  symbol: BTC/USDT

@@ -18,6 +18,7 @@ ENV_TEMPLATE = PROJECT_ROOT / ".env.platform.example"
 VALID_PRODUCTION_IMAGE = (
     "registry.example.invalid:5443/team/qt/platform@sha256:" + "a" * 64
 )
+VALID_DIGEST = "sha256:" + "a" * 64
 
 
 def _run_env_creator(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -227,6 +228,43 @@ def test_environment_creator_accepts_staging_local_tag(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "image_reference",
     [
+        f"registry:5000/team/qt@{VALID_DIGEST}",
+        f"[2001:db8::1]/team/qt@{VALID_DIGEST}",
+        f"[2001:db8::1]:5443/team__ops/qt---worker@{VALID_DIGEST}",
+    ],
+)
+def test_image_validator_accepts_valid_distribution_references(
+    image_reference: str,
+) -> None:
+    from deploy.create_platform_env import validate_image_reference
+
+    validate_image_reference(image_reference, "production")
+
+
+@pytest.mark.parametrize(
+    "image_reference",
+    [
+        f"registry/team/qt@{VALID_DIGEST}",
+        f"2001:db8::1/team/qt@{VALID_DIGEST}",
+        f"[2001:db8::1]:/team/qt@{VALID_DIGEST}",
+        f"[2001:db8::1]:65536/team/qt@{VALID_DIGEST}",
+        f"[not-an-ipv6-address]:5000/team/qt@{VALID_DIGEST}",
+        f"registry:5000/team___ops/qt@{VALID_DIGEST}",
+        f"registry:5000/-team/qt@{VALID_DIGEST}",
+    ],
+)
+def test_image_validator_rejects_malformed_distribution_references(
+    image_reference: str,
+) -> None:
+    from deploy.create_platform_env import validate_image_reference
+
+    with pytest.raises(ValueError):
+        validate_image_reference(image_reference, "production")
+
+
+@pytest.mark.parametrize(
+    "image_reference",
+    [
         "qt-platform:local",
         "registry.example.invalid/team/qt:latest",
         "registry.example.invalid/team/qt@sha256:" + "b" * 63,
@@ -315,6 +353,97 @@ def test_set_image_rejects_malicious_or_duplicate_existing_environment(
     assert result.returncode != 0
     assert output.read_bytes() == original
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_set_image_rejects_symlink_without_touching_target(tmp_path: Path) -> None:
+    target = tmp_path / "protected.env"
+    original = _write_existing_env(
+        target,
+        environment="production",
+        image=VALID_PRODUCTION_IMAGE,
+    ).encode()
+    output = tmp_path / ".env.platform"
+    output.symlink_to(target)
+
+    result = _run_env_creator(
+        "set-image",
+        "--output",
+        str(output),
+        "--image-reference",
+        VALID_PRODUCTION_IMAGE.replace("a" * 64, "b" * 64),
+    )
+
+    assert result.returncode != 0
+    assert output.is_symlink()
+    assert target.read_bytes() == original
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_set_image_rejects_non_regular_output_before_read(tmp_path: Path) -> None:
+    from deploy.create_platform_env import set_image_reference
+
+    output = tmp_path / ".env.platform"
+    output.mkdir()
+
+    with pytest.raises(ValueError, match="regular file"):
+        set_image_reference(
+            output=output,
+            image_reference=VALID_PRODUCTION_IMAGE,
+        )
+
+
+def test_set_image_has_no_post_replace_chmod_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deploy.create_platform_env as platform_env
+
+    output = tmp_path / ".env.platform"
+    _write_existing_env(
+        output,
+        environment="production",
+        image=VALID_PRODUCTION_IMAGE,
+    )
+    replacement = VALID_PRODUCTION_IMAGE.replace("a" * 64, "b" * 64)
+
+    def reject_post_replace_chmod(_path: os.PathLike[str] | str, _mode: int) -> None:
+        raise AssertionError("post-replace chmod must not run")
+
+    monkeypatch.setattr(os, "chmod", reject_post_replace_chmod)
+
+    platform_env.set_image_reference(output=output, image_reference=replacement)
+
+    assert f"QT_PLATFORM_IMAGE={replacement}" in output.read_text(encoding="utf-8")
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_set_image_replace_failure_preserves_original(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deploy.create_platform_env as platform_env
+
+    output = tmp_path / ".env.platform"
+    original = _write_existing_env(
+        output,
+        environment="production",
+        image=VALID_PRODUCTION_IMAGE,
+    ).encode()
+
+    def fail_replace(_source: os.PathLike[str] | str, _target: os.PathLike[str] | str) -> None:
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="injected replace failure"):
+        platform_env.set_image_reference(
+            output=output,
+            image_reference=VALID_PRODUCTION_IMAGE.replace("a" * 64, "b" * 64),
+        )
+
+    assert output.read_bytes() == original
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_environment_creator_rejects_duplicate_template_assignments(
@@ -487,8 +616,10 @@ def test_backup_signal_cleans_owned_temporary_files_and_next_run_succeeds(
     _write_fake_docker(fake_bin / "docker")
     _write_fake_date(fake_bin / "date")
     _write_fake_ln(fake_bin / "ln")
+    _write_fake_rm(fake_bin / "rm")
     backup_dir = tmp_path / "external-backups"
     published_marker = tmp_path / "published"
+    removal_order_violation = tmp_path / "removal-order-violation"
     release_marker = tmp_path / "release"
     environment = os.environ.copy()
     environment.update(
@@ -496,6 +627,7 @@ def test_backup_signal_cleans_owned_temporary_files_and_next_run_succeeds(
             "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
             "QT_BACKUP_DIR": str(backup_dir),
             "QT_TEST_PUBLISHED_MARKER": str(published_marker),
+            "QT_TEST_REMOVAL_ORDER_VIOLATION": str(removal_order_violation),
             "QT_TEST_RELEASE_FILE": str(release_marker),
         }
     )
@@ -513,6 +645,9 @@ def test_backup_signal_cleans_owned_temporary_files_and_next_run_succeeds(
         while not published_marker.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert published_marker.exists()
+        archives = list(backup_dir.glob("qt-platform-*.dump"))
+        assert len(archives) == 1
+        assert archives[0].with_suffix(".dump.sha256").is_file()
 
         os.killpg(process.pid, signal.SIGTERM)
         process.communicate(timeout=10)
@@ -522,6 +657,7 @@ def test_backup_signal_cleans_owned_temporary_files_and_next_run_succeeds(
             process.wait(timeout=5)
 
     assert process.returncode != 0
+    assert not removal_order_violation.exists()
     assert backup_dir.is_dir()
     assert list(backup_dir.iterdir()) == []
 
@@ -546,6 +682,55 @@ def test_backup_signal_cleans_owned_temporary_files_and_next_run_succeeds(
         capture_output=True,
         text=True,
     )
+
+
+def test_backup_signal_after_checksum_before_archive_removes_owned_partial(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_docker(fake_bin / "docker")
+    _write_fake_date(fake_bin / "date")
+    _write_fake_ln(fake_bin / "ln")
+    backup_dir = tmp_path / "external-backups"
+    published_marker = tmp_path / "checksum-published"
+    release_marker = tmp_path / "release"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+            "QT_BACKUP_DIR": str(backup_dir),
+            "QT_TEST_CHECKSUM_PUBLISHED_MARKER": str(published_marker),
+            "QT_TEST_RELEASE_FILE": str(release_marker),
+        }
+    )
+    process = subprocess.Popen(
+        [str(BACKUP_SCRIPT)],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not published_marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert published_marker.exists()
+        assert not list(backup_dir.glob("qt-platform-*.dump"))
+        assert len(list(backup_dir.glob("qt-platform-*.dump.sha256"))) == 1
+
+        os.killpg(process.pid, signal.SIGTERM)
+        process.communicate(timeout=10)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+
+    assert process.returncode != 0
+    assert backup_dir.is_dir()
+    assert list(backup_dir.iterdir()) == []
 
 
 def _write_fake_docker(path: Path) -> None:
@@ -598,6 +783,14 @@ def _write_fake_ln(path: Path) -> None:
 set -eu
 /bin/ln "$@"
 case "${2:-}" in
+    *qt-platform-*.dump.sha256)
+        if [ -n "${QT_TEST_CHECKSUM_PUBLISHED_MARKER:-}" ]; then
+            : > "$QT_TEST_CHECKSUM_PUBLISHED_MARKER"
+            while [ ! -e "$QT_TEST_RELEASE_FILE" ]; do
+                sleep 0.05
+            done
+        fi
+        ;;
     *qt-platform-*.dump)
         if [ -n "${QT_TEST_PUBLISHED_MARKER:-}" ]; then
             : > "$QT_TEST_PUBLISHED_MARKER"
@@ -607,6 +800,29 @@ case "${2:-}" in
         fi
         ;;
 esac
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_rm(path: Path) -> None:
+    path.write_text(
+        """#!/bin/sh
+set -eu
+target=
+for argument in "$@"; do
+    target=$argument
+done
+case "$target" in
+    *qt-platform-*.dump.sha256)
+        archive=${target%.sha256}
+        if [ -e "$archive" ] && [ -n "${QT_TEST_REMOVAL_ORDER_VIOLATION:-}" ]; then
+            : > "$QT_TEST_REMOVAL_ORDER_VIOLATION"
+        fi
+        ;;
+esac
+exec /bin/rm "$@"
 """,
         encoding="utf-8",
     )

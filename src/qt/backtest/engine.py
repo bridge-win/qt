@@ -21,6 +21,7 @@ import pandas as pd
 
 from qt.backtest.fills import FillModel
 from qt.backtest.metrics import Metrics, compute_metrics
+from qt.backtest.validation import validate_ohlcv
 from qt.core.config import RiskConfig, ThresholdConfig
 from qt.core.logging import get_logger
 from qt.core.types import OrderSide, Position, Trade
@@ -66,8 +67,7 @@ class Backtester:
         vix: pd.Series | None = None,
         dxy: pd.Series | None = None,
     ) -> BacktestResult:
-        if ohlcv.empty:
-            raise ValueError("ohlcv is empty")
+        ohlcv = validate_ohlcv(ohlcv)
 
         sig_engine = SignalEngine(thresholds=self.thresholds)
         risk_engine = RiskEngine(cfg=self.risk_cfg, bar_seconds=self.bar_seconds)

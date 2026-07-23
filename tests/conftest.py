@@ -40,12 +40,12 @@ def synthetic_ohlcv(rng: np.random.Generator) -> pd.DataFrame:
     log_path = np.cumsum(shocks)
     close = 40_000 * np.exp(log_path)
     # Construct OHLC with intra-bar wicks.
-    high = close * (1 + np.abs(rng.normal(0, 0.004, n)))
-    low = close * (1 - np.abs(rng.normal(0, 0.004, n)))
+    open_ = np.r_[close[0], close[:-1]]
+    high = np.maximum(open_, close) * (1 + np.abs(rng.normal(0, 0.004, n)))
+    low = np.minimum(open_, close) * (1 - np.abs(rng.normal(0, 0.004, n)))
     # Crash bars: make low much lower than close (long lower wick / 插针).
     for i in crash_idx:
         low[i] = close[i] * 0.92
-    open_ = np.r_[close[0], close[:-1]]
     volume = rng.lognormal(mean=2.0, sigma=0.5, size=n)
     df = pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx

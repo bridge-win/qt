@@ -65,3 +65,23 @@ QT_BINANCE_API_SECRET=...
 Then restart. Watch the logs for `live_key_verified_trade_only` (good) or
 `live_order_dry_run` (dry-run working). Any `UnsafeApiKeyError` means the
 key still has withdrawal permission — fix it on the exchange.
+
+Before starting the long-running service, run the live preflight. It validates
+the configured BTC symbol, live switches, trade-only key verification, and caps
+without placing an order:
+
+```bash
+qt --config config/default.yaml live preflight
+```
+
+For real-data backtest rehearsal, fail closed instead of falling back to
+synthetic data:
+
+```bash
+qt --config config/default.yaml strategy run dca --real-only
+qt --config config/default.yaml strategy run carry --real-only
+```
+
+Each backtest summary includes `data_fingerprint`, a stable SHA-256 digest of
+the validated OHLCV snapshot, so repeated runs can prove they used the same
+market data.

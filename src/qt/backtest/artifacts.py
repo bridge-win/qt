@@ -32,6 +32,7 @@ def write_backtest_artifacts(
     ohlcv_key: str,
     initial_cash: float,
     config_path: str | Path | None = None,
+    data_fingerprint: str | None = None,
     sources: Mapping[str, str | None] | None = None,
 ) -> BacktestArtifact:
     """Write summary JSON and CSV detail files for a backtest run."""
@@ -61,6 +62,7 @@ def write_backtest_artifacts(
         "ohlcv_key": ohlcv_key,
         "initial_cash": initial_cash,
         "config_path": str(config_path) if config_path else None,
+        "data_fingerprint": data_fingerprint,
         "sources": dict(sources or {}),
         "metrics": asdict(result.metrics),
         "equity": {

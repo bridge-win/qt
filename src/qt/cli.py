@@ -27,10 +27,12 @@ data_app = typer.Typer(help="Data ingestion commands")
 monitor_app = typer.Typer(help="Monitoring and health commands")
 strategy_app = typer.Typer(help="Solution-gallery batch backtests (sim package)")
 report_app = typer.Typer(help="Reports: strategy-vs-benchmark, digests")
+live_app = typer.Typer(help="Live BTC trading preflight checks")
 app.add_typer(data_app, name="data")
 app.add_typer(monitor_app, name="monitor")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(report_app, name="report")
+app.add_typer(live_app, name="live")
 
 log = get_logger(__name__)
 console = Console()
@@ -157,6 +159,7 @@ def backtest_cmd(
 
     from qt.backtest.artifacts import write_backtest_artifacts
     from qt.backtest.engine import Backtester
+    from qt.backtest.validation import ohlcv_fingerprint
     from qt.data.store import ParquetStore
     from qt.monitoring.reporting import format_backtest_report
 
@@ -204,6 +207,7 @@ def backtest_cmd(
         output_dir,
         ohlcv_key=ohlcv_key,
         initial_cash=initial_cash,
+        data_fingerprint=ohlcv_fingerprint(ohlcv),
         sources={
             "ohlcv": ohlcv_key,
             "funding": "binance_BTCUSDT_funding",
@@ -225,6 +229,9 @@ def strategy_run_cmd(
     initial_cash: float = 10_000.0,
     synthetic: Annotated[
         bool, typer.Option("--synthetic", help="Force synthetic data even if local data exists")
+    ] = False,
+    real_only: Annotated[
+        bool, typer.Option("--real-only", help="Fail if local real OHLCV/funding data is missing")
     ] = False,
     output_dir: Annotated[
         Path, typer.Option(help="Where to export equity.csv/trades.csv/summary.json")
@@ -251,6 +258,9 @@ def strategy_run_cmd(
         raise typer.Exit(2) from exc
 
     settings = ctx.obj if isinstance(ctx.obj, Settings) else load_settings()
+    if synthetic and real_only:
+        console.print("[red]--synthetic and --real-only cannot be used together[/]")
+        raise typer.Exit(2)
     store = ParquetStore(settings.data.parquet_dir)
 
     def _read(ds: str, key: str, col: str | None = None) -> pd.Series | None:
@@ -262,18 +272,22 @@ def strategy_run_cmd(
         return d.iloc[:, 0]
 
     ohlcv = None if synthetic else store.read("ohlcv", ohlcv_key)
-    funding = None if synthetic else _read("derivatives", "binance_funding", "funding_rate")
+    funding = None if synthetic else _read("derivatives", "binance_BTCUSDT_funding", "funding_rate")
 
-    outcome = run_strategy_backtest(
-        strat,
-        ohlcv,
-        initial_cash=initial_cash,
-        funding=funding,
-        fear_greed=None if synthetic else _read("sentiment", "fear_greed", "fear_greed"),
-        mvrv_z=None if synthetic else _read("onchain", "glassnode_mvrv_z", "mvrv_z"),
-        nupl=None if synthetic else _read("onchain", "glassnode_nupl", "nupl"),
-        allow_synthetic=True,
-    )
+    try:
+        outcome = run_strategy_backtest(
+            strat,
+            ohlcv,
+            initial_cash=initial_cash,
+            funding=funding,
+            fear_greed=None if synthetic else _read("sentiment", "fear_greed", "fear_greed"),
+            mvrv_z=None if synthetic else _read("onchain", "glassnode_mvrv_z", "mvrv_z"),
+            nupl=None if synthetic else _read("onchain", "glassnode_nupl", "nupl"),
+            allow_synthetic=not real_only,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
 
     run_dir = write_strategy_backtest_artifacts(outcome, output_dir)
     m = outcome.metrics
@@ -360,6 +374,41 @@ def info_cmd(ctx: typer.Context) -> None:
         if "key" in k or "secret" in k or "passphrase" in k or "token" in k:
             cfg[k] = "***" if cfg[k] else ""
     console.print_json(data=cfg, default=str)
+
+
+@live_app.command("preflight")
+def live_preflight_cmd(ctx: typer.Context) -> None:
+    """Validate live BTC trading configuration without placing an order."""
+
+    from qt.execution.live import LiveBroker
+
+    settings = _settings_from_ctx(ctx)
+    execution = settings.execution
+    if execution.symbol != "BTC/USDT":
+        console.print(f"[red]unsupported live symbol: {execution.symbol}; only BTC/USDT is allowed[/]")
+        raise typer.Exit(2)
+    if execution.mode != "live":
+        console.print(f"[yellow]execution.mode is {execution.mode!r}; set it to 'live' for live tests[/]")
+        raise typer.Exit(2)
+    if not execution.live_enabled:
+        console.print("[yellow]execution.live_enabled is false[/]")
+        raise typer.Exit(2)
+
+    broker = LiveBroker.from_settings(settings)
+    status = "dry-run" if execution.dry_run else "live-orders-enabled"
+    payload = {
+        "status": status,
+        "venue": execution.venue,
+        "symbol": execution.symbol,
+        "dry_run": execution.dry_run,
+        "max_order_quote": execution.max_order_quote,
+        "max_daily_spend_quote": execution.max_daily_spend_quote,
+        "max_total_exposure_quote": execution.max_total_exposure_quote,
+        "require_trade_only_key": execution.require_trade_only_key,
+    }
+    if not execution.dry_run:
+        payload["reconcile"] = broker.reconcile(execution.symbol)
+    console.print_json(data=payload)
 
 
 @app.command("dashboard")

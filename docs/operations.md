@@ -134,8 +134,12 @@ Before enabling live trading:
 - inspect `signals.csv` for factor explanations
 - paper trade for at least 90 days
 - confirm the health command stays green through restarts
-- keep `QT_LIVE_TRADING_ENABLED=false` until exchange-specific live execution
-  has been implemented and reviewed
+- run `qt --config config/default.yaml strategy run dca --real-only` and any
+  enabled strategy variants against validated local BTC data
+- run `qt --config config/default.yaml live preflight` before every live-mode
+  service start; it must pass without placing an order
+- keep `execution.dry_run=true` until the live preflight, backtests, paper
+  ledger, and exchange-side key restrictions have all been reviewed
 
 ## 10. Phase 1 Platform Scope
 
@@ -176,7 +180,7 @@ The command refuses to overwrite `.env.platform`. Confirm its protection
 without displaying its contents:
 
 ```bash
-test "$(stat -c '%a' .env.platform)" = 600
+python -c 'import pathlib, stat, sys; sys.exit(stat.S_IMODE(pathlib.Path(".env.platform").stat().st_mode) != 0o600)'
 ```
 
 Validate interpolation before creating containers:
@@ -330,8 +334,9 @@ directory at mode `0700` and a restrictive temporary file in that directory,
 runs `pg_dump` into the temporary name, validates it with
 `pg_restore --list`, and derives a per-invocation publication ID from the UTC
 timestamp, process ID, and random `mktemp` token. It publishes the archive and
-mode-`0600` checksum with an atomic hard link from same-directory temporary
-files, then verifies them with `sha256sum --check`.
+mode-`0600` checksum with atomic hard links from same-directory temporary
+files. It publishes the checksum first and the archive last as the completion
+marker, then verifies the pair with `sha256sum --check`.
 
 Concurrent invocations therefore cannot overwrite one another, even within the
 same second. Failure and signal cleanup removes a published path only when it

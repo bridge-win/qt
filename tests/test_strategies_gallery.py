@@ -17,6 +17,7 @@ import pytest
 from qt.core.config import Settings
 from qt.core.types import Trade
 from qt.execution.base import Broker, Order
+from qt.execution.live import LiveTradingDisabledError, UnsafeApiKeyError
 from qt.strategies import (
     REGISTRY,
     BasisCarry,
@@ -33,6 +34,7 @@ from qt.strategies import (
     strategy_state_path,
 )
 from qt.strategies.base import Action
+from qt.strategies.runner import _make_broker
 
 # ---------------------- loader & registry --------------------------------
 
@@ -427,6 +429,37 @@ def test_runner_records_broker_error_in_heartbeat(tmp_path: Path) -> None:
     assert snap["cycle"] == 1
     assert snap["status"] == "degraded"
     assert "broker blocked order" in str(snap["last_error"])
+
+
+def test_live_mode_broker_initialization_fails_closed(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.execution.mode = "live"
+    settings.execution.live_enabled = True
+
+    with (
+        patch("qt.strategies.runner.alert"),
+        patch(
+            "qt.execution.live.LiveBroker.from_settings",
+            side_effect=UnsafeApiKeyError("unsafe live key"),
+        ),
+        pytest.raises(UnsafeApiKeyError, match="unsafe live key"),
+    ):
+        run_strategy_forever(
+            _StubStrategy(StrategyConfig(name="stub", interval_seconds=1, params={})),
+            settings,
+            runtime_dir=tmp_path,
+            stop_event=threading.Event(),
+            max_backoff_seconds=1,
+        )
+
+
+def test_live_mode_with_disabled_switch_fails_closed() -> None:
+    settings = Settings()
+    settings.execution.mode = "live"
+    settings.execution.live_enabled = False
+
+    with pytest.raises(LiveTradingDisabledError, match=r"execution\.live_enabled=false"):
+        _make_broker(settings, initial_cash=100_000.0)
 
 
 def test_run_strategy_writes_heartbeat(tmp_path: Path) -> None:

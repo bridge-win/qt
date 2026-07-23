@@ -94,9 +94,11 @@
 - **Process death / stale heartbeat** is handled by `scripts/run_service.py`,
   which checks `qt monitor health` semantics and restarts the paper loop if
   the heartbeat exceeds the configured staleness threshold.
-- **Broker failures**: `LiveBroker.submit` retries with exponential
-  backoff (max 4 attempts). After exhaustion, the kill-switch is armed
-  and a critical alert fires.
+- **Broker failures**: `LiveBroker.submit` fails closed on invalid inputs,
+  insufficient cash, exchange min-size violations, unsafe API permissions,
+  rejected/unfilled responses, and venue errors. The supervised runner records
+  the failure in the heartbeat and backs off instead of silently switching to
+  paper mode.
 - **Drawdown kill-switch**: any equity drawdown > `max_drawdown_pct`
   blocks all new entries. Manual reset only.
 

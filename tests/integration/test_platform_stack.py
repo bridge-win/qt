@@ -429,6 +429,10 @@ def test_operations_runbook_covers_platform_lifecycle_and_recovery() -> None:
     )
     for phrase in required_phrases:
         assert phrase.lower() in operations.lower()
+    assert "stat -c" not in operations
+    assert "stat.S_IMODE" in operations
+    assert "checksum first" in operations.lower()
+    assert "archive last" in operations.lower()
 
 
 def test_api_process_remains_free_of_strategy_startup_paths() -> None:

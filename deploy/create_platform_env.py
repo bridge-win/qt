@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import re
 import secrets
+import stat
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -14,10 +16,12 @@ SecretFactory = Callable[[], str]
 
 _ASSIGNMENT_PATTERN = re.compile(r"([A-Z][A-Z0-9_]*)=([^\r\n]*)")
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
-_PATH_COMPONENT_PATTERN = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
+_PATH_COMPONENT_PATTERN = re.compile(
+    r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+)
 _TAG_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 _DOMAIN_LABEL_PATTERN = re.compile(
-    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 )
 _LOCAL_TAG_ALLOWLIST = frozenset({"qt-platform:local"})
 
@@ -41,17 +45,42 @@ def _parse_environment(content: str) -> dict[str, str]:
     return assignments
 
 
+def _validate_registry_port(port: str) -> None:
+    if not port.isascii() or not port.isdigit():
+        raise ValueError("invalid image registry port")
+    if not 1 <= int(port) <= 65535:
+        raise ValueError("invalid image registry port")
+
+
 def _validate_registry(registry: str) -> None:
+    if registry.startswith("["):
+        closing_bracket = registry.find("]")
+        if closing_bracket < 0:
+            raise ValueError("invalid image registry host")
+        address = registry[1:closing_bracket]
+        suffix = registry[closing_bracket + 1 :]
+        if not address or "%" in address:
+            raise ValueError("invalid image registry host")
+        try:
+            ipaddress.IPv6Address(address)
+        except ipaddress.AddressValueError as error:
+            raise ValueError("invalid image registry host") from error
+        if suffix:
+            if not suffix.startswith(":"):
+                raise ValueError("invalid image registry host")
+            _validate_registry_port(suffix[1:])
+        return
+
+    if "[" in registry or "]" in registry or registry.count(":") > 1:
+        raise ValueError("invalid image registry host")
     host = registry
+    port: str | None = None
     if ":" in registry:
-        host, separator, port = registry.rpartition(":")
-        if not separator or not port.isascii() or not port.isdigit():
-            raise ValueError("invalid image registry port")
-        if not 1 <= int(port) <= 65535:
-            raise ValueError("invalid image registry port")
+        host, port = registry.rsplit(":", maxsplit=1)
+        _validate_registry_port(port)
     if not host or ".." in host:
         raise ValueError("invalid image registry host")
-    if host != "localhost" and "." not in host:
+    if host.lower() != "localhost" and "." not in host and port is None:
         raise ValueError("image registry must be qualified")
     if any(_DOMAIN_LABEL_PATTERN.fullmatch(label) is None for label in host.split(".")):
         raise ValueError("invalid image registry host")
@@ -188,6 +217,8 @@ def create_platform_env(
 
 
 def set_image_reference(*, output: Path, image_reference: str) -> None:
+    if not stat.S_ISREG(output.lstat().st_mode):
+        raise ValueError("protected environment output must be a regular file")
     content = output.read_text(encoding="utf-8")
     assignments = _parse_environment(content)
     try:
@@ -201,10 +232,12 @@ def set_image_reference(*, output: Path, image_reference: str) -> None:
     temporary = output.with_name(f".{output.name}.{secrets.token_hex(8)}.tmp")
     try:
         _exclusive_write(temporary, rendered, _write_all)
+        if not stat.S_ISREG(output.lstat().st_mode):
+            raise ValueError("protected environment output must be a regular file")
         os.replace(temporary, output)
-        os.chmod(output, 0o600)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
 
 
 def _parser() -> argparse.ArgumentParser:

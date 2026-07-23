@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from qt.backtest.metrics import Metrics, compute_metrics
+from qt.backtest.validation import ohlcv_fingerprint, validate_ohlcv
 from qt.strategies.sim import (
     BasisCarryBacktest,
     BasisCarryConfig,
@@ -55,6 +56,7 @@ class BacktestOutcome:
     metrics: Metrics
     synthetic: bool = False
     diagnostics: pd.DataFrame = field(default_factory=pd.DataFrame)
+    data_fingerprint: str = ""
 
     def summary(self) -> dict[str, Any]:
         eq = self.equity
@@ -68,6 +70,7 @@ class BacktestOutcome:
             "final_equity": float(eq.iloc[-1]) if len(eq) else 0.0,
             "x_multiple": float(eq.iloc[-1] / eq.iloc[0]) if len(eq) and eq.iloc[0] > 0 else 0.0,
             "num_trades": int(self.metrics.num_trades),
+            "data_fingerprint": self.data_fingerprint,
             "metrics": {
                 "total_return": self.metrics.total_return,
                 "cagr": self.metrics.cagr,
@@ -204,6 +207,8 @@ def run_strategy_backtest(
             raise ValueError(f"no OHLCV data for {strat} and allow_synthetic=False")
         ohlcv = synthetic_btc_ohlcv(days=synthetic_days)
         synthetic = True
+    ohlcv = validate_ohlcv(ohlcv)
+    data_fingerprint = ohlcv_fingerprint(ohlcv)
 
     close = ohlcv["close"]
 
@@ -240,6 +245,7 @@ def run_strategy_backtest(
         metrics=metrics,
         synthetic=synthetic,
         diagnostics=getattr(result, "diagnostics", pd.DataFrame()),
+        data_fingerprint=data_fingerprint,
     )
 
 
