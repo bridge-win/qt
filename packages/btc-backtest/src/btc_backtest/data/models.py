@@ -93,6 +93,7 @@ class DataSegment(BaseModel):
     end: datetime
     real_data: bool
     normalized_sha256: str = Field(pattern=SHA256_PATTERN)
+    source: str | None = Field(default=None, min_length=1)
 
     @field_validator("start", "end")
     @classmethod
@@ -124,6 +125,8 @@ class DataManifest(BaseModel):
     real_data: bool
     raw_sha256: tuple[str, ...] = Field(min_length=1)
     normalized_sha256: str = Field(pattern=SHA256_PATTERN)
+    source: str | None = Field(default=None, min_length=1)
+    license_note: str | None = Field(default=None, min_length=1)
     gaps: tuple[DataGap, ...] = ()
     segments: tuple[DataSegment, ...] = ()
 
