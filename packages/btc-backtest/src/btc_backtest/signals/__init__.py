@@ -4,6 +4,12 @@ from btc_backtest.signals.base import (
     SignalProvider,
     SignalProviderRegistry,
 )
+from btc_backtest.signals.calibration import (
+    CalibrationWindow,
+    ProviderOutcome,
+    ReliabilityCalibrator,
+    ReliabilitySnapshot,
+)
 from btc_backtest.signals.models import (
     RankedSignal,
     SignalContributor,
@@ -16,8 +22,12 @@ from btc_backtest.signals.store import SignalStore
 from btc_backtest.signals.webhook import WebhookVerifier
 
 __all__ = [
+    "CalibrationWindow",
+    "ProviderOutcome",
     "RankedSignal",
     "RankingConfig",
+    "ReliabilityCalibrator",
+    "ReliabilitySnapshot",
     "SignalAggregator",
     "SignalContributor",
     "SignalObservation",
