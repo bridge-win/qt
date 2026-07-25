@@ -1,6 +1,7 @@
 """Deterministic backtest engine contracts and accounting."""
 
 from btc_backtest.engine.accounting import Portfolio
+from btc_backtest.engine.fills import BarFillModel, FillPolicy
 from btc_backtest.engine.models import (
     BacktestResult,
     BacktestSpec,
@@ -20,7 +21,9 @@ from btc_backtest.engine.models import (
 __all__ = [
     "BacktestResult",
     "BacktestSpec",
+    "BarFillModel",
     "Fill",
+    "FillPolicy",
     "FundingEvent",
     "InstrumentKind",
     "Order",
