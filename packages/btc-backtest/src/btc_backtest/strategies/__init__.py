@@ -6,6 +6,12 @@ from btc_backtest.strategies.accumulation import (
     SmartDCA,
     SmartDCAParams,
 )
+from btc_backtest.strategies.bands import (
+    BollingerBreakout,
+    BollingerBreakoutParams,
+    BollingerMeanReversion,
+    BollingerMeanReversionParams,
+)
 from btc_backtest.strategies.base import (
     FinalizationContext,
     InitializationContext,
@@ -43,6 +49,10 @@ from btc_backtest.strategies.target_weight import TargetWeightStrategy
 __all__ = [
     "BUILTIN_STRATEGY_IDS",
     "EXTRA_STRATEGY_IDS",
+    "BollingerBreakout",
+    "BollingerBreakoutParams",
+    "BollingerMeanReversion",
+    "BollingerMeanReversionParams",
     "EMACrossover",
     "EMACrossoverParams",
     "FinalizationContext",

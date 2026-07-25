@@ -161,6 +161,10 @@ def default_strategy_registry() -> StrategyRegistry:
     """Build a fresh registry containing every implemented built-in."""
 
     from btc_backtest.strategies.accumulation import FixedDCA, SmartDCA
+    from btc_backtest.strategies.bands import (
+        BollingerBreakout,
+        BollingerMeanReversion,
+    )
     from btc_backtest.strategies.moving_average import (
         EMACrossover,
         MACDTrend,
@@ -206,5 +210,15 @@ def default_strategy_registry() -> StrategyRegistry:
         "stochastic_reversal",
         lambda parameters: StochasticReversal(parameters),
         StochasticReversal.metadata,
+    )
+    registry.register(
+        "bollinger_mean_reversion",
+        lambda parameters: BollingerMeanReversion(parameters),
+        BollingerMeanReversion.metadata,
+    )
+    registry.register(
+        "bollinger_breakout",
+        lambda parameters: BollingerBreakout(parameters),
+        BollingerBreakout.metadata,
     )
     return registry
