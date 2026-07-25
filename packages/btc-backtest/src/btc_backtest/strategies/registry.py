@@ -161,6 +161,11 @@ def default_strategy_registry() -> StrategyRegistry:
     """Build a fresh registry containing every implemented built-in."""
 
     from btc_backtest.strategies.accumulation import FixedDCA, SmartDCA
+    from btc_backtest.strategies.moving_average import (
+        EMACrossover,
+        MACDTrend,
+        SMACrossover,
+    )
 
     registry = StrategyRegistry()
     registry.register(
@@ -172,5 +177,20 @@ def default_strategy_registry() -> StrategyRegistry:
         "smart_dca",
         lambda parameters: SmartDCA(parameters),
         SmartDCA.metadata,
+    )
+    registry.register(
+        "sma_crossover",
+        lambda parameters: SMACrossover(parameters),
+        SMACrossover.metadata,
+    )
+    registry.register(
+        "ema_crossover",
+        lambda parameters: EMACrossover(parameters),
+        EMACrossover.metadata,
+    )
+    registry.register(
+        "macd_trend",
+        lambda parameters: MACDTrend(parameters),
+        MACDTrend.metadata,
     )
     return registry

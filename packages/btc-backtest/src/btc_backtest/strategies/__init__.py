@@ -17,6 +17,14 @@ from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
     load_strategy,
 )
+from btc_backtest.strategies.moving_average import (
+    EMACrossover,
+    EMACrossoverParams,
+    MACDTrend,
+    MACDTrendParams,
+    SMACrossover,
+    SMACrossoverParams,
+)
 from btc_backtest.strategies.registry import (
     BUILTIN_STRATEGY_IDS,
     EXTRA_STRATEGY_IDS,
@@ -29,10 +37,16 @@ from btc_backtest.strategies.target_weight import TargetWeightStrategy
 __all__ = [
     "BUILTIN_STRATEGY_IDS",
     "EXTRA_STRATEGY_IDS",
+    "EMACrossover",
+    "EMACrossoverParams",
     "FinalizationContext",
     "FixedDCA",
     "FixedDCAParams",
     "InitializationContext",
+    "MACDTrend",
+    "MACDTrendParams",
+    "SMACrossover",
+    "SMACrossoverParams",
     "SmartDCA",
     "SmartDCAParams",
     "Strategy",
