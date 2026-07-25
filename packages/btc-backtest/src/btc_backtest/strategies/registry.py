@@ -165,6 +165,7 @@ def default_strategy_registry() -> StrategyRegistry:
         BollingerBreakout,
         BollingerMeanReversion,
     )
+    from btc_backtest.strategies.channels import DonchianBreakout, TurtleTrend
     from btc_backtest.strategies.moving_average import (
         EMACrossover,
         MACDTrend,
@@ -220,5 +221,15 @@ def default_strategy_registry() -> StrategyRegistry:
         "bollinger_breakout",
         lambda parameters: BollingerBreakout(parameters),
         BollingerBreakout.metadata,
+    )
+    registry.register(
+        "donchian_breakout",
+        lambda parameters: DonchianBreakout(parameters),
+        DonchianBreakout.metadata,
+    )
+    registry.register(
+        "turtle_trend",
+        lambda parameters: TurtleTrend(parameters),
+        TurtleTrend.metadata,
     )
     return registry

@@ -19,6 +19,12 @@ from btc_backtest.strategies.base import (
     StrategyContext,
     StrategyMetadata,
 )
+from btc_backtest.strategies.channels import (
+    DonchianBreakout,
+    DonchianBreakoutParams,
+    TurtleTrend,
+    TurtleTrendParams,
+)
 from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
     load_strategy,
@@ -53,6 +59,8 @@ __all__ = [
     "BollingerBreakoutParams",
     "BollingerMeanReversion",
     "BollingerMeanReversionParams",
+    "DonchianBreakout",
+    "DonchianBreakoutParams",
     "EMACrossover",
     "EMACrossoverParams",
     "FinalizationContext",
@@ -75,6 +83,8 @@ __all__ = [
     "StrategyMetadata",
     "StrategyRegistry",
     "TargetWeightStrategy",
+    "TurtleTrend",
+    "TurtleTrendParams",
     "default_strategy_registry",
     "discover_entry_point_strategies",
     "load_strategy",
