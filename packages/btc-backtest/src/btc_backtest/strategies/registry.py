@@ -181,6 +181,11 @@ def default_strategy_registry() -> StrategyRegistry:
         RSIMeanReversion,
         StochasticReversal,
     )
+    from btc_backtest.strategies.volatility import (
+        ATRVolatilityBreakout,
+        KeltnerChannel,
+    )
+    from btc_backtest.strategies.vwap import VWAPMeanReversion
 
     registry = StrategyRegistry()
     registry.register(
@@ -257,5 +262,20 @@ def default_strategy_registry() -> StrategyRegistry:
         "adx_trend",
         lambda parameters: ADXTrend(parameters),
         ADXTrend.metadata,
+    )
+    registry.register(
+        "atr_volatility_breakout",
+        lambda parameters: ATRVolatilityBreakout(parameters),
+        ATRVolatilityBreakout.metadata,
+    )
+    registry.register(
+        "keltner_channel",
+        lambda parameters: KeltnerChannel(parameters),
+        KeltnerChannel.metadata,
+    )
+    registry.register(
+        "vwap_mean_reversion",
+        lambda parameters: VWAPMeanReversion(parameters),
+        VWAPMeanReversion.metadata,
     )
     return registry

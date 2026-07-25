@@ -61,12 +61,24 @@ from btc_backtest.strategies.registry import (
     default_strategy_registry,
 )
 from btc_backtest.strategies.target_weight import TargetWeightStrategy
+from btc_backtest.strategies.volatility import (
+    ATRVolatilityBreakout,
+    ATRVolatilityBreakoutParams,
+    KeltnerChannel,
+    KeltnerChannelParams,
+)
+from btc_backtest.strategies.vwap import (
+    VWAPMeanReversion,
+    VWAPMeanReversionParams,
+)
 
 __all__ = [
     "BUILTIN_STRATEGY_IDS",
     "EXTRA_STRATEGY_IDS",
     "ADXTrend",
     "ADXTrendParams",
+    "ATRVolatilityBreakout",
+    "ATRVolatilityBreakoutParams",
     "BollingerBreakout",
     "BollingerBreakoutParams",
     "BollingerMeanReversion",
@@ -81,6 +93,8 @@ __all__ = [
     "FixedDCA",
     "FixedDCAParams",
     "InitializationContext",
+    "KeltnerChannel",
+    "KeltnerChannelParams",
     "MACDTrend",
     "MACDTrendParams",
     "RSIMeanReversion",
@@ -103,6 +117,8 @@ __all__ = [
     "TimeSeriesMomentumParams",
     "TurtleTrend",
     "TurtleTrendParams",
+    "VWAPMeanReversion",
+    "VWAPMeanReversionParams",
     "default_strategy_registry",
     "discover_entry_point_strategies",
     "load_strategy",
