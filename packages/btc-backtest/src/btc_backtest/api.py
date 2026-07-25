@@ -6,6 +6,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 from btc_backtest.data.cache import DataCache
 from btc_backtest.data.models import DataRequest, MarketBundle
@@ -18,8 +19,10 @@ from btc_backtest.engine.runner import EventRunner
 from btc_backtest.errors import ProviderError, StrategyLoadError
 from btc_backtest.strategies.base import Strategy
 
-StrategyFactory = Callable[[], Strategy]
-StrategyRegistration = Strategy | StrategyFactory
+ConfiguredStrategyFactory = Callable[[Mapping[str, object]], Strategy]
+StrategyRegistration = (
+    Strategy | type[Strategy] | ConfiguredStrategyFactory
+)
 
 
 class BacktestRunner:
@@ -51,7 +54,10 @@ class BacktestRunner:
     ) -> BacktestResult:
         """Fetch all declared datasets and execute exactly one engine run."""
 
-        active_strategy = strategy or self._resolve_strategy(spec.strategy)
+        active_strategy = strategy or self._resolve_strategy(
+            spec.strategy,
+            spec.strategy_params,
+        )
         if not isinstance(active_strategy, Strategy):
             raise StrategyLoadError(
                 f"strategy {spec.strategy} does not satisfy the Strategy protocol"
@@ -69,7 +75,11 @@ class BacktestRunner:
             active_strategy,
         )
 
-    def _resolve_strategy(self, strategy_id: str) -> Strategy:
+    def _resolve_strategy(
+        self,
+        strategy_id: str,
+        parameters: Mapping[str, object],
+    ) -> Strategy:
         registration = self._strategies.get(strategy_id)
         if registration is None:
             raise StrategyLoadError(f"unknown strategy: {strategy_id}")
@@ -79,7 +89,10 @@ class BacktestRunner:
             elif isinstance(registration, Strategy):
                 candidate = registration
             else:
-                candidate = registration()
+                candidate = cast(
+                    ConfiguredStrategyFactory,
+                    registration,
+                )(parameters)
         except Exception as error:
             raise StrategyLoadError(
                 f"failed to construct strategy: {strategy_id}"
