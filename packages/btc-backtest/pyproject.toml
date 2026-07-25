@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "httpx>=0.27",
+    "jinja2>=3.1",
     "numpy>=1.26",
     "pandas>=2.1",
     "pyarrow>=14",
@@ -36,3 +37,6 @@ btc-backtest = "btc_backtest.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"btc_backtest.reporting.templates" = ["*.j2"]

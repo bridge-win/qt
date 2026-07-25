@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BTC Backtest Report</title>
+  <style>
+    :root {
+      color: #17202a;
+      background: #f7f9fb;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #d7dee8;
+      border-radius: 16px;
+      box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+      padding: 28px;
+    }
+    h1, h2 {
+      margin: 0;
+    }
+    h1 {
+      font-size: 28px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin-top: 28px;
+      font-size: 18px;
+    }
+    table {
+      width: 100%;
+      margin-top: 12px;
+      border-collapse: collapse;
+    }
+    th, td {
+      border-bottom: 1px solid #e5eaf1;
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      width: 240px;
+      color: #526071;
+      font-weight: 600;
+    }
+    code {
+      overflow-wrap: anywhere;
+      color: #334155;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .card {
+      border: 1px solid #e5eaf1;
+      border-radius: 12px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+    .label {
+      color: #64748b;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .value {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    ul {
+      margin: 12px 0 0;
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>BTC Backtest Report</h1>
+
+    <h2>Run</h2>
+    <table>
+      <tbody>
+        <tr><th>Run ID</th><td><code>{{ manifest.run_id }}</code></td></tr>
+        <tr><th>Engine Run ID</th><td><code>{{ manifest.engine_run_id }}</code></td></tr>
+        <tr><th>Strategy</th><td>{{ manifest.strategy_id }}</td></tr>
+        <tr><th>Strategy Parameters</th><td><code>{{ manifest.strategy_parameters }}</code></td></tr>
+        <tr><th>Seed</th><td>{{ manifest.seed or "n/a" }}</td></tr>
+        <tr><th>Fill Policy</th><td>{{ manifest.intrabar_policy or "n/a" }}</td></tr>
+        <tr><th>Created At</th><td>{{ manifest.created_at }}</td></tr>
+        <tr><th>Package Version</th><td>{{ manifest.package_version }}</td></tr>
+        <tr><th>Git Revision</th><td><code>{{ manifest.git_revision or "n/a" }}</code></td></tr>
+        <tr><th>Data Fingerprint</th><td><code>{{ manifest.data_fingerprint }}</code></td></tr>
+        <tr><th>Signal Fingerprint</th><td><code>{{ manifest.signal_fingerprint }}</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Performance</h2>
+    <section class="grid" aria-label="Performance metrics">
+      <div class="card"><div class="label">Total Return</div><div class="value">{{ metrics.get("total_return", "n/a") }}</div></div>
+      <div class="card"><div class="label">CAGR</div><div class="value">{{ metrics.get("cagr", "n/a") }}</div></div>
+      <div class="card"><div class="label">Sharpe</div><div class="value">{{ metrics.get("sharpe", "n/a") }}</div></div>
+      <div class="card"><div class="label">Max Drawdown</div><div class="value">{{ metrics.get("max_drawdown", "n/a") }}</div></div>
+      <div class="card"><div class="label">Trade Count</div><div class="value">{{ metrics.get("trade_count", "n/a") }}</div></div>
+      <div class="card"><div class="label">Turnover</div><div class="value">{{ metrics.get("turnover", "n/a") }}</div></div>
+    </section>
+
+    <h2>Costs</h2>
+    <table>
+      <tbody>
+        {% for cost_name, cost_value in manifest.costs.items() %}
+          <tr><th>{{ cost_name }}</th><td>{{ cost_value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Validation</h2>
+    <table>
+      <tbody>
+        <tr><th>Objective</th><td>{{ validation.get("spec", {}).get("objective", "n/a") }}</td></tr>
+        <tr><th>Selection End</th><td>{{ validation.get("spec", {}).get("selection_end", "n/a") }}</td></tr>
+        <tr><th>Final Test Start</th><td>{{ validation.get("spec", {}).get("final_test_start", "n/a") }}</td></tr>
+        <tr><th>Final Test End</th><td>{{ validation.get("spec", {}).get("final_test_end", "n/a") }}</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Signals</h2>
+    {% if signals %}
+      <ul>
+        {% for signal_id in signals %}
+          <li><code>{{ signal_id }}</code></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No signal identifiers were recorded for this run.</p>
+    {% endif %}
+
+    <h2>Warnings</h2>
+    {% if manifest.warnings %}
+      <ul>
+        {% for warning in manifest.warnings %}
+          <li>{{ warning }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No warnings were recorded for this run.</p>
+    {% endif %}
+
+    <h2>Artifact Checksums</h2>
+    <table>
+      <tbody>
+        {% for file_name, checksum in manifest.files.items() %}
+          <tr><th>{{ file_name }}</th><td><code>{{ checksum }}</code></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
