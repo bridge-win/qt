@@ -17,11 +17,13 @@ from btc_backtest.engine.models import (
     Position,
     Trade,
 )
+from btc_backtest.engine.runner import EventRunner
 
 __all__ = [
     "BacktestResult",
     "BacktestSpec",
     "BarFillModel",
+    "EventRunner",
     "Fill",
     "FillPolicy",
     "FundingEvent",
