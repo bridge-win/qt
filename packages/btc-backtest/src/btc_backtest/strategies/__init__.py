@@ -19,6 +19,10 @@ from btc_backtest.strategies.base import (
     StrategyContext,
     StrategyMetadata,
 )
+from btc_backtest.strategies.carry import (
+    FundingBasisCarry,
+    FundingBasisCarryParams,
+)
 from btc_backtest.strategies.channels import (
     DonchianBreakout,
     DonchianBreakoutParams,
@@ -93,6 +97,8 @@ __all__ = [
     "FinalizationContext",
     "FixedDCA",
     "FixedDCAParams",
+    "FundingBasisCarry",
+    "FundingBasisCarryParams",
     "GridParams",
     "GridRebalance",
     "InitializationContext",

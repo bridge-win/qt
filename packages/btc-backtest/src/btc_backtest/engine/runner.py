@@ -81,6 +81,11 @@ class EventRunner:
         for pandas_timestamp, row in frame.iterrows():
             timestamp = cast(pd.Timestamp, pandas_timestamp).to_pydatetime()
             primary_bar = _bar_mapping(row)
+            instrument_bars = _instrument_bars(
+                bundle,
+                cast(pd.Timestamp, pandas_timestamp),
+                primary_bar,
+            )
             funding_counter = _apply_available_funding(
                 bundle=bundle,
                 portfolio=portfolio,
@@ -92,7 +97,7 @@ class EventRunner:
             )
             fill_counter = _process_open_orders(
                 timestamp=timestamp,
-                bar=primary_bar,
+                bars=instrument_bars,
                 portfolio=portfolio,
                 fill_model=fill_model,
                 orders=orders,
@@ -102,13 +107,16 @@ class EventRunner:
                 next_fill_counter=fill_counter,
             )
             close = _decimal(row["close"], "close")
-            snapshot = portfolio.mark(
-                timestamp,
-                {
-                    InstrumentKind.SPOT: close,
-                    InstrumentKind.PERPETUAL: close,
-                },
-            )
+            marks: dict[str | InstrumentKind, Decimal] = {
+                InstrumentKind.SPOT: close
+            }
+            perpetual_bar = instrument_bars.get(InstrumentKind.PERPETUAL)
+            if perpetual_bar is not None:
+                marks[InstrumentKind.PERPETUAL] = _decimal(
+                    perpetual_bar["close"],
+                    "perpetual close",
+                )
+            snapshot = portfolio.mark(timestamp, marks)
             snapshots.append(snapshot)
 
             history = frame.loc[:pandas_timestamp]
@@ -142,7 +150,7 @@ class EventRunner:
                     order = _intent_to_order(
                         intent=intent,
                         timestamp=timestamp,
-                        close=close,
+                        close=marks.get(intent.instrument),
                         run_id=run_id,
                         counter=order_counter,
                         strategy=strategy,
@@ -362,7 +370,7 @@ def _intent_to_order(
     *,
     intent: OrderIntent,
     timestamp: datetime,
-    close: Decimal,
+    close: Decimal | None,
     run_id: str,
     counter: int,
     strategy: Strategy,
@@ -377,6 +385,10 @@ def _intent_to_order(
         quote_amount = intent.quote_amount
         if quote_amount is None:
             raise ExecutionError("validated intent has no order size")
+        if close is None:
+            raise ExecutionError(
+                f"no current {intent.instrument.value} price for quote-sized order"
+            )
         quantity = quote_amount / close
     return Order(
         id=f"{run_id}:order:{counter:08d}",
@@ -398,7 +410,7 @@ def _intent_to_order(
 def _process_open_orders(
     *,
     timestamp: datetime,
-    bar: Mapping[str, object],
+    bars: Mapping[InstrumentKind, Mapping[str, object]],
     portfolio: Portfolio,
     fill_model: BarFillModel,
     orders: list[Order],
@@ -425,7 +437,12 @@ def _process_open_orders(
         if _is_expired(order, timestamp):
             _replace_order(orders, _closed_order(order, OrderStatus.CANCELLED))
             continue
-        candidate = _evaluate(fill_model, order, bar, timestamp)
+        candidate = _evaluate(
+            fill_model,
+            order,
+            bars.get(order.instrument),
+            timestamp,
+        )
         if candidate is None:
             continue
         next_fill_counter += 1
@@ -451,7 +468,12 @@ def _process_open_orders(
                 )
             continue
         candidates = [
-            _evaluate(fill_model, order, bar, timestamp)
+            _evaluate(
+                fill_model,
+                order,
+                bars.get(order.instrument),
+                timestamp,
+            )
             for order in members
         ]
         if any(candidate is None for candidate in candidates):
@@ -491,9 +513,11 @@ def _process_open_orders(
 def _evaluate(
     fill_model: BarFillModel,
     order: Order,
-    bar: Mapping[str, object],
+    bar: Mapping[str, object] | None,
     timestamp: datetime,
 ) -> Fill | None:
+    if bar is None:
+        return None
     if order.stop_price is not None and order.take_profit_price is not None:
         bracket = fill_model.evaluate_bracket(order, bar, timestamp)
         return bracket[0] if bracket else None
@@ -568,6 +592,22 @@ def _apply_available_funding(
 
 def _bar_mapping(row: pd.Series) -> Mapping[str, object]:
     return cast(Mapping[str, object], row.to_dict())
+
+
+def _instrument_bars(
+    bundle: MarketBundle,
+    timestamp: pd.Timestamp,
+    primary_bar: Mapping[str, object],
+) -> Mapping[InstrumentKind, Mapping[str, object]]:
+    bars: dict[InstrumentKind, Mapping[str, object]] = {
+        InstrumentKind.SPOT: primary_bar,
+    }
+    perpetual = bundle.auxiliary.get("perpetual")
+    if perpetual is not None and timestamp in perpetual.frame.index:
+        row = perpetual.frame.loc[timestamp]
+        if isinstance(row, pd.Series):
+            bars[InstrumentKind.PERPETUAL] = _bar_mapping(row)
+    return bars
 
 
 def _decimal(value: object, field: str) -> Decimal:

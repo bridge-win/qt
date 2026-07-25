@@ -97,6 +97,33 @@ def _bundle() -> MarketBundle:
     )
 
 
+def _perpetual_bundle() -> MarketBundle:
+    base = _bundle()
+    frame = pd.DataFrame(
+        {
+            "open": [200.0, 210.0, 220.0, 230.0],
+            "high": [205.0, 215.0, 225.0, 235.0],
+            "low": [195.0, 205.0, 215.0, 225.0],
+            "close": [202.0, 212.0, 222.0, 232.0],
+            "volume": [20.0, 21.0, 22.0, 23.0],
+        },
+        index=_bars().index,
+    )
+    return MarketBundle(
+        primary=base.primary,
+        auxiliary={
+            **base.auxiliary,
+            "perpetual": MarketDataset(
+                frame=frame,
+                manifest=_manifest(
+                    market="perpetual",
+                    normalized_sha256="e" * 64,
+                ),
+            ),
+        },
+    )
+
+
 def _spec() -> BacktestSpec:
     return BacktestSpec(
         strategy="one_shot",
@@ -277,10 +304,17 @@ def test_auxiliary_rows_are_gated_by_availability_timestamp() -> None:
 def test_atomic_group_fills_all_legs_together() -> None:
     spec = _spec().model_copy(update={"strategy": "atomic_hedge"})
 
-    result = EventRunner().run(spec, _bundle(), AtomicHedgeStrategy())
+    result = EventRunner().run(spec, _perpetual_bundle(), AtomicHedgeStrategy())
 
     assert len(result.orders) == len(result.fills) == 2
     assert {fill.timestamp for fill in result.fills} == {_timestamp(2)}
+    assert {
+        fill.instrument: fill.price
+        for fill in result.fills
+    } == {
+        InstrumentKind.SPOT: Decimal("110"),
+        InstrumentKind.PERPETUAL: Decimal("210"),
+    }
     assert all(order.status is OrderStatus.FILLED for order in result.orders)
     assert result.snapshots[-1].position(InstrumentKind.SPOT).quantity == 1
     assert (
@@ -292,7 +326,7 @@ def test_atomic_group_fills_all_legs_together() -> None:
 def test_atomic_group_does_not_partially_fill_when_one_leg_is_unavailable() -> None:
     spec = _spec().model_copy(update={"strategy": "atomic_limits"})
 
-    result = EventRunner().run(spec, _bundle(), AtomicLimitStrategy())
+    result = EventRunner().run(spec, _perpetual_bundle(), AtomicLimitStrategy())
 
     assert result.fills == ()
     assert all(order.status is OrderStatus.OPEN for order in result.orders)
@@ -305,10 +339,11 @@ def test_available_funding_is_applied_once_to_an_open_perpetual_leg() -> None:
         {"rate": [0.01], "mark_price": [115.0]},
         index=pd.DatetimeIndex([pd.Timestamp("2024-01-02T12:00:00Z")]),
     )
-    base = _bundle()
+    base = _perpetual_bundle()
     bundle = MarketBundle(
         primary=base.primary,
         auxiliary={
+            "perpetual": base.auxiliary["perpetual"],
             "funding": MarketDataset(
                 frame=funding_frame,
                 manifest=_manifest(

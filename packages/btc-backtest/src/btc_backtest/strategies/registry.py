@@ -165,6 +165,7 @@ def default_strategy_registry() -> StrategyRegistry:
         BollingerBreakout,
         BollingerMeanReversion,
     )
+    from btc_backtest.strategies.carry import FundingBasisCarry
     from btc_backtest.strategies.channels import DonchianBreakout, TurtleTrend
     from btc_backtest.strategies.grid import GridRebalance
     from btc_backtest.strategies.momentum import (
@@ -283,5 +284,10 @@ def default_strategy_registry() -> StrategyRegistry:
         "grid_rebalance",
         lambda parameters: GridRebalance(parameters),
         GridRebalance.metadata,
+    )
+    registry.register(
+        "funding_basis_carry",
+        lambda parameters: FundingBasisCarry(parameters),
+        FundingBasisCarry.metadata,
     )
     return registry
