@@ -1,0 +1,1 @@
+"""Strategy test support package."""

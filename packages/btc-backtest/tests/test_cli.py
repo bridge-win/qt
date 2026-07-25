@@ -97,6 +97,53 @@ def test_cli_exposes_required_command_groups() -> None:
     assert "data" in result.stdout
     assert "strategies" in result.stdout
     assert "run-custom" in result.stdout
+    assert "run" in result.stdout
+
+
+def test_strategies_list_and_describe_include_complete_catalog() -> None:
+    listed = RUNNER.invoke(app, ["strategies", "list", "--format", "json"])
+    described = RUNNER.invoke(
+        app,
+        ["strategies", "describe", "funding_basis_carry"],
+    )
+
+    assert listed.exit_code == 0, listed.output
+    assert described.exit_code == 0, described.output
+    catalog = json.loads(listed.stdout)
+    metadata = json.loads(described.stdout)
+    assert len(catalog) == 23
+    assert catalog[0]["id"] == "fixed_dca"
+    assert catalog[19]["id"] == "funding_basis_carry"
+    assert catalog[-1]["id"] == "wick_catcher"
+    assert metadata["supported_instruments"] == ["spot", "perpetual"]
+
+
+def test_run_builtin_cli_delegates_to_backtest_runner(tmp_path: Path) -> None:
+    fixture = tmp_path / "btc.parquet"
+    _parquet(fixture)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "run",
+            "fixed_dca",
+            "--provider",
+            "local",
+            "--path",
+            str(fixture),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--fee-bps",
+            "0",
+            "--slippage-bps",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["strategy_id"] == "fixed_dca"
+    assert payload["orders"]
 
 
 def test_cli_returns_exit_two_with_typed_error(tmp_path: Path) -> None:

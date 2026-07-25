@@ -1,0 +1,209 @@
+{
+  "fixed_dca": {
+    "final_equity": "10037.95174483",
+    "order_count": 3,
+    "fill_count": 3,
+    "first_action": "fixed_dca_schedule",
+    "last_action": "fixed_dca_schedule",
+    "max_gross_exposure": "0.03483351",
+    "event_digest": "665b173035ab2e3b03f2d115208d519d46082252ca663ac8c8e7204710974ec8"
+  },
+  "smart_dca": {
+    "final_equity": "9994.73549201",
+    "order_count": 2,
+    "fill_count": 2,
+    "first_action": "smart_dca_base",
+    "last_action": "smart_dca_scaled",
+    "max_gross_exposure": "0.01499345",
+    "event_digest": "5d7c56823008625d201e1ccac84d8434a9f85836fb096a9c4fcfcdbc02a384da"
+  },
+  "sma_crossover": {
+    "final_equity": "10287.47469617",
+    "order_count": 1,
+    "fill_count": 1,
+    "first_action": "sma_bullish_cross",
+    "last_action": "sma_bullish_cross",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "8b63338699b718571bf0d5cb0f467005c1a053fac02cd998c1b9828d472b4edf"
+  },
+  "ema_crossover": {
+    "final_equity": "10809.07052710",
+    "order_count": 1,
+    "fill_count": 1,
+    "first_action": "ema_bullish_cross",
+    "last_action": "ema_bullish_cross",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "93415fe8463d0071296e83d93af26d815f265a94f93be5c41c54d86ddd6bbd6f"
+  },
+  "macd_trend": {
+    "final_equity": "19964.36153887",
+    "order_count": 36,
+    "fill_count": 10,
+    "first_action": "macd_histogram_bullish_cross",
+    "last_action": "macd_histogram_bullish_cross",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "fcd2da2f91d6a437cb0552d3aa1fb5287b720a492ae400d34527fc5b3eec899a"
+  },
+  "rsi_mean_reversion": {
+    "final_equity": "6884.20229008",
+    "order_count": 12,
+    "fill_count": 9,
+    "first_action": "rsi_oversold_entry",
+    "last_action": "rsi_normalization_exit",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "cc80f4d13677d39330b557e7cb3489f270bf2ee786902f6d5c2186fddead2ccc"
+  },
+  "stochastic_reversal": {
+    "final_equity": "9546.15183427",
+    "order_count": 36,
+    "fill_count": 9,
+    "first_action": "stochastic_oversold_cross",
+    "last_action": "stochastic_oversold_cross",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "0d642cf8bf7a9d471a7eb8dc1052491f42306ce1297708b08a6fd12ef6d39c31"
+  },
+  "bollinger_mean_reversion": {
+    "final_equity": "6151.63073443",
+    "order_count": 11,
+    "fill_count": 8,
+    "first_action": "lower_band_entry",
+    "last_action": "bollinger_center_exit",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "74de50650d32a5f710755c1260f985f1ff9ff411f5e5c8d2951f27041e4bbc1b"
+  },
+  "bollinger_breakout": {
+    "final_equity": "8912.71518766",
+    "order_count": 6,
+    "fill_count": 6,
+    "first_action": "upper_band_breakout",
+    "last_action": "atr_trailing_exit",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "34948fd54d03cec531f1a59b47bf10b03a4312228b3db07be0fa0518185aeca4"
+  },
+  "donchian_breakout": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "turtle_trend": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "time_series_momentum": {
+    "final_equity": "12096.74937487",
+    "order_count": 3,
+    "fill_count": 3,
+    "first_action": "positive_time_series_momentum",
+    "last_action": "positive_time_series_momentum",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "23c946df77be2a37dfce51031444c76e7080fd9f04e1684958d9e8e3187d523a"
+  },
+  "dual_momentum": {
+    "final_equity": "12096.74937487",
+    "order_count": 3,
+    "fill_count": 3,
+    "first_action": "dual_momentum_outperformance",
+    "last_action": "dual_momentum_outperformance",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "f9bcc0bbb6b18b11c27db64ff2017a9809b0aab5ef4708bb6b9a4a0648818b1a"
+  },
+  "rate_of_change": {
+    "final_equity": "11961.76418871",
+    "order_count": 3,
+    "fill_count": 3,
+    "first_action": "roc_entry_threshold",
+    "last_action": "roc_entry_threshold",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "e44116e94c7776121d18040b55360de4024ec9f876946b683536092e1969ca0b"
+  },
+  "adx_trend": {
+    "final_equity": "22051.20202925",
+    "order_count": 31,
+    "fill_count": 9,
+    "first_action": "adx_positive_trend",
+    "last_action": "adx_positive_trend",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "b719f415bfc3048675feab22fda2f747c30aba10f068a45c69325273ac1d62e1"
+  },
+  "atr_volatility_breakout": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "keltner_channel": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "vwap_mean_reversion": {
+    "final_equity": "6075.98174998",
+    "order_count": 11,
+    "fill_count": 11,
+    "first_action": "vwap_negative_z_entry",
+    "last_action": "vwap_negative_z_entry",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "84746aa0c40c8ed93509d6fe4afddb72e160e51b5be9946f44224000fe2d9cf5"
+  },
+  "grid_rebalance": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "funding_basis_carry": {
+    "final_equity": "10020.03399296",
+    "order_count": 4,
+    "fill_count": 4,
+    "first_action": "carry_entry",
+    "last_action": "carry_exit",
+    "max_gross_exposure": "1.26371987",
+    "event_digest": "dcc4938cb5464b5812d9055b738d7b3d6ed808695e8e09464ef649797344095b"
+  },
+  "buy_and_hold": {
+    "final_equity": "13997.20041994",
+    "order_count": 1,
+    "fill_count": 1,
+    "first_action": "initial_buy",
+    "last_action": "initial_buy",
+    "max_gross_exposure": "1.00000000",
+    "event_digest": "0a2ce9008f6b1d66db8089e035d298e71a3f9da6d683688624b03fd049df84b7"
+  },
+  "capitulation": {
+    "final_equity": "10000.00000000",
+    "order_count": 0,
+    "fill_count": 0,
+    "first_action": null,
+    "last_action": null,
+    "max_gross_exposure": "0.00000000",
+    "event_digest": "45c113c41a9ab7b01c1f526ab52020958e6d98c0c51152ec23bb86c15d2a705b"
+  },
+  "wick_catcher": {
+    "final_equity": "10242.58946521",
+    "order_count": 191,
+    "fill_count": 114,
+    "first_action": "wick_ladder_buy",
+    "last_action": "wick_ladder_buy",
+    "max_gross_exposure": "0.30497405",
+    "event_digest": "80e817e941fc1175f21fba320e1220bd48666dd0ee60d7367b343ef5e396ad8d"
+  }
+}

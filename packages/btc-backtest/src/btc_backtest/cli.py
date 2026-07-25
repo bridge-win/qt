@@ -28,10 +28,12 @@ from btc_backtest.data.providers.local import LocalParquetProvider
 from btc_backtest.data.providers.synthetic import SyntheticProvider
 from btc_backtest.engine.models import BacktestSpec
 from btc_backtest.errors import BacktestError, ProviderError
+from btc_backtest.strategies.base import StrategyMetadata
 from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
     load_strategy,
 )
+from btc_backtest.strategies.registry import default_strategy_registry
 
 app = typer.Typer(help="Independent BTC backtesting")
 data_app = typer.Typer(help="Synchronize and inspect immutable market data")
@@ -131,18 +133,121 @@ def data_inspect(
 @strategies_app.command("list")
 def strategies_list(
     cache_dir: Annotated[Path, typer.Option()] = DEFAULT_CACHE_DIR,
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="json or table"),
+    ] = "json",
 ) -> None:
-    """List explicitly installed strategy entry points."""
+    """List the complete built-in catalog and installed plugins."""
 
     try:
         DataCache(cache_dir)
+        registry = default_strategy_registry()
+        metadata = [
+            registry.describe(strategy_id)
+            for strategy_id in registry.list()
+        ]
         discovered = discover_entry_point_strategies()
-        _emit_json(
-            [
-                strategy.metadata.model_dump(mode="json")
-                for _, strategy in sorted(discovered.items())
-            ]
+        builtin_ids = set(registry.list())
+        metadata.extend(
+            strategy.metadata
+            for strategy_id, strategy in sorted(discovered.items())
+            if strategy_id not in builtin_ids
         )
+        _emit_strategy_metadata(metadata, output_format)
+    except (BacktestError, OSError, ValueError) as error:
+        _fail(error)
+
+
+@strategies_app.command("describe")
+def strategies_describe(
+    strategy_id: str = typer.Argument(...),
+    output_format: Annotated[
+        str,
+        typer.Option("--format", help="json or table"),
+    ] = "json",
+) -> None:
+    """Describe one built-in or installed strategy."""
+
+    try:
+        registry = default_strategy_registry()
+        if strategy_id in registry.list():
+            metadata = registry.describe(strategy_id)
+        else:
+            discovered = discover_entry_point_strategies()
+            strategy = discovered.get(strategy_id)
+            if strategy is None:
+                raise ValueError(f"unknown strategy: {strategy_id}")
+            metadata = strategy.metadata
+        _emit_strategy_metadata([metadata], output_format, single=True)
+    except (BacktestError, OSError, ValueError) as error:
+        _fail(error)
+
+
+@app.command("run")
+def run_builtin(
+    strategy_id: str = typer.Argument(..., help="Built-in strategy id"),
+    provider: str = typer.Option("local"),
+    symbol: str = typer.Option("BTC/USD"),
+    timeframe: str = typer.Option("1d"),
+    start: str | None = typer.Option(None),
+    end: str | None = typer.Option(None),
+    market: str = typer.Option("spot"),
+    path: Annotated[
+        Path | None,
+        typer.Option(help="Local Parquet path"),
+    ] = None,
+    cache_dir: Annotated[Path, typer.Option()] = DEFAULT_CACHE_DIR,
+    params_json: str = typer.Option("{}"),
+    initial_cash: str = typer.Option("10000"),
+    fee_bps: str = typer.Option("10"),
+    slippage_bps: str = typer.Option("5"),
+    allow_synthetic: bool = typer.Option(False),
+    seed: int = typer.Option(7),
+) -> None:
+    """Run one built-in strategy and print the immutable result as JSON."""
+
+    try:
+        registry = default_strategy_registry()
+        parameters = _parameters(params_json)
+        with ExitStack() as stack:
+            active_provider = _provider(
+                provider,
+                path=path,
+                allow_synthetic=allow_synthetic,
+                seed=seed,
+                stack=stack,
+            )
+            request = _request(
+                provider=active_provider.metadata.id,
+                symbol=symbol,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+                market=market,
+                path=path,
+                require_real=active_provider.metadata.real_data,
+            )
+            spec = BacktestSpec(
+                strategy=strategy_id,
+                strategy_params=parameters,
+                data=request,
+                initial_cash=_decimal_option(initial_cash, "initial-cash"),
+                fee_bps=_decimal_option(fee_bps, "fee-bps"),
+                slippage_bps=_decimal_option(
+                    slippage_bps,
+                    "slippage-bps",
+                ),
+                seed=seed,
+            )
+            result = BacktestRunner(
+                provider_registry={
+                    active_provider.metadata.id: active_provider,
+                },
+                strategy_registry=registry.factories,
+                cache=DataCache(cache_dir),
+            ).run(spec)
+        _emit_json(result.model_dump(mode="json"))
     except (BacktestError, OSError, ValueError) as error:
         _fail(error)
 
@@ -349,6 +454,33 @@ def _emit_json(value: object) -> None:
             ensure_ascii=True,
         )
     )
+
+
+def _emit_strategy_metadata(
+    metadata: list[StrategyMetadata],
+    output_format: str,
+    *,
+    single: bool = False,
+) -> None:
+    if output_format == "json":
+        payload: object = (
+            metadata[0].model_dump(mode="json")
+            if single
+            else [item.model_dump(mode="json") for item in metadata]
+        )
+        _emit_json(payload)
+        return
+    if output_format != "table":
+        raise ValueError("format must be json or table")
+    typer.echo("ID\tVERSION\tINSTRUMENTS\tDESCRIPTION")
+    for item in metadata:
+        instruments = ",".join(
+            instrument.value
+            for instrument in item.supported_instruments
+        )
+        typer.echo(
+            f"{item.id}\t{item.version}\t{instruments}\t{item.description}"
+        )
 
 
 def _fail(error: Exception) -> NoReturn:
