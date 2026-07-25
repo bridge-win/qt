@@ -11,11 +11,14 @@ from btc_backtest.signals.models import (
     SignalProviderMetadata,
     SignalQuery,
 )
+from btc_backtest.signals.ranking import RankingConfig, SignalAggregator
 from btc_backtest.signals.store import SignalStore
 from btc_backtest.signals.webhook import WebhookVerifier
 
 __all__ = [
     "RankedSignal",
+    "RankingConfig",
+    "SignalAggregator",
     "SignalContributor",
     "SignalObservation",
     "SignalProvider",
