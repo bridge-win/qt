@@ -17,6 +17,8 @@ from btc_backtest.data.providers.base import (
 from btc_backtest.engine.models import BacktestResult, BacktestSpec
 from btc_backtest.engine.runner import EventRunner
 from btc_backtest.errors import ProviderError, StrategyLoadError
+from btc_backtest.signals.ranking import SignalAggregator
+from btc_backtest.signals.store import SignalStore
 from btc_backtest.strategies.base import Strategy
 
 ConfiguredStrategyFactory = Callable[[Mapping[str, object]], Strategy]
@@ -34,6 +36,8 @@ class BacktestRunner:
         strategy_registry: Mapping[str, StrategyRegistration] | None = None,
         cache: DataCache | None = None,
         engine: EventRunner | None = None,
+        signal_store: SignalStore | None = None,
+        signal_aggregator: SignalAggregator | None = None,
     ) -> None:
         providers = dict(provider_registry or {})
         for provider_id, provider in providers.items():
@@ -45,7 +49,10 @@ class BacktestRunner:
         self._providers = ProviderRegistry(providers.values())
         self._strategies = MappingProxyType(dict(strategy_registry or {}))
         self._cache = cache or DataCache(Path(".btc-backtest-cache"))
-        self._engine = engine or EventRunner()
+        self._engine = engine or EventRunner(
+            signal_store=signal_store,
+            signal_aggregator=signal_aggregator,
+        )
 
     def run(
         self,

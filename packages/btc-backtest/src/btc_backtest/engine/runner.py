@@ -29,6 +29,9 @@ from btc_backtest.engine.models import (
     PortfolioSnapshot,
 )
 from btc_backtest.errors import ExecutionError
+from btc_backtest.signals.models import RankedSignal, SignalQuery
+from btc_backtest.signals.ranking import SignalAggregator
+from btc_backtest.signals.store import SignalStore
 from btc_backtest.strategies.base import (
     FinalizationContext,
     InitializationContext,
@@ -40,8 +43,16 @@ from btc_backtest.strategies.base import (
 class EventRunner:
     """Execute a strategy once over an immutable point-in-time market bundle."""
 
-    def __init__(self, fill_model: BarFillModel | None = None) -> None:
+    def __init__(
+        self,
+        fill_model: BarFillModel | None = None,
+        *,
+        signal_store: SignalStore | None = None,
+        signal_aggregator: SignalAggregator | None = None,
+    ) -> None:
         self._fill_model = fill_model
+        self._signal_store = signal_store
+        self._signal_aggregator = signal_aggregator or SignalAggregator()
 
     def run(
         self,
@@ -121,6 +132,11 @@ class EventRunner:
 
             history = frame.loc[:pandas_timestamp]
             if len(history) >= strategy.metadata.warmup_bars:
+                ranked_signals = self._rank_signals(
+                    spec=spec,
+                    strategy=strategy,
+                    timestamp=timestamp,
+                )
                 context = StrategyContext(
                     timestamp=timestamp,
                     bars=history,
@@ -140,11 +156,12 @@ class EventRunner:
                             OrderStatus.PARTIALLY_FILLED,
                         )
                     ),
-                    signals=(),
+                    signals=ranked_signals,
                     parameters=spec.strategy_params,
                 )
                 intents = _on_bar(strategy, context)
                 _validate_atomic_intents(intents)
+                context_signal_ids = _signal_observation_ids(ranked_signals)
                 for intent in intents:
                     order_counter += 1
                     order = _intent_to_order(
@@ -154,9 +171,10 @@ class EventRunner:
                         run_id=run_id,
                         counter=order_counter,
                         strategy=strategy,
+                        context_signal_ids=context_signal_ids,
                     )
                     orders.append(order)
-                    for signal_id in intent.signal_ids:
+                    for signal_id in order.signal_ids:
                         if signal_id not in signal_ids:
                             signal_ids.append(signal_id)
             previous_timestamp = timestamp
@@ -191,6 +209,30 @@ class EventRunner:
             },
             warnings=tuple(warnings),
         )
+
+    def _rank_signals(
+        self,
+        *,
+        spec: BacktestSpec,
+        strategy: Strategy,
+        timestamp: datetime,
+    ) -> tuple[RankedSignal, ...]:
+        if (
+            self._signal_store is None
+            or not strategy.metadata.signal_dependencies
+        ):
+            return ()
+        observations = self._signal_store.query(
+            SignalQuery(
+                start=spec.data.start,
+                end=spec.data.end,
+                symbol=spec.data.symbol,
+                horizons=(spec.data.timeframe,),
+                source_types=strategy.metadata.signal_dependencies,
+            ),
+            available_at=timestamp,
+        )
+        return self._signal_aggregator.rank(observations, as_of=timestamp)
 
 
 def _validate_run_contract(
@@ -374,6 +416,7 @@ def _intent_to_order(
     run_id: str,
     counter: int,
     strategy: Strategy,
+    context_signal_ids: tuple[str, ...],
 ) -> Order:
     if intent.instrument not in strategy.metadata.supported_instruments:
         raise ExecutionError(
@@ -403,8 +446,33 @@ def _intent_to_order(
         group_id=intent.group_id,
         atomic_group=intent.atomic_group,
         reason=intent.reason,
-        signal_ids=intent.signal_ids,
+        signal_ids=_merge_signal_ids(
+            intent.signal_ids,
+            context_signal_ids,
+        ),
     )
+
+
+def _signal_observation_ids(
+    ranked_signals: tuple[RankedSignal, ...],
+) -> tuple[str, ...]:
+    signal_ids: list[str] = []
+    for ranked in ranked_signals:
+        for contributor in ranked.contributors:
+            if contributor.observation_id not in signal_ids:
+                signal_ids.append(contributor.observation_id)
+    return tuple(signal_ids)
+
+
+def _merge_signal_ids(
+    explicit: tuple[str, ...],
+    context_signal_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    merged: list[str] = []
+    for signal_id in (*explicit, *context_signal_ids):
+        if signal_id not in merged:
+            merged.append(signal_id)
+    return tuple(merged)
 
 
 def _process_open_orders(

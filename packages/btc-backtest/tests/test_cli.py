@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 from btc_backtest.cli import app
+from btc_backtest.signals.models import SignalQuery
+from btc_backtest.signals.store import SignalStore
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
@@ -22,6 +24,29 @@ def _parquet(path: Path) -> None:
         },
         index=pd.date_range("2024-01-01", periods=4, freq="1D", tz="UTC"),
     ).to_parquet(path)
+
+
+def _signal_archive(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "source_event_id": "sentiment-1",
+                    "source_type": "sentiment",
+                    "symbol": "BTC/USD",
+                    "horizon": "1d",
+                    "direction": "1",
+                    "confidence": "0.8",
+                    "effective_at": "2024-01-02T00:00:00Z",
+                    "observed_at": "2024-01-02T00:00:00Z",
+                    "expires_at": "2024-01-04T00:00:00Z",
+                    "provenance": "https://signals.example/sentiment-1",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_run_custom_cli_exports_json(
@@ -95,9 +120,80 @@ def test_cli_exposes_required_command_groups() -> None:
 
     assert result.exit_code == 0
     assert "data" in result.stdout
+    assert "signals" in result.stdout
     assert "strategies" in result.stdout
     assert "run-custom" in result.stdout
     assert "run" in result.stdout
+
+
+def test_signals_top_cli_includes_provenance(tmp_path: Path) -> None:
+    archive = tmp_path / "signals.json"
+    _signal_archive(archive)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "signals",
+            "top",
+            "--archive",
+            str(archive),
+            "--symbol",
+            "BTC/USD",
+            "--horizon",
+            "1d",
+            "--start",
+            "2024-01-01T00:00:00Z",
+            "--end",
+            "2024-01-05T00:00:00Z",
+            "--as-of",
+            "2024-01-02T00:00:00Z",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"contributors"' in result.stdout
+    assert '"provenance"' in result.stdout
+
+
+def test_signals_collect_cli_publishes_archive_to_store(tmp_path: Path) -> None:
+    archive = tmp_path / "signals.json"
+    store = tmp_path / "store"
+    _signal_archive(archive)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "signals",
+            "collect",
+            "--archive",
+            str(archive),
+            "--store",
+            str(store),
+            "--symbol",
+            "BTC/USD",
+            "--horizon",
+            "1d",
+            "--start",
+            "2024-01-01T00:00:00Z",
+            "--end",
+            "2024-01-05T00:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    queried = SignalStore(store).query(
+        SignalQuery(
+            start=pd.Timestamp("2024-01-01T00:00:00Z").to_pydatetime(),
+            end=pd.Timestamp("2024-01-05T00:00:00Z").to_pydatetime(),
+            symbol="BTC/USD",
+            horizons=("1d",),
+        ),
+        available_at=pd.Timestamp("2024-01-02T00:00:00Z").to_pydatetime(),
+    )
+    assert payload["observation_count"] == 1
+    assert queried[0].source_event_id == "sentiment-1"
 
 
 def test_strategies_list_and_describe_include_complete_catalog() -> None:

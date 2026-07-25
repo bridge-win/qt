@@ -28,6 +28,10 @@ from btc_backtest.data.providers.local import LocalParquetProvider
 from btc_backtest.data.providers.synthetic import SyntheticProvider
 from btc_backtest.engine.models import BacktestSpec
 from btc_backtest.errors import BacktestError, ProviderError
+from btc_backtest.signals.models import RankedSignal, SignalQuery
+from btc_backtest.signals.providers.local import SignalArchiveProvider
+from btc_backtest.signals.ranking import SignalAggregator
+from btc_backtest.signals.store import SignalStore
 from btc_backtest.strategies.base import StrategyMetadata
 from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
@@ -37,10 +41,13 @@ from btc_backtest.strategies.registry import default_strategy_registry
 
 app = typer.Typer(help="Independent BTC backtesting")
 data_app = typer.Typer(help="Synchronize and inspect immutable market data")
+signals_app = typer.Typer(help="Collect and rank point-in-time signals")
 strategies_app = typer.Typer(help="Discover installed strategy plugins")
 app.add_typer(data_app, name="data")
+app.add_typer(signals_app, name="signals")
 app.add_typer(strategies_app, name="strategies")
 DEFAULT_CACHE_DIR = Path(".btc-backtest-cache")
+DEFAULT_SIGNAL_STORE_DIR = DEFAULT_CACHE_DIR / "signals"
 
 
 @app.callback()
@@ -180,6 +187,93 @@ def strategies_describe(
                 raise ValueError(f"unknown strategy: {strategy_id}")
             metadata = strategy.metadata
         _emit_strategy_metadata([metadata], output_format, single=True)
+    except (BacktestError, OSError, ValueError) as error:
+        _fail(error)
+
+
+@signals_app.command("collect")
+def signals_collect(
+    archive: Annotated[
+        Path,
+        typer.Option(help="Immutable JSON, CSV, or Parquet signal archive"),
+    ],
+    symbol: str = typer.Option("BTC/USD"),
+    horizon: str = typer.Option("1d"),
+    start: str = typer.Option(...),
+    end: str = typer.Option(...),
+    store_dir: Annotated[
+        Path,
+        typer.Option("--store", help="SignalStore archive directory"),
+    ] = DEFAULT_SIGNAL_STORE_DIR,
+    source_type: Annotated[
+        list[str] | None,
+        typer.Option("--source-type", help="Optional source-type filter"),
+    ] = None,
+) -> None:
+    """Collect normalized archive observations into an immutable store."""
+
+    try:
+        query = _signal_query(
+            symbol=symbol,
+            horizon=horizon,
+            start=start,
+            end=end,
+            source_types=source_type,
+        )
+        provider = SignalArchiveProvider(archive)
+        observations = provider.fetch(query)
+        fingerprint = SignalStore(store_dir).append(observations)
+        _emit_json(
+            {
+                "fingerprint": fingerprint,
+                "observation_count": len(observations),
+                "store": str(store_dir),
+            }
+        )
+    except (BacktestError, OSError, ValueError) as error:
+        _fail(error)
+
+
+@signals_app.command("top")
+def signals_top(
+    archive: Annotated[
+        Path,
+        typer.Option(help="Immutable JSON, CSV, or Parquet signal archive"),
+    ],
+    symbol: str = typer.Option("BTC/USD"),
+    horizon: str = typer.Option("1d"),
+    start: str = typer.Option(...),
+    end: str = typer.Option(...),
+    as_of: str = typer.Option(...),
+    source_type: Annotated[
+        list[str] | None,
+        typer.Option("--source-type", help="Optional source-type filter"),
+    ] = None,
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit ranked signals as JSON",
+    ),
+) -> None:
+    """Rank top available signals at one point in time."""
+
+    try:
+        query = _signal_query(
+            symbol=symbol,
+            horizon=horizon,
+            start=start,
+            end=end,
+            source_types=source_type,
+        )
+        observations = SignalArchiveProvider(archive).fetch(query)
+        ranked = SignalAggregator().rank(
+            observations,
+            as_of=_timestamp(as_of, "as-of"),
+        )
+        if json_output:
+            _emit_json([item.model_dump(mode="json") for item in ranked])
+            return
+        _emit_ranked_signals(ranked)
     except (BacktestError, OSError, ValueError) as error:
         _fail(error)
 
@@ -435,6 +529,23 @@ def _parameters(value: str) -> Mapping[str, object]:
     return cast(dict[str, object], parsed)
 
 
+def _signal_query(
+    *,
+    symbol: str,
+    horizon: str,
+    start: str,
+    end: str,
+    source_types: list[str] | None,
+) -> SignalQuery:
+    return SignalQuery(
+        start=_timestamp(start, "start"),
+        end=_timestamp(end, "end"),
+        symbol=symbol,
+        horizons=(horizon,),
+        source_types=tuple(source_types or ()),
+    )
+
+
 def _decimal_option(value: str, label: str) -> Decimal:
     try:
         parsed = Decimal(value)
@@ -480,6 +591,19 @@ def _emit_strategy_metadata(
         )
         typer.echo(
             f"{item.id}\t{item.version}\t{instruments}\t{item.description}"
+        )
+
+
+def _emit_ranked_signals(ranked: tuple[RankedSignal, ...]) -> None:
+    typer.echo("SYMBOL\tHORIZON\tDIRECTION\tCONFIDENCE\tCONTRIBUTORS")
+    for item in ranked:
+        contributors = ",".join(
+            contributor.observation_id
+            for contributor in item.contributors
+        )
+        typer.echo(
+            f"{item.symbol}\t{item.horizon}\t{item.direction}\t"
+            f"{item.confidence}\t{contributors}"
         )
 
 

@@ -27,6 +27,7 @@ from btc_backtest.engine.models import (
     OrderIntent,
     PortfolioSnapshot,
 )
+from btc_backtest.signals.models import RankedSignal
 
 
 class StrategyMetadata(BaseModel):
@@ -131,7 +132,7 @@ class StrategyContext(BaseModel):
     )
     portfolio: PortfolioSnapshot
     open_orders: tuple[Order, ...] = ()
-    signals: tuple[object, ...] = ()
+    signals: tuple[RankedSignal, ...] = ()
     parameters: Mapping[str, object] = Field(
         default_factory=dict,
         validate_default=True,
