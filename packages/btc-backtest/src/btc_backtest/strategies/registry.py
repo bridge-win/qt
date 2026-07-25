@@ -155,3 +155,22 @@ class StrategyRegistry:
     @property
     def aliases(self) -> Mapping[str, str]:
         return MappingProxyType(dict(self._aliases))
+
+
+def default_strategy_registry() -> StrategyRegistry:
+    """Build a fresh registry containing every implemented built-in."""
+
+    from btc_backtest.strategies.accumulation import FixedDCA, SmartDCA
+
+    registry = StrategyRegistry()
+    registry.register(
+        "fixed_dca",
+        lambda parameters: FixedDCA(parameters),
+        FixedDCA.metadata,
+    )
+    registry.register(
+        "smart_dca",
+        lambda parameters: SmartDCA(parameters),
+        SmartDCA.metadata,
+    )
+    return registry
