@@ -166,6 +166,10 @@ def default_strategy_registry() -> StrategyRegistry:
         MACDTrend,
         SMACrossover,
     )
+    from btc_backtest.strategies.oscillators import (
+        RSIMeanReversion,
+        StochasticReversal,
+    )
 
     registry = StrategyRegistry()
     registry.register(
@@ -192,5 +196,15 @@ def default_strategy_registry() -> StrategyRegistry:
         "macd_trend",
         lambda parameters: MACDTrend(parameters),
         MACDTrend.metadata,
+    )
+    registry.register(
+        "rsi_mean_reversion",
+        lambda parameters: RSIMeanReversion(parameters),
+        RSIMeanReversion.metadata,
+    )
+    registry.register(
+        "stochastic_reversal",
+        lambda parameters: StochasticReversal(parameters),
+        StochasticReversal.metadata,
     )
     return registry

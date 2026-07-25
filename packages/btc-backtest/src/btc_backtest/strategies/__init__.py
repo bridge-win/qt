@@ -25,6 +25,12 @@ from btc_backtest.strategies.moving_average import (
     SMACrossover,
     SMACrossoverParams,
 )
+from btc_backtest.strategies.oscillators import (
+    RSIMeanReversion,
+    RSIMeanReversionParams,
+    StochasticReversal,
+    StochasticReversalParams,
+)
 from btc_backtest.strategies.registry import (
     BUILTIN_STRATEGY_IDS,
     EXTRA_STRATEGY_IDS,
@@ -45,10 +51,14 @@ __all__ = [
     "InitializationContext",
     "MACDTrend",
     "MACDTrendParams",
+    "RSIMeanReversion",
+    "RSIMeanReversionParams",
     "SMACrossover",
     "SMACrossoverParams",
     "SmartDCA",
     "SmartDCAParams",
+    "StochasticReversal",
+    "StochasticReversalParams",
     "Strategy",
     "StrategyContext",
     "StrategyFactory",
