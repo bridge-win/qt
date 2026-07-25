@@ -25,6 +25,7 @@ from btc_backtest.strategies.channels import (
     TurtleTrend,
     TurtleTrendParams,
 )
+from btc_backtest.strategies.grid import GridParams, GridRebalance
 from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
     load_strategy,
@@ -92,6 +93,8 @@ __all__ = [
     "FinalizationContext",
     "FixedDCA",
     "FixedDCAParams",
+    "GridParams",
+    "GridRebalance",
     "InitializationContext",
     "KeltnerChannel",
     "KeltnerChannelParams",

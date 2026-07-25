@@ -166,6 +166,7 @@ def default_strategy_registry() -> StrategyRegistry:
         BollingerMeanReversion,
     )
     from btc_backtest.strategies.channels import DonchianBreakout, TurtleTrend
+    from btc_backtest.strategies.grid import GridRebalance
     from btc_backtest.strategies.momentum import (
         ADXTrend,
         DualMomentum,
@@ -277,5 +278,10 @@ def default_strategy_registry() -> StrategyRegistry:
         "vwap_mean_reversion",
         lambda parameters: VWAPMeanReversion(parameters),
         VWAPMeanReversion.metadata,
+    )
+    registry.register(
+        "grid_rebalance",
+        lambda parameters: GridRebalance(parameters),
+        GridRebalance.metadata,
     )
     return registry
