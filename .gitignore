@@ -34,6 +34,8 @@ data/runtime/
 *.parquet
 *.duckdb
 *.duckdb.wal
+packages/btc-backtest/.cache/
+packages/btc-backtest/artifacts/
 
 # Database backup artifacts
 backups/
