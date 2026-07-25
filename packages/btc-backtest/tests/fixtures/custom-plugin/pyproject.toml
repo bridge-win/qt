@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "example-btc-strategy"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["btc-backtest>=0.1.0"]
+
+[project.entry-points."btc_backtest.strategies"]
+external_fixture = "example_btc_strategy:ExternalFixtureStrategy"
+
+[tool.setuptools.packages.find]
+where = ["src"]
