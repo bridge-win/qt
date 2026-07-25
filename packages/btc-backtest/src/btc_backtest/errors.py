@@ -17,6 +17,10 @@ class ProviderError(BacktestError):
     """An external or local data provider could not satisfy a request."""
 
 
+class NetworkUnavailableError(ProviderError):
+    """A provider could not be reached after bounded transport retries."""
+
+
 class StrategyLoadError(BacktestError):
     """A strategy could not be discovered, loaded, or validated."""
 

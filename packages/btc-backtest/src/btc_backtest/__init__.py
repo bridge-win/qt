@@ -5,6 +5,7 @@ from btc_backtest.errors import (
     DataCoverageError,
     DataValidationError,
     ExecutionError,
+    NetworkUnavailableError,
     ProviderError,
     StrategyLoadError,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "DataCoverageError",
     "DataValidationError",
     "ExecutionError",
+    "NetworkUnavailableError",
     "ProviderError",
     "StrategyLoadError",
     "__version__",
