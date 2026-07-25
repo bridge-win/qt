@@ -12,6 +12,7 @@ from btc_backtest.signals.models import (
     SignalQuery,
 )
 from btc_backtest.signals.store import SignalStore
+from btc_backtest.signals.webhook import WebhookVerifier
 
 __all__ = [
     "RankedSignal",
@@ -22,4 +23,5 @@ __all__ = [
     "SignalProviderRegistry",
     "SignalQuery",
     "SignalStore",
+    "WebhookVerifier",
 ]
