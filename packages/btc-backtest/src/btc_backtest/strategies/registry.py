@@ -165,6 +165,7 @@ def default_strategy_registry() -> StrategyRegistry:
         BollingerBreakout,
         BollingerMeanReversion,
     )
+    from btc_backtest.strategies.benchmarks import BuyAndHold
     from btc_backtest.strategies.carry import FundingBasisCarry
     from btc_backtest.strategies.channels import DonchianBreakout, TurtleTrend
     from btc_backtest.strategies.grid import GridRebalance
@@ -183,6 +184,7 @@ def default_strategy_registry() -> StrategyRegistry:
         RSIMeanReversion,
         StochasticReversal,
     )
+    from btc_backtest.strategies.qt_special import Capitulation, WickCatcher
     from btc_backtest.strategies.volatility import (
         ATRVolatilityBreakout,
         KeltnerChannel,
@@ -289,5 +291,20 @@ def default_strategy_registry() -> StrategyRegistry:
         "funding_basis_carry",
         lambda parameters: FundingBasisCarry(parameters),
         FundingBasisCarry.metadata,
+    )
+    registry.register(
+        "buy_and_hold",
+        lambda parameters: BuyAndHold(parameters),
+        BuyAndHold.metadata,
+    )
+    registry.register(
+        "capitulation",
+        lambda parameters: Capitulation(parameters),
+        Capitulation.metadata,
+    )
+    registry.register(
+        "wick_catcher",
+        lambda parameters: WickCatcher(parameters),
+        WickCatcher.metadata,
     )
     return registry

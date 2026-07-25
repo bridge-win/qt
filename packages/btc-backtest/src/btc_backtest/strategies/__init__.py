@@ -19,6 +19,7 @@ from btc_backtest.strategies.base import (
     StrategyContext,
     StrategyMetadata,
 )
+from btc_backtest.strategies.benchmarks import BuyAndHold, BuyAndHoldParams
 from btc_backtest.strategies.carry import (
     FundingBasisCarry,
     FundingBasisCarryParams,
@@ -58,6 +59,12 @@ from btc_backtest.strategies.oscillators import (
     StochasticReversal,
     StochasticReversalParams,
 )
+from btc_backtest.strategies.qt_special import (
+    Capitulation,
+    CapitulationParams,
+    WickCatcher,
+    WickCatcherParams,
+)
 from btc_backtest.strategies.registry import (
     BUILTIN_STRATEGY_IDS,
     EXTRA_STRATEGY_IDS,
@@ -88,6 +95,10 @@ __all__ = [
     "BollingerBreakoutParams",
     "BollingerMeanReversion",
     "BollingerMeanReversionParams",
+    "BuyAndHold",
+    "BuyAndHoldParams",
+    "Capitulation",
+    "CapitulationParams",
     "DonchianBreakout",
     "DonchianBreakoutParams",
     "DualMomentum",
@@ -128,6 +139,8 @@ __all__ = [
     "TurtleTrendParams",
     "VWAPMeanReversion",
     "VWAPMeanReversionParams",
+    "WickCatcher",
+    "WickCatcherParams",
     "default_strategy_registry",
     "discover_entry_point_strategies",
     "load_strategy",
