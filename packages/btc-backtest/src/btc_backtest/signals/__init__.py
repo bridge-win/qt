@@ -11,6 +11,7 @@ from btc_backtest.signals.models import (
     SignalProviderMetadata,
     SignalQuery,
 )
+from btc_backtest.signals.store import SignalStore
 
 __all__ = [
     "RankedSignal",
@@ -20,4 +21,5 @@ __all__ = [
     "SignalProviderMetadata",
     "SignalProviderRegistry",
     "SignalQuery",
+    "SignalStore",
 ]
