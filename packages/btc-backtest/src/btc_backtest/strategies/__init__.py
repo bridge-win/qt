@@ -11,6 +11,7 @@ from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
     load_strategy,
 )
+from btc_backtest.strategies.target_weight import TargetWeightStrategy
 
 __all__ = [
     "FinalizationContext",
@@ -18,6 +19,7 @@ __all__ = [
     "Strategy",
     "StrategyContext",
     "StrategyMetadata",
+    "TargetWeightStrategy",
     "discover_entry_point_strategies",
     "load_strategy",
 ]

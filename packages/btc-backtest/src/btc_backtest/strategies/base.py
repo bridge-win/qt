@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Literal, Protocol, cast, runtime_checkable
 
@@ -50,6 +51,8 @@ class StrategyMetadata(BaseModel):
         "volume",
     )
     signal_dependencies: tuple[str, ...] = ()
+    min_weight: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    max_weight: Decimal = Field(default=Decimal("1"), ge=0, le=1)
     parameter_schema: Mapping[str, object] = Field(
         default_factory=dict,
         validate_default=True,
@@ -84,6 +87,14 @@ class StrategyMetadata(BaseModel):
         value: Mapping[str, object],
     ) -> dict[str, object]:
         return dict(value)
+
+    @model_validator(mode="after")
+    def validate_weight_bounds(self) -> StrategyMetadata:
+        if not self.min_weight.is_finite() or not self.max_weight.is_finite():
+            raise ValueError("strategy weight bounds must be finite")
+        if self.min_weight > self.max_weight:
+            raise ValueError("strategy min_weight cannot exceed max_weight")
+        return self
 
 
 class InitializationContext(BaseModel):
