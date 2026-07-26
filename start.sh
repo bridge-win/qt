@@ -31,6 +31,7 @@ bootstrap() {
     if ! "$PY" -c "import qt" >/dev/null 2>&1; then
         echo "[qt] installing dependencies (first run takes a few minutes) ..."
         "$PY" -m pip install -q --upgrade pip
+        "$PY" -m pip install -q -e "packages/btc-backtest"
         "$PY" -m pip install -q -e ".[dev]"
     fi
     if [ ! -f .env ] && [ -f .env.example ]; then

@@ -31,6 +31,16 @@ RUN --network=none python -m pip install \
     setuptools==82.0.1 \
     wheel==0.47.0
 
+COPY packages/btc-backtest ./packages/btc-backtest
+RUN --network=none python -m pip wheel \
+    --no-build-isolation \
+    --no-deps \
+    --no-index \
+    --find-links=/wheelhouse \
+    --wheel-dir=/wheelhouse \
+    ./packages/btc-backtest \
+    && test -f /wheelhouse/btc_backtest-0.1.0-py3-none-any.whl
+
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN --network=none python -m pip wheel \
@@ -59,7 +69,9 @@ RUN --network=none python -m pip install \
     --no-compile \
     --no-index \
     --find-links=/wheelhouse \
+    btc-backtest==0.1.0 \
     qt==0.1.0 \
+    && test -f /wheelhouse/qt-0.1.0-py3-none-any.whl \
     && python -c "import shutil; shutil.rmtree('/wheelhouse')"
 
 WORKDIR /app

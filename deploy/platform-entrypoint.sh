@@ -9,6 +9,21 @@ fi
 role=$1
 shift
 
+python - <<'PY'
+import sys
+
+import btc_backtest, qt
+
+if btc_backtest.__version__ != "0.1.0":
+    sys.stderr.write(
+        f"btc_backtest version mismatch: {btc_backtest.__version__}\n"
+    )
+    raise SystemExit(70)
+if qt.__version__ != "0.1.0":
+    sys.stderr.write(f"qt version mismatch: {qt.__version__}\n")
+    raise SystemExit(70)
+PY
+
 case "$role" in
     migrate)
         if [ "$#" -ne 0 ]; then

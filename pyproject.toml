@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 readme = "README.md"
 license = { text = "MIT" }
 dependencies = [
+    "btc-backtest==0.1.0",
     "numpy>=1.26",
     "pandas>=2.1",
     "pyarrow>=14",
