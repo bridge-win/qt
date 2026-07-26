@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from btc_backtest.cli import app
 from btc_backtest.signals.models import SignalQuery
 from btc_backtest.signals.store import SignalStore
@@ -124,6 +125,45 @@ def test_cli_exposes_required_command_groups() -> None:
     assert "strategies" in result.stdout
     assert "run-custom" in result.stdout
     assert "run" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["data", "sync", "--help"],
+        ["data", "inspect", "--help"],
+        ["strategies", "list"],
+        ["strategies", "describe", "sma_crossover"],
+        ["run", "sma_crossover", "--help"],
+        ["run-custom", "--help"],
+        ["validate", "sma_crossover", "--help"],
+        ["signals", "collect", "--help"],
+        ["signals", "top", "--help"],
+    ],
+)
+def test_documented_commands_exist(args: list[str]) -> None:
+    result = RUNNER.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+
+
+def test_synthetic_provider_requires_explicit_synthetic_flag() -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "run",
+            "fixed_dca",
+            "--provider",
+            "synthetic",
+            "--start",
+            "2024-01-01T00:00:00Z",
+            "--end",
+            "2024-01-05T00:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "requires --synthetic" in result.stderr
 
 
 def test_signals_top_cli_includes_provenance(tmp_path: Path) -> None:
