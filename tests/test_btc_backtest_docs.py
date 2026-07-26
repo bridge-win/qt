@@ -60,5 +60,9 @@ def test_acceptance_evidence_maps_every_design_criterion() -> None:
     assert "Skipped" not in text
     assert "Indirect" not in text
     assert "abf01af" in text
-    assert "2 passed in 74.26s" in text
-    assert "2 passed in 44.73s" in text
+    assert "494 passed in 186.44s" in text
+    assert "379 passed, 1 warning in 97.47s" in text
+    assert "2 passed in 76.79s" in text
+    assert "2 passed in 46.47s" in text
+    assert "Docker runtime build" in text
+    assert "remote matches HEAD" in text
