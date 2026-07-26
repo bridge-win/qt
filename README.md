@@ -111,6 +111,30 @@ qt --config config/default.yaml dashboard --port 8765
 python scripts/run_paper.py --interval 3600
 ```
 
+## Independent BTC backtesting package
+
+The independent `btc-backtest` package lives in
+[`packages/btc-backtest`](packages/btc-backtest). It can be installed and run
+without importing QT, and QT connects to it through a compatibility adapter.
+
+Start with the operator guide:
+[`docs/btc-backtest.md`](docs/btc-backtest.md).
+
+Core package commands:
+
+```bash
+btc-backtest data sync --provider bitstamp --symbol BTC/USD --timeframe 1d --years 10
+btc-backtest strategies list
+btc-backtest run sma_crossover --provider bitstamp --symbol BTC/USD --timeframe 1d --years 10
+btc-backtest run-custom packages/btc-backtest/examples/custom_strategy.py:CustomStrategy --provider local --path data/btc.parquet
+btc-backtest validate sma_crossover --provider bitstamp --symbol BTC/USD --timeframe 1d --years 10
+btc-backtest signals top --archive signals.json --start 2024-01-01T00:00:00Z --end 2024-02-01T00:00:00Z --as-of 2024-01-15T00:00:00Z
+```
+
+Acceptance evidence is tracked in
+[`docs/verification/btc-backtest-acceptance.md`](docs/verification/btc-backtest-acceptance.md).
+Historical backtests are not a profitability guarantee.
+
 ## Daily Usage
 
 ```bash

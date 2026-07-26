@@ -83,6 +83,7 @@ Sources: [NFTevening 2025 survey](https://nftevening.com/84-percent-of-retail-cr
 | **5 — Intelligence Discovery** | ✅ Done | `qt.intel`: 5 scanners (funding carry/differential, cross-venue spread, dated-futures basis, stablecoin depeg, wick regime) ranked by net-of-fees edge; `/intel` dashboard page; separate scanner thread configured by `config/strategies/intel.yaml`; evidence in `docs/RESEARCH-EARNING.md` |
 | **5b — Wick Catcher** | ✅ Done | `wick` strategy: deep-limit ladder for liquidation-wick mean reversion; live signal generator, YAML config, and sim backtest (`qt strategy run wick`) |
 | **Learning Center** | ✅ Done | Read-only `/learn` curriculum with eight prerequisite-ordered modules, a 12-week study path, evidence labels, authoritative citations, and hands-on QT exercises |
+| **Independent BTC backtesting** | In final audit | Standalone `btc-backtest` package with real Bitstamp data, 20 built-in algorithms, custom strategy SDK, signal ingestion/ranking, validation/reporting, QT adapter, ten-year live acceptance, and evidence in [`docs/btc-backtest.md`](btc-backtest.md) plus [`docs/verification/btc-backtest-acceptance.md`](verification/btc-backtest-acceptance.md) |
 
 Remaining phases:
 

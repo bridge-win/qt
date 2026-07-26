@@ -117,6 +117,11 @@ JSON, HTML, cache, coverage, and build files stay ignored.
 | Static/build/live release gates | Integration Tasks 8–10 |
 | Committed and pushed evidence | Every task Step 5; final remote check |
 
+Current evidence is consolidated in
+[`../../verification/btc-backtest-acceptance.md`](../../verification/btc-backtest-acceptance.md).
+Use that document for the latest command/output mapping, then rerun the final
+audit command set before marking the active BTC-backtest objective complete.
+
 ## Final Completion Audit
 
 After all four plan exit gates pass:
