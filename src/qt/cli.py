@@ -25,7 +25,7 @@ from qt.core.logging import configure_logging, get_logger
 app = typer.Typer(help="QT — BTC quantitative trading platform")
 data_app = typer.Typer(help="Data ingestion commands")
 monitor_app = typer.Typer(help="Monitoring and health commands")
-strategy_app = typer.Typer(help="Solution-gallery batch backtests (sim package)")
+strategy_app = typer.Typer(help="Solution-gallery batch backtests (btc_backtest engine)")
 report_app = typer.Typer(help="Reports: strategy-vs-benchmark, digests")
 live_app = typer.Typer(help="Live BTC trading preflight checks")
 app.add_typer(data_app, name="data")
@@ -222,7 +222,13 @@ def backtest_cmd(
 @strategy_app.command("run")
 def strategy_run_cmd(
     ctx: typer.Context,
-    which: str = typer.Argument(..., help="One of: dca, trend, carry, wick"),
+    which: str = typer.Argument(
+        ...,
+        help=(
+            "One of: dca, trend, carry, wick. Engine aliases accepted: "
+            "smart_dca, sma_crossover, funding_basis_carry, wick_catcher"
+        ),
+    ),
     ohlcv_key: str = typer.Option(
         "binance_BTCUSDT_1h", help="Key into the ohlcv parquet store",
     ),
@@ -294,7 +300,7 @@ def strategy_run_cmd(
     eq = outcome.equity
     tag = " [yellow](SYNTHETIC data)[/]" if outcome.synthetic else ""
     console.print(
-        f"[green]strategy={strat}[/]{tag} "
+        f"[green]strategy={strat}[/] engine={outcome.engine_strategy}{tag} "
         f"final={eq.iloc[-1]:,.2f} "
         f"x={(eq.iloc[-1] / eq.iloc[0] if eq.iloc[0] > 0 else float('nan')):.2f} "
         f"cagr={m.cagr:.2%} "

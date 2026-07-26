@@ -1,9 +1,9 @@
 """Unified backtest entry point for the solution-gallery strategies.
 
 One function — :func:`run_strategy_backtest` — takes a strategy id, a
-price history, and optional auxiliary series, dispatches to the right
-batch backtester in :mod:`qt.strategies.sim`, and returns a normalized
-:class:`BacktestOutcome` (equity curve + trades + standard metrics).
+price history, and optional auxiliary series, dispatches to the independent
+``btc_backtest`` event engine, and returns a normalized :class:`BacktestOutcome`
+(equity curve + trades + standard metrics).
 
 It also ships :func:`synthetic_btc_ohlcv` so a backtest can always run —
 even with no network and no local parquet — which matters in locked-down
@@ -13,37 +13,47 @@ clearly labeled as such in the outcome.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
+from btc_backtest.data.models import (
+    DataManifest,
+    DataRequest,
+    DataSegment,
+    MarketBundle,
+    MarketDataset,
+    Timeframe,
+)
+from btc_backtest.engine.models import BacktestResult, BacktestSpec
+from btc_backtest.engine.runner import EventRunner
+from btc_backtest.strategies.registry import default_strategy_registry
 
 from qt.backtest.metrics import Metrics, compute_metrics
 from qt.backtest.validation import ohlcv_fingerprint, validate_ohlcv
-from qt.strategies.sim import (
-    BasisCarryBacktest,
-    BasisCarryConfig,
-    SmartDCABacktest,
-    SmartDCAConfig,
-    WeeklyTrendBacktest,
-    WeeklyTrendConfig,
-    WickCatcherBacktest,
-    WickCatcherConfig,
-)
 
 # Canonical strategy ids and their aliases.
 STRATEGY_ALIASES: dict[str, str] = {
     "a": "dca", "dca": "dca", "smart_dca": "dca",
     "c": "trend", "trend": "trend", "weekly": "trend", "weekly_trend": "trend",
+    "sma_crossover": "trend",
     "d": "carry", "carry": "carry", "basis": "carry", "basis_carry": "carry",
+    "funding_basis_carry": "carry",
     "e": "wick", "wick": "wick", "wick_catcher": "wick",
 }
 
 SUPPORTED = ("dca", "trend", "carry", "wick")
+ENGINE_STRATEGIES: dict[str, str] = {
+    "dca": "smart_dca",
+    "trend": "sma_crossover",
+    "carry": "funding_basis_carry",
+    "wick": "wick_catcher",
+}
 
 
 @dataclass
@@ -51,17 +61,20 @@ class BacktestOutcome:
     """Normalized result of a strategy backtest."""
 
     strategy: str
+    engine_strategy: str
     equity: pd.Series
     trades: pd.DataFrame
     metrics: Metrics
     synthetic: bool = False
     diagnostics: pd.DataFrame = field(default_factory=pd.DataFrame)
     data_fingerprint: str = ""
+    engine_run_id: str = ""
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self) -> dict[str, object]:
         eq = self.equity
         return {
             "strategy": self.strategy,
+            "engine_strategy": self.engine_strategy,
             "synthetic": self.synthetic,
             "bars": len(eq),
             "start": eq.index[0].isoformat() if len(eq) else None,
@@ -71,6 +84,7 @@ class BacktestOutcome:
             "x_multiple": float(eq.iloc[-1] / eq.iloc[0]) if len(eq) and eq.iloc[0] > 0 else 0.0,
             "num_trades": int(self.metrics.num_trades),
             "data_fingerprint": self.data_fingerprint,
+            "engine_run_id": self.engine_run_id,
             "metrics": {
                 "total_return": self.metrics.total_return,
                 "cagr": self.metrics.cagr,
@@ -113,7 +127,8 @@ def synthetic_btc_ohlcv(
 
     rng = np.random.default_rng(seed)
     periods = days * (24 if freq == "1h" else 1)
-    idx = pd.date_range(start=start, periods=periods, freq=freq, tz="UTC")
+    frequency = "1h" if freq == "1h" else "1D"
+    idx = pd.date_range(start=start, periods=periods, freq=frequency, tz="UTC")
 
     # Base drift + noise (per-bar). ~35% annual drift, ~55% annual vol.
     bars_per_year = 365 * (24 if freq == "1h" else 1)
@@ -200,52 +215,76 @@ def run_strategy_backtest(
     """
 
     strat = canonical_strategy(which)
+    engine_strategy = ENGINE_STRATEGIES[strat]
 
     synthetic = False
+    ohlcv_synthetic = False
+    funding_synthetic = False
     if ohlcv is None or ohlcv.empty:
         if not allow_synthetic:
             raise ValueError(f"no OHLCV data for {strat} and allow_synthetic=False")
         ohlcv = synthetic_btc_ohlcv(days=synthetic_days)
         synthetic = True
+        ohlcv_synthetic = True
     ohlcv = validate_ohlcv(ohlcv)
     data_fingerprint = ohlcv_fingerprint(ohlcv)
 
-    close = ohlcv["close"]
+    if (
+        strat == "carry"
+        and allow_synthetic
+        and (funding is None or (hasattr(funding, "empty") and funding.empty))
+    ):
+        funding = synthetic_funding(ohlcv.index)
+        synthetic = True
+        funding_synthetic = True
 
-    if strat == "dca":
-        result = SmartDCABacktest(SmartDCAConfig(initial_cash=initial_cash)).run(
-            ohlcv, fear_greed=fear_greed, mvrv_z=mvrv_z, nupl=nupl,
-        )
-    elif strat == "trend":
-        result = WeeklyTrendBacktest(WeeklyTrendConfig(initial_cash=initial_cash)).run(ohlcv)
-    elif strat == "carry":
-        if funding is None or (hasattr(funding, "empty") and funding.empty):
-            if not allow_synthetic:
-                raise ValueError("basis carry requires funding-rate history")
-            funding = synthetic_funding(close.index)
-            synthetic = True
-        result = BasisCarryBacktest(BasisCarryConfig(initial_cash=initial_cash)).run(
-            ohlcv, funding=funding,
-        )
-    elif strat == "wick":
-        result = WickCatcherBacktest(
-            WickCatcherConfig(initial_cash=initial_cash)
-        ).run(ohlcv)
-    else:  # pragma: no cover - guarded by canonical_strategy
-        raise ValueError(f"unsupported strategy {strat}")
+    spec = _spec(
+        engine_strategy,
+        ohlcv,
+        initial_cash=initial_cash,
+        synthetic=ohlcv_synthetic,
+    )
+    auxiliary = _auxiliary_datasets(
+        strategy=strat,
+        ohlcv=ohlcv,
+        funding=funding,
+        fear_greed=fear_greed,
+        mvrv_z=mvrv_z,
+        nupl=nupl,
+        ohlcv_synthetic=ohlcv_synthetic,
+        funding_synthetic=funding_synthetic,
+        request=spec.data,
+    )
+    registry = default_strategy_registry()
+    result = EventRunner().run(
+        spec,
+        MarketBundle(
+            primary=_market_dataset(
+                "spot",
+                ohlcv,
+                request=spec.data,
+                real_data=not ohlcv_synthetic,
+                source="qt-memory://ohlcv",
+            ),
+            auxiliary=auxiliary,
+        ),
+        registry.create(engine_strategy, {}),
+    )
 
-    equity = result.equity
-    trades = _normalize_trades(result.trades)
+    equity = _equity_series(result)
+    trades = _trades_frame(result)
     metrics = compute_metrics(equity, trades)
 
     return BacktestOutcome(
         strategy=strat,
+        engine_strategy=engine_strategy,
         equity=equity,
         trades=trades,
         metrics=metrics,
         synthetic=synthetic,
-        diagnostics=getattr(result, "diagnostics", pd.DataFrame()),
+        diagnostics=_diagnostics_frame(result),
         data_fingerprint=data_fingerprint,
+        engine_run_id=result.run_id,
     )
 
 
@@ -298,3 +337,244 @@ def _normalize_trades(trades: pd.DataFrame) -> pd.DataFrame:
     if "pnl" not in df.columns:
         df["pnl"] = 0.0
     return df
+
+
+def _spec(
+    strategy: str,
+    ohlcv: pd.DataFrame,
+    *,
+    initial_cash: float,
+    synthetic: bool,
+) -> BacktestSpec:
+    timeframe = _infer_timeframe(ohlcv.index)
+    request = _request_for(ohlcv, timeframe=timeframe, synthetic=synthetic)
+    return BacktestSpec(
+        strategy=strategy,
+        data=request,
+        initial_cash=Decimal(str(initial_cash)),
+        fee_bps=Decimal("0"),
+        slippage_bps=Decimal("0"),
+    )
+
+
+def _infer_timeframe(index: pd.DatetimeIndex) -> Timeframe:
+    if len(index) < 2:
+        return "1h"
+    deltas = index.to_series().diff().dropna()
+    if deltas.empty:
+        return "1h"
+    median = deltas.median()
+    return "1h" if median <= pd.Timedelta(hours=1) else "1d"
+
+
+def _bar_delta(timeframe: Timeframe) -> timedelta:
+    return timedelta(hours=1) if timeframe == "1h" else timedelta(days=1)
+
+
+def _request_for(
+    frame: pd.DataFrame,
+    *,
+    timeframe: Timeframe,
+    synthetic: bool,
+    market: str = "spot",
+) -> DataRequest:
+    index = frame.index
+    start = pd.Timestamp(index[0]).to_pydatetime()
+    end = (pd.Timestamp(index[-1]) + _bar_delta(timeframe)).to_pydatetime()
+    return DataRequest(
+        provider="qt-memory",
+        symbol="BTC/USD",
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        market=market,
+        require_real=not synthetic,
+    )
+
+
+def _market_dataset(
+    market: str,
+    frame: pd.DataFrame,
+    *,
+    request: DataRequest,
+    real_data: bool,
+    source: str,
+) -> MarketDataset:
+    return MarketDataset(
+        frame=frame.copy(),
+        manifest=_manifest(
+            market=market,
+            frame=frame,
+            request=request,
+            real_data=real_data,
+            source=source,
+        ),
+    )
+
+
+def _manifest(
+    *,
+    market: str,
+    frame: pd.DataFrame,
+    request: DataRequest,
+    real_data: bool,
+    source: str,
+) -> DataManifest:
+    normalized_sha256 = _frame_digest(frame)
+    delivered_start = pd.Timestamp(frame.index[0]).to_pydatetime()
+    delivered_end = (
+        pd.Timestamp(frame.index[-1]) + _bar_delta(request.timeframe)
+    ).to_pydatetime()
+    return DataManifest(
+        provider=request.provider,
+        market=market,
+        symbol=request.symbol,
+        timeframe=request.timeframe,
+        requested_start=request.start,
+        requested_end=request.end,
+        delivered_start=delivered_start,
+        delivered_end=delivered_end,
+        retrieved_at=datetime.now(tz=timezone.utc),
+        real_data=real_data,
+        raw_sha256=(normalized_sha256,),
+        normalized_sha256=normalized_sha256,
+        source=source,
+        segments=(
+            DataSegment(
+                provider=request.provider,
+                market=market,
+                symbol=request.symbol,
+                timeframe=request.timeframe,
+                start=delivered_start,
+                end=delivered_end,
+                real_data=real_data,
+                normalized_sha256=normalized_sha256,
+                source=source,
+            ),
+        ),
+    )
+
+
+def _frame_digest(frame: pd.DataFrame) -> str:
+    digest_frame = frame.copy()
+    digest_frame.index = digest_frame.index.tz_convert("UTC")
+    payload = digest_frame.to_csv(
+        index=True,
+        index_label="timestamp",
+        date_format="%Y-%m-%dT%H:%M:%S.%fZ",
+        float_format="%.12g",
+        lineterminator="\n",
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _auxiliary_datasets(
+    *,
+    strategy: str,
+    ohlcv: pd.DataFrame,
+    funding: pd.Series | None,
+    fear_greed: pd.Series | None,
+    mvrv_z: pd.Series | None,
+    nupl: pd.Series | None,
+    ohlcv_synthetic: bool,
+    funding_synthetic: bool,
+    request: DataRequest,
+) -> dict[str, MarketDataset]:
+    auxiliary: dict[str, MarketDataset] = {}
+    if strategy == "carry":
+        auxiliary["perpetual"] = _market_dataset(
+            "perpetual",
+            ohlcv,
+            request=request.model_copy(update={"market": "perpetual"}),
+            real_data=not ohlcv_synthetic,
+            source="qt-memory://perpetual",
+        )
+        if funding is not None and not funding.empty:
+            funding_frame = _series_frame("rate", funding, ohlcv.index)
+            if not funding_frame.empty:
+                auxiliary["funding"] = _market_dataset(
+                    "funding",
+                    funding_frame,
+                    request=request.model_copy(update={"market": "funding"}),
+                    real_data=not funding_synthetic,
+                    source="qt-memory://funding",
+                )
+    if strategy == "dca":
+        features: dict[str, pd.Series] = {}
+        if fear_greed is not None and not fear_greed.empty:
+            features["fear_greed"] = _aligned_series(fear_greed, ohlcv.index)
+        if mvrv_z is not None and not mvrv_z.empty:
+            features["valuation_zscore"] = _aligned_series(mvrv_z, ohlcv.index)
+        if nupl is not None and not nupl.empty:
+            features["nupl"] = _aligned_series(nupl, ohlcv.index)
+        if features:
+            feature_frame = pd.DataFrame(features).dropna(how="all")
+            if not feature_frame.empty:
+                auxiliary["features"] = _market_dataset(
+                    "features",
+                    feature_frame,
+                    request=request.model_copy(update={"market": "features"}),
+                    real_data=True,
+                    source="qt-memory://features",
+                )
+    return auxiliary
+
+
+def _series_frame(
+    column: str,
+    series: pd.Series,
+    index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    aligned = _aligned_series(series, index)
+    return pd.DataFrame({column: aligned}).dropna()
+
+
+def _aligned_series(series: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
+    aligned = pd.to_numeric(series.copy(), errors="coerce")
+    if not isinstance(aligned.index, pd.DatetimeIndex):
+        raise ValueError("auxiliary series index must be a DatetimeIndex")
+    if aligned.index.tz is None:
+        raise ValueError("auxiliary series index must be timezone-aware UTC")
+    aligned.index = aligned.index.tz_convert("UTC")
+    aligned = aligned.sort_index()
+    return aligned.reindex(index).ffill()
+
+
+def _equity_series(result: BacktestResult) -> pd.Series:
+    values = [float(snapshot.equity) for snapshot in result.snapshots]
+    index = pd.DatetimeIndex([snapshot.timestamp for snapshot in result.snapshots])
+    return pd.Series(values, index=index, name="equity")
+
+
+def _trades_frame(result: BacktestResult) -> pd.DataFrame:
+    if result.trades:
+        return pd.DataFrame(
+            {
+                "ts": trade.closed_at,
+                "side": "sell",
+                "qty": float(trade.quantity),
+                "price": float(trade.exit_price),
+                "fee": float(trade.fees),
+                "pnl": float(trade.realized_pnl),
+            }
+            for trade in result.trades
+        )
+    return _normalize_trades(
+        pd.DataFrame(
+            {
+                "ts": fill.timestamp,
+                "side": fill.side.value,
+                "qty": float(fill.quantity),
+                "price": float(fill.price),
+                "fee": float(fill.fee),
+                "pnl": 0.0,
+            }
+            for fill in result.fills
+        )
+    )
+
+
+def _diagnostics_frame(result: BacktestResult) -> pd.DataFrame:
+    diagnostics = dict(result.diagnostics)
+    diagnostics["warnings"] = list(result.warnings)
+    return pd.DataFrame([diagnostics])
