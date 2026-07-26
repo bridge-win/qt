@@ -51,6 +51,7 @@ class StrategyMetadata(BaseModel):
         "close",
         "volume",
     )
+    requires_full_history: bool = True
     signal_dependencies: tuple[str, ...] = ()
     min_weight: Decimal = Field(default=Decimal("0"), ge=0, le=1)
     max_weight: Decimal = Field(default=Decimal("1"), ge=0, le=1)

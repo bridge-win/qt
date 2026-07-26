@@ -61,6 +61,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests as requiring network",
+    "performance: marks performance budget tests",
 ]
 
 [tool.ruff]

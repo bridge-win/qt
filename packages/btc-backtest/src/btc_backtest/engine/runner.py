@@ -73,6 +73,8 @@ class EventRunner:
         )
         portfolio = Portfolio(spec.initial_cash)
         orders: list[Order] = []
+        open_orders: list[Order] = []
+        order_index: dict[str, int] = {}
         fills: list[Fill] = []
         snapshots: list[PortfolioSnapshot] = []
         warnings: list[str] = []
@@ -89,7 +91,7 @@ class EventRunner:
         )
         _initialize(strategy, initialization, spec.data.start)
 
-        for pandas_timestamp, row in frame.iterrows():
+        for position, (pandas_timestamp, row) in enumerate(frame.iterrows()):
             timestamp = cast(pd.Timestamp, pandas_timestamp).to_pydatetime()
             primary_bar = _bar_mapping(row)
             instrument_bars = _instrument_bars(
@@ -112,6 +114,8 @@ class EventRunner:
                 portfolio=portfolio,
                 fill_model=fill_model,
                 orders=orders,
+                open_orders=open_orders,
+                order_index=order_index,
                 fills=fills,
                 warnings=warnings,
                 run_id=run_id,
@@ -130,8 +134,13 @@ class EventRunner:
             snapshot = portfolio.mark(timestamp, marks)
             snapshots.append(snapshot)
 
-            history = frame.loc[:pandas_timestamp]
-            if len(history) >= strategy.metadata.warmup_bars:
+            history = _strategy_history(
+                frame,
+                position,
+                strategy.metadata.warmup_bars,
+                requires_full_history=strategy.metadata.requires_full_history,
+            )
+            if position + 1 >= strategy.metadata.warmup_bars:
                 ranked_signals = self._rank_signals(
                     spec=spec,
                     strategy=strategy,
@@ -141,21 +150,17 @@ class EventRunner:
                     timestamp=timestamp,
                     bars=history,
                     auxiliary={
-                        name: dataset.frame.loc[
-                            dataset.frame.index <= pandas_timestamp
-                        ]
+                        name: _strategy_auxiliary_history(
+                            dataset.frame,
+                            cast(pd.Timestamp, pandas_timestamp),
+                            strategy.metadata.warmup_bars,
+                            position + 1,
+                            requires_full_history=strategy.metadata.requires_full_history,
+                        )
                         for name, dataset in bundle.auxiliary.items()
                     },
                     portfolio=snapshot,
-                    open_orders=tuple(
-                        order
-                        for order in orders
-                        if order.status
-                        in (
-                            OrderStatus.OPEN,
-                            OrderStatus.PARTIALLY_FILLED,
-                        )
-                    ),
+                    open_orders=tuple(open_orders),
                     signals=ranked_signals,
                     parameters=spec.strategy_params,
                 )
@@ -173,7 +178,9 @@ class EventRunner:
                         strategy=strategy,
                         context_signal_ids=context_signal_ids,
                     )
+                    order_index[order.id] = len(orders)
                     orders.append(order)
+                    open_orders.append(order)
                     for signal_id in order.signal_ids:
                         if signal_id not in signal_ids:
                             signal_ids.append(signal_id)
@@ -482,20 +489,16 @@ def _process_open_orders(
     portfolio: Portfolio,
     fill_model: BarFillModel,
     orders: list[Order],
+    open_orders: list[Order],
+    order_index: dict[str, int],
     fills: list[Fill],
     warnings: list[str],
     run_id: str,
     next_fill_counter: int,
 ) -> int:
-    open_orders = [
-        order
-        for order in orders
-        if order.status
-        in (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED)
-    ]
     atomic_groups: dict[str, list[Order]] = defaultdict(list)
     ordinary: list[Order] = []
-    for order in open_orders:
+    for order in tuple(open_orders):
         if order.atomic_group and order.group_id is not None:
             atomic_groups[order.group_id].append(order)
         else:
@@ -503,7 +506,12 @@ def _process_open_orders(
 
     for order in ordinary:
         if _is_expired(order, timestamp):
-            _replace_order(orders, _closed_order(order, OrderStatus.CANCELLED))
+            _replace_order(
+                orders,
+                open_orders,
+                order_index,
+                _closed_order(order, OrderStatus.CANCELLED),
+            )
             continue
         candidate = _evaluate(
             fill_model,
@@ -520,11 +528,21 @@ def _process_open_orders(
         try:
             portfolio.apply_fill(fill)
         except ExecutionError as error:
-            _replace_order(orders, _closed_order(order, OrderStatus.REJECTED))
+            _replace_order(
+                orders,
+                open_orders,
+                order_index,
+                _closed_order(order, OrderStatus.REJECTED),
+            )
             warnings.append(f"order {order.id} rejected: {error}")
             continue
         fills.append(fill)
-        _replace_order(orders, _closed_order(order, OrderStatus.FILLED))
+        _replace_order(
+            orders,
+            open_orders,
+            order_index,
+            _closed_order(order, OrderStatus.FILLED),
+        )
 
     for group_id in sorted(atomic_groups):
         members = atomic_groups[group_id]
@@ -532,6 +550,8 @@ def _process_open_orders(
             for order in members:
                 _replace_order(
                     orders,
+                    open_orders,
+                    order_index,
                     _closed_order(order, OrderStatus.CANCELLED),
                 )
             continue
@@ -565,6 +585,8 @@ def _process_open_orders(
             for order in members:
                 _replace_order(
                     orders,
+                    open_orders,
+                    order_index,
                     _closed_order(order, OrderStatus.REJECTED),
                 )
             warnings.append(f"atomic group {group_id} rejected: {error}")
@@ -573,7 +595,12 @@ def _process_open_orders(
             portfolio.apply_fill(fill)
             fills.append(fill)
         for order in members:
-            _replace_order(orders, _closed_order(order, OrderStatus.FILLED))
+            _replace_order(
+                orders,
+                open_orders,
+                order_index,
+                _closed_order(order, OrderStatus.FILLED),
+            )
         next_fill_counter = counter
     return next_fill_counter
 
@@ -602,11 +629,25 @@ def _closed_order(order: Order, status: OrderStatus) -> Order:
     )
 
 
-def _replace_order(orders: list[Order], replacement: Order) -> None:
-    for index, order in enumerate(orders):
-        if order.id == replacement.id:
-            orders[index] = replacement
-            return
+def _replace_order(
+    orders: list[Order],
+    open_orders: list[Order],
+    order_index: dict[str, int],
+    replacement: Order,
+) -> None:
+    index = order_index.get(replacement.id)
+    if index is None:
+        raise ExecutionError(f"order {replacement.id} is not registered")
+    orders[index] = replacement
+    open_statuses = (OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED)
+    for open_index, order in enumerate(open_orders):
+        if order.id != replacement.id:
+            continue
+        if replacement.status in open_statuses:
+            open_orders[open_index] = replacement
+        else:
+            open_orders.pop(open_index)
+        return
     raise ExecutionError(f"order {replacement.id} is not registered")
 
 
@@ -676,6 +717,37 @@ def _instrument_bars(
         if isinstance(row, pd.Series):
             bars[InstrumentKind.PERPETUAL] = _bar_mapping(row)
     return bars
+
+
+def _history_until(frame: pd.DataFrame, timestamp: pd.Timestamp) -> pd.DataFrame:
+    end_position = frame.index.searchsorted(timestamp, side="right")
+    return frame.iloc[:end_position]
+
+
+def _strategy_history(
+    frame: pd.DataFrame,
+    position: int,
+    warmup_bars: int,
+    *,
+    requires_full_history: bool,
+) -> pd.DataFrame:
+    if requires_full_history or position + 1 <= warmup_bars:
+        return frame.iloc[: position + 1]
+    return frame.iloc[position : position + 1]
+
+
+def _strategy_auxiliary_history(
+    frame: pd.DataFrame,
+    timestamp: pd.Timestamp,
+    warmup_bars: int,
+    bars_seen: int,
+    *,
+    requires_full_history: bool,
+) -> pd.DataFrame:
+    history = _history_until(frame, timestamp)
+    if requires_full_history or bars_seen <= warmup_bars or history.empty:
+        return history
+    return history.iloc[-1:]
 
 
 def _decimal(value: object, field: str) -> Decimal:

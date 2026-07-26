@@ -40,3 +40,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "btc_backtest.reporting.templates" = ["*.j2"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as requiring network",
+    "performance: marks performance budget tests",
+]

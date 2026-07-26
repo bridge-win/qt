@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from decimal import Decimal
 
@@ -106,6 +107,7 @@ class SMACrossover(_CrossoverStrategy):
         warmup_bars=201,
         supported_timeframes=("1h", "1d"),
         supported_instruments=(InstrumentKind.SPOT,),
+        requires_full_history=False,
         parameter_schema=SMACrossoverParams.model_json_schema(),
     )
     bullish_reason = "sma_bullish_cross"
@@ -120,6 +122,14 @@ class SMACrossover(_CrossoverStrategy):
         self.metadata = type(self).metadata.model_copy(
             update={"warmup_bars": self.params.slow_window + 1}
         )
+        self._fast_values: deque[float] = deque(maxlen=self.params.fast_window)
+        self._slow_values: deque[float] = deque(maxlen=self.params.slow_window)
+        self._fast_sum = 0.0
+        self._slow_sum = 0.0
+        self._previous_fast: float | None = None
+        self._previous_slow: float | None = None
+        self._current_fast: float | None = None
+        self._current_slow: float | None = None
 
     def _averages(
         self,
@@ -128,6 +138,67 @@ class SMACrossover(_CrossoverStrategy):
         return (
             sma(close, self.params.fast_window),
             sma(close, self.params.slow_window),
+        )
+
+    def initialize(self, context: InitializationContext) -> None:
+        super().initialize(context)
+        self._fast_values.clear()
+        self._slow_values.clear()
+        self._fast_sum = 0.0
+        self._slow_sum = 0.0
+        self._previous_fast = None
+        self._previous_slow = None
+        self._current_fast = None
+        self._current_slow = None
+
+    def target_weight(self, context: StrategyContext) -> Decimal:
+        close_values = context.bars["close"].to_numpy(dtype="float64", copy=False)
+        if not self._slow_values:
+            for value in close_values:
+                self._append_close(float(value))
+        else:
+            self._append_close(float(close_values[-1]))
+
+        if (
+            self._previous_fast is not None
+            and self._previous_slow is not None
+            and self._current_fast is not None
+            and self._current_slow is not None
+        ):
+            if (
+                self._previous_fast <= self._previous_slow
+                and self._current_fast > self._current_slow
+            ):
+                self._target = Decimal("1")
+            elif (
+                self._previous_fast >= self._previous_slow
+                and self._current_fast < self._current_slow
+            ):
+                self._target = Decimal("0")
+        return self._target
+
+    def _append_close(self, close: float) -> None:
+        if not np.isfinite(close):
+            raise ValueError("close must be finite")
+        self._previous_fast = self._current_fast
+        self._previous_slow = self._current_slow
+        if len(self._fast_values) == self.params.fast_window:
+            self._fast_sum -= self._fast_values[0]
+        if len(self._slow_values) == self.params.slow_window:
+            self._slow_sum -= self._slow_values[0]
+        self._fast_values.append(close)
+        self._slow_values.append(close)
+        self._fast_sum += close
+        self._slow_sum += close
+        self._current_fast = (
+            self._fast_sum / self.params.fast_window
+            if len(self._fast_values) == self.params.fast_window
+            else None
+        )
+        self._current_slow = (
+            self._slow_sum / self.params.slow_window
+            if len(self._slow_values) == self.params.slow_window
+            else None
         )
 
 
