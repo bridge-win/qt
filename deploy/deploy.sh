@@ -51,6 +51,7 @@ runuser -u "${SERVICE_USER}" -- bash -lc "
     python3 -m venv .venv
   fi
   ./.venv/bin/pip install --upgrade pip wheel
+  ./.venv/bin/pip install -e packages/btc-backtest
   ./.venv/bin/pip install -e .
 "
 

@@ -65,6 +65,7 @@ sudo -u "${SERVICE_USER}" bash -lc "
   cd '${INSTALL_DIR}'
   if [[ ! -d .venv ]]; then python3 -m venv .venv; fi
   ./.venv/bin/pip install --upgrade pip wheel
+  ./.venv/bin/pip install -e packages/btc-backtest
   ./.venv/bin/pip install -e .
   mkdir -p data/runtime data/backtests
 "

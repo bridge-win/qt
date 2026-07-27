@@ -32,6 +32,16 @@ def test_remote_deploy_preserves_env_and_installs_systemd_service() -> None:
     assert "/etc/systemd/system/qt.service" in script
     assert "systemctl restart qt.service" in script
     assert "curl -fsS" in script
+    assert script.index("pip install -e packages/btc-backtest") < script.index(
+        "pip install -e ."
+    )
+
+
+def test_aliyun_bootstrap_installs_local_btc_backtest_before_qt() -> None:
+    script = read("deploy/aliyun_bootstrap.sh")
+    assert script.index("pip install -e packages/btc-backtest") < script.index(
+        "pip install -e ."
+    )
 
 
 def test_deploy_readme_documents_ssh_flow_and_public_port() -> None:
