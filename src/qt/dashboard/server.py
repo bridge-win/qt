@@ -10,9 +10,19 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TypeAlias
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from qt.backtest.artifacts import latest_backtest_summary
+import pandas as pd
+
+from qt.backtest.artifacts import latest_backtest_summary, write_backtest_artifacts
+from qt.backtest.engine import Backtester
+from qt.backtest.strategy_backtest import (
+    SUPPORTED,
+    run_strategy_backtest,
+    write_strategy_backtest_artifacts,
+)
+from qt.backtest.validation import ohlcv_fingerprint
+from qt.core.config import load_settings
 from qt.dashboard.learning import render_learning_page
 from qt.dashboard.platform import build_trading_demo, render_demo_page, render_platform_page
 from qt.data.catalog import data_source_statuses
@@ -22,6 +32,7 @@ from qt.monitoring.state import MonitorStateStore
 from qt.portfolio import read_all_portfolios, read_portfolio
 
 JsonDict: TypeAlias = dict[str, object]
+_BACKTEST_STRATEGIES = ("composite", *SUPPORTED)
 
 
 @dataclass(frozen=True)
@@ -77,6 +88,9 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/demo":
                 self._send_html(render_demo_page())
                 return
+            if path == "/backtest":
+                self._send_html(_render_backtest_page(context))
+                return
             if path == "/api/sources":
                 self._send_json({"sources": _sources(context)})
                 return
@@ -97,6 +111,9 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 return
             if path == "/api/portfolios":
                 self._send_json({"portfolios": _portfolios(context)})
+                return
+            if path == "/api/backtests/options":
+                self._send_json(_backtest_options(context))
                 return
             if path == "/intel":
                 self._send_html(_render_intel_page(context))
@@ -131,12 +148,27 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
+        def do_POST(self) -> None:
+            path = urlparse(self.path).path
+            if path != "/backtest/run":
+                self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length > 8192:
+                self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "form too large")
+                return
+            raw_body = self.rfile.read(length).decode("utf-8")
+            fields = parse_qs(raw_body, keep_blank_values=True)
+            result = _run_backtest_request(context, fields)
+            status = HTTPStatus.OK if result.get("ok") is True else HTTPStatus.BAD_REQUEST
+            self._send_html(_render_backtest_page(context, result), status=status)
+
         def log_message(self, fmt: str, *args: object) -> None:
             return
 
-        def _send_html(self, body: str) -> None:
+        def _send_html(self, body: str, *, status: HTTPStatus = HTTPStatus.OK) -> None:
             payload = body.encode("utf-8")
-            self.send_response(HTTPStatus.OK)
+            self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -208,6 +240,240 @@ def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
     if not safe:
         return None
     return read_portfolio(safe, context.runtime_dir)
+
+
+def _backtest_options(context: DashboardContext) -> JsonDict:
+    return {
+        "strategies": list(_BACKTEST_STRATEGIES),
+        "ohlcv_keys": _ohlcv_options(context),
+        "defaults": {
+            "strategy": "composite",
+            "ohlcv_key": _default_ohlcv_key(context),
+            "initial_cash": 100_000,
+        },
+    }
+
+
+def _ohlcv_options(context: DashboardContext) -> list[JsonDict]:
+    root = context.parquet_dir / "ohlcv"
+    if not root.exists():
+        return []
+    options: list[JsonDict] = []
+    for path in sorted(root.glob("*.parquet")):
+        key = path.stem
+        rows = 0
+        start = ""
+        end = ""
+        try:
+            frame = pd.read_parquet(path)
+        except Exception:
+            frame = pd.DataFrame()
+        if not frame.empty:
+            rows = len(frame)
+            start = str(frame.index[0])
+            end = str(frame.index[-1])
+        options.append(
+            {
+                "key": key,
+                "rows": rows,
+                "start": start,
+                "end": end,
+                "path": str(path),
+            }
+        )
+    return options
+
+
+def _default_ohlcv_key(context: DashboardContext) -> str:
+    options = _ohlcv_options(context)
+    if not options:
+        return "okx_BTCUSDT_1h"
+    for option in options:
+        if option.get("key") == "okx_BTCUSDT_1h":
+            return "okx_BTCUSDT_1h"
+    first = options[0].get("key")
+    return str(first) if first else "okx_BTCUSDT_1h"
+
+
+def _run_backtest_request(
+    context: DashboardContext,
+    fields: Mapping[str, list[str]],
+) -> JsonDict:
+    strategy = _form_value(fields, "strategy", "composite")
+    ohlcv_key = _form_value(fields, "ohlcv_key", _default_ohlcv_key(context))
+    initial_cash_raw = _form_value(fields, "initial_cash", "100000")
+    if strategy not in _BACKTEST_STRATEGIES:
+        return {"ok": False, "error": f"unknown strategy: {strategy}"}
+    known_keys = {str(item.get("key")) for item in _ohlcv_options(context)}
+    if ohlcv_key not in known_keys:
+        return {"ok": False, "error": f"unknown OHLCV key: {ohlcv_key}"}
+    try:
+        initial_cash = float(initial_cash_raw)
+    except ValueError:
+        return {"ok": False, "error": "initial cash must be numeric"}
+    if initial_cash <= 0:
+        return {"ok": False, "error": "initial cash must be positive"}
+
+    store = ParquetStore(context.parquet_dir)
+    ohlcv = store.read("ohlcv", ohlcv_key)
+    if ohlcv.empty:
+        return {"ok": False, "error": f"no OHLCV rows for {ohlcv_key}"}
+
+    try:
+        if strategy == "composite":
+            summary = _run_composite_backtest(
+                context,
+                store,
+                ohlcv,
+                ohlcv_key=ohlcv_key,
+                initial_cash=initial_cash,
+            )
+        else:
+            summary = _run_gallery_backtest(
+                context,
+                store,
+                ohlcv,
+                strategy=strategy,
+                ohlcv_key=ohlcv_key,
+                initial_cash=initial_cash,
+            )
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+    return {"ok": True, "summary": summary}
+
+
+def _run_composite_backtest(
+    context: DashboardContext,
+    store: ParquetStore,
+    ohlcv: pd.DataFrame,
+    *,
+    ohlcv_key: str,
+    initial_cash: float,
+) -> JsonDict:
+    settings = load_settings()
+    backtester = Backtester(
+        thresholds=settings.thresholds,
+        risk_cfg=settings.risk,
+        initial_cash=initial_cash,
+    )
+    result = backtester.run(
+        ohlcv=ohlcv,
+        funding=_series(store, "derivatives", "binance_BTCUSDT_funding", "funding_rate"),
+        oi=_series(store, "derivatives", "binance_BTCUSDT_oi_1h", "oi_usd"),
+        long_short_ratio=_series(
+            store,
+            "derivatives",
+            "binance_BTCUSDT_lsr_1h",
+            "long_short_ratio",
+        ),
+        sopr=_series(store, "onchain", "glassnode_sopr_adj", "sopr_adj"),
+        mvrv_z=_series(store, "onchain", "glassnode_mvrv_z", "mvrv_z"),
+        nupl=_series(store, "onchain", "glassnode_nupl", "nupl"),
+        puell=_series(store, "onchain", "glassnode_puell_multiple", "puell_multiple"),
+        reserve_risk=_series(
+            store,
+            "onchain",
+            "glassnode_reserve_risk",
+            "reserve_risk",
+        ),
+        exchange_netflow=_series(
+            store,
+            "onchain",
+            "glassnode_exchange_netflow",
+            "exchange_netflow",
+        ),
+        fear_greed=_series(store, "sentiment", "fear_greed", "fear_greed"),
+        social_sentiment=_series(
+            store,
+            "sentiment",
+            "santiment_sentiment_weighted_total_btc",
+            "sentiment_weighted_total_btc",
+        ),
+        vix=_series(store, "macro", "fred_vix", "vix"),
+        dxy=_series(store, "macro", "fred_dxy", "dxy"),
+    )
+    artifact = write_backtest_artifacts(
+        result,
+        context.backtests_dir,
+        ohlcv_key=ohlcv_key,
+        initial_cash=initial_cash,
+        data_fingerprint=ohlcv_fingerprint(ohlcv),
+        sources={
+            "ohlcv": ohlcv_key,
+            "funding": "binance_BTCUSDT_funding",
+            "oi": "binance_BTCUSDT_oi_1h",
+            "long_short_ratio": "binance_BTCUSDT_lsr_1h",
+            "fear_greed": "fear_greed",
+        },
+    )
+    return _read_json_file(artifact.summary_path)
+
+
+def _run_gallery_backtest(
+    context: DashboardContext,
+    store: ParquetStore,
+    ohlcv: pd.DataFrame,
+    *,
+    strategy: str,
+    ohlcv_key: str,
+    initial_cash: float,
+) -> JsonDict:
+    outcome = run_strategy_backtest(
+        strategy,
+        ohlcv,
+        initial_cash=initial_cash,
+        funding=_series(store, "derivatives", "binance_BTCUSDT_funding", "funding_rate"),
+        fear_greed=_series(store, "sentiment", "fear_greed", "fear_greed"),
+        mvrv_z=_series(store, "onchain", "glassnode_mvrv_z", "mvrv_z"),
+        nupl=_series(store, "onchain", "glassnode_nupl", "nupl"),
+        allow_synthetic=False,
+    )
+    run_dir = write_strategy_backtest_artifacts(outcome, context.backtests_dir)
+    summary = _read_json_file(run_dir / "summary.json")
+    summary["ohlcv_key"] = ohlcv_key
+    summary["initial_cash"] = initial_cash
+    summary["counts"] = {
+        "equity_points": _as_int(summary.get("bars")),
+        "trades": _as_int(summary.get("num_trades")),
+        "signals": 0,
+    }
+    summary["sources"] = {"ohlcv": ohlcv_key}
+    _write_json_file(context.backtests_dir / "latest.json", summary)
+    return summary
+
+
+def _series(
+    store: ParquetStore,
+    dataset: str,
+    key: str,
+    column: str | None = None,
+) -> pd.Series | pd.DataFrame | None:
+    frame = store.read(dataset, key)
+    if frame.empty:
+        return None
+    if column and column in frame.columns:
+        return frame[column]
+    if frame.shape[1] == 1:
+        return frame.iloc[:, 0]
+    return frame
+
+
+def _form_value(fields: Mapping[str, list[str]], name: str, default: str) -> str:
+    values = fields.get(name)
+    if not values:
+        return default
+    value = values[0].strip()
+    return value or default
+
+
+def _read_json_file(path: Path) -> JsonDict:
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_file(path: Path, payload: Mapping[str, object]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
 
 
 def _plain_summary(
@@ -327,7 +593,7 @@ def _render_home(context: DashboardContext) -> str:
         <h1>QT Monitor</h1>
         <div class="subtle">Data coverage, live heartbeat, P&amp;L, and latest backtest artifacts.</div>
       </div>
-      <div class="subtle mono"><a href="/platform">Platform</a> · <a href="/learn">Learn</a> · <a href="/demo">Demo</a> · <a href="/intel">Intel</a> · <a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
+      <div class="subtle mono"><a href="/platform">Platform</a> · <a href="/backtest">Backtest</a> · <a href="/learn">Learn</a> · <a href="/demo">Demo</a> · <a href="/intel">Intel</a> · <a href="/portfolio">P&amp;L →</a> · refreshes every 60s</div>
     </header>
     {_render_plain_banner(strategies, portfolios)}
     {_render_monitor_cards(monitor)}
@@ -372,7 +638,10 @@ def _render_monitor_cards(monitor: JsonDict | None) -> str:
 
 def _render_backtest(backtest: JsonDict | None) -> str:
     if backtest is None:
-        return '<div class="panel subtle">No exported backtest yet. Run `qt backtest` first.</div>'
+        return (
+            '<div class="panel subtle">No exported backtest yet. '
+            '<a href="/backtest">Run one from /backtest</a>.</div>'
+        )
     metrics = backtest.get("metrics")
     if not isinstance(metrics, dict):
         metrics = {}
@@ -395,6 +664,156 @@ def _render_backtest(backtest: JsonDict | None) -> str:
       </tbody>
     </table>
     """
+
+
+def _render_backtest_page(
+    context: DashboardContext,
+    result: JsonDict | None = None,
+) -> str:
+    options = _ohlcv_options(context)
+    latest = _latest_backtest(context)
+    selected_key = _default_ohlcv_key(context)
+    result_html = _render_backtest_result(result)
+    strategy_options = "".join(
+        f'<option value="{_e(strategy)}">{_e(strategy)}</option>'
+        for strategy in _BACKTEST_STRATEGIES
+    )
+    data_options = "".join(
+        f'<option value="{_e(str(option.get("key", "")))}"'
+        f'{" selected" if option.get("key") == selected_key else ""}>'
+        f'{_e(str(option.get("key", "")))} · {option.get("rows", 0)} rows'
+        "</option>"
+        for option in options
+    )
+    if not data_options:
+        data_options = '<option value="">No local OHLCV files found</option>'
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QT — Backtest</title>
+  <style>
+    :root {{ color-scheme: light; --bg:#f6f7f3; --ink:#15201b; --muted:#66736c; --line:#dce2dd;
+              --accent:#0b7a75; --warn:#ad5a00; --bad:#a73737; --good:#197447;
+              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }}
+    body {{ margin:0; background: var(--bg); color: var(--ink); }}
+    main {{ width:min(1080px, calc(100vw - 32px)); margin:0 auto; padding:28px 0 48px; }}
+    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:22px; }}
+    h1 {{ font-size:28px; line-height:1.1; margin:0; }}
+    h2 {{ font-size:17px; margin:28px 0 10px; }}
+    a {{ color:var(--accent); }}
+    form {{ display:grid; grid-template-columns: 1.2fr 1.5fr 1fr auto; gap:12px; align-items:end; }}
+    label {{ display:grid; gap:6px; color:var(--muted); font-size:13px; font-weight:700; }}
+    select, input {{ font:inherit; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px 11px; }}
+    button {{ font:inherit; font-weight:700; color:#fff; background:var(--accent); border:0; border-radius:8px; padding:11px 14px; cursor:pointer; }}
+    table {{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }}
+    th, td {{ border-bottom:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; font-size:13px; }}
+    th {{ color:var(--muted); font-weight:700; background:#fbfcfa; }}
+    tr:last-child td {{ border-bottom:0; }}
+    .subtle {{ color:var(--muted); font-size:14px; }}
+    .panel {{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:14px; }}
+    .grid {{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:12px; }}
+    .metric {{ font-size:24px; font-weight:700; margin-top:6px; }}
+    .pill {{ display:inline-flex; border-radius:999px; padding:2px 8px; font-weight:700; font-size:12px; }}
+    .good {{ color:var(--good); background:#e8f3ed; }}
+    .bad {{ color:var(--bad); background:#f8e7e7; }}
+    .mono {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    @media (max-width: 900px) {{ header {{ display:block; }} form, .grid {{ grid-template-columns:1fr; }} table {{ display:block; overflow-x:auto; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Backtest</h1>
+        <div class="subtle">Run controlled local-data replays and publish the result to the monitor.</div>
+      </div>
+      <div class="subtle mono"><a href="/">← monitor</a> · <a href="/api/backtests/latest">latest JSON</a></div>
+    </header>
+    <section class="panel">
+      <form method="post" action="/backtest/run">
+        <label>Strategy
+          <select name="strategy">{strategy_options}</select>
+        </label>
+        <label>Data source
+          <select name="ohlcv_key">{data_options}</select>
+        </label>
+        <label>Initial cash
+          <input name="initial_cash" value="100000" inputmode="decimal">
+        </label>
+        <button type="submit">Run backtest</button>
+      </form>
+      <div class="subtle" style="margin-top:10px">
+        <span class="mono">composite</span> uses QT's threshold/risk engine.
+        <span class="mono">dca</span>, <span class="mono">trend</span>,
+        <span class="mono">carry</span>, and <span class="mono">wick</span>
+        use the independent BTC backtest engine through QT's adapter.
+      </div>
+    </section>
+    {result_html}
+    <h2>Latest Published Result</h2>
+    {_render_backtest(latest)}
+    <h2>Available OHLCV Data</h2>
+    {_render_ohlcv_table(options)}
+  </main>
+</body>
+</html>
+"""
+
+
+def _render_backtest_result(result: JsonDict | None) -> str:
+    if result is None:
+        return ""
+    if result.get("ok") is not True:
+        return (
+            '<div class="panel" style="margin-top:14px">'
+            '<span class="pill bad">failed</span> '
+            f'<span class="mono">{_e(str(result.get("error", "unknown error")))}</span>'
+            "</div>"
+        )
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        return ""
+    metrics = summary.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    counts = summary.get("counts")
+    if not isinstance(counts, dict):
+        counts = {}
+    strategy = summary.get("strategy") or summary.get("engine_strategy") or "composite"
+    return f"""
+    <h2>Run Complete</h2>
+    <div class="panel">
+      <span class="pill good">published</span>
+      <span class="mono">{_e(str(summary.get("run_id", "")))}</span>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      {_card("Strategy", _e(str(strategy)))}
+      {_card("Total Return", _fmt_pct(metrics.get("total_return")))}
+      {_card("Max Drawdown", _fmt_pct(metrics.get("max_drawdown")))}
+      {_card("Trades", _e(str(counts.get("trades", summary.get("num_trades", 0)))))}
+    </div>
+    """
+
+
+def _render_ohlcv_table(options: list[JsonDict]) -> str:
+    if not options:
+        return '<div class="panel subtle">No OHLCV parquet files found.</div>'
+    rows = []
+    for option in options:
+        rows.append(
+            "<tr>"
+            f'<td class="mono">{_e(str(option.get("key", "")))}</td>'
+            f"<td>{_e(str(option.get('rows', 0)))}</td>"
+            f'<td class="mono">{_e(str(option.get("start", "")))}</td>'
+            f'<td class="mono">{_e(str(option.get("end", "")))}</td>'
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>Key</th><th>Rows</th><th>Start</th>"
+        f"<th>End</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
 
 
 def _render_intel_summary(intel: JsonDict) -> str:
