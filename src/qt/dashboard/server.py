@@ -34,6 +34,7 @@ from qt.portfolio import read_all_portfolios, read_portfolio
 
 JsonDict: TypeAlias = dict[str, object]
 _BACKTEST_STRATEGIES = ("composite", *SUPPORTED)
+_COMPARE_STRATEGIES = SUPPORTED
 _CHART_MAX_POINTS = 900
 _STRATEGY_GUIDE: dict[str, dict[str, str]] = {
     "composite": {
@@ -349,10 +350,12 @@ def _run_backtest_request(
     context: DashboardContext,
     fields: Mapping[str, list[str]],
 ) -> JsonDict:
+    mode = _form_value(fields, "mode", "single")
     strategy = _form_value(fields, "strategy", "composite")
     ohlcv_key = _form_value(fields, "ohlcv_key", _default_ohlcv_key(context))
     initial_cash_raw = _form_value(fields, "initial_cash", "100000")
     request = {
+        "mode": mode,
         "strategy": strategy,
         "ohlcv_key": ohlcv_key,
         "initial_cash": initial_cash_raw,
@@ -390,7 +393,15 @@ def _run_backtest_request(
         return {"ok": False, "error": f"no OHLCV rows for {ohlcv_key}", "request": request}
 
     try:
-        if strategy == "composite":
+        if mode == "compare":
+            summary = _run_backtest_comparison(
+                context,
+                store,
+                ohlcv,
+                ohlcv_key=ohlcv_key,
+                initial_cash=initial_cash,
+            )
+        elif strategy == "composite":
             summary = _run_composite_backtest(
                 context,
                 store,
@@ -410,6 +421,42 @@ def _run_backtest_request(
     except Exception as error:
         return {"ok": False, "error": str(error), "request": request}
     return {"ok": True, "summary": summary, "request": request}
+
+
+def _run_backtest_comparison(
+    context: DashboardContext,
+    store: ParquetStore,
+    ohlcv: pd.DataFrame,
+    *,
+    ohlcv_key: str,
+    initial_cash: float,
+) -> JsonDict:
+    summaries = [
+        _run_gallery_backtest(
+            context,
+            store,
+            ohlcv,
+            strategy=strategy,
+            ohlcv_key=ohlcv_key,
+            initial_cash=initial_cash,
+        )
+        for strategy in _COMPARE_STRATEGIES
+    ]
+    ranked = sorted(summaries, key=_strategy_score, reverse=True)
+    best = ranked[0] if ranked else {}
+    comparison = {
+        "mode": "compare",
+        "strategy": str(best.get("strategy", "")),
+        "ohlcv_key": ohlcv_key,
+        "initial_cash": initial_cash,
+        "ranked": [_comparison_row(summary, rank=index + 1) for index, summary in enumerate(ranked)],
+        "recommended": _comparison_recommendation(best),
+        "best_run_id": str(best.get("run_id", "")),
+    }
+    _write_json_file(context.backtests_dir / "latest_comparison.json", comparison)
+    best["comparison"] = comparison
+    _write_json_file(context.backtests_dir / "latest.json", best)
+    return best
 
 
 def _run_composite_backtest(
@@ -510,6 +557,59 @@ def _run_gallery_backtest(
     summary["sources"] = {"ohlcv": ohlcv_key}
     _write_json_file(context.backtests_dir / "latest.json", summary)
     return summary
+
+
+def _strategy_score(summary: Mapping[str, object]) -> float:
+    metrics = summary.get("metrics")
+    metrics_map = metrics if isinstance(metrics, dict) else {}
+    total_return = _as_float(metrics_map.get("total_return"))
+    sharpe = _as_float(metrics_map.get("sharpe"))
+    max_drawdown = _as_float(metrics_map.get("max_drawdown"))
+    trades = _as_int(summary.get("num_trades"))
+    trade_penalty = 0.35 if trades <= 0 else 0.0
+    return (total_return * 1.5) + (sharpe * 0.25) + max_drawdown - trade_penalty
+
+
+def _comparison_row(summary: Mapping[str, object], *, rank: int) -> JsonDict:
+    metrics = summary.get("metrics")
+    metrics_map = metrics if isinstance(metrics, dict) else {}
+    trades = _as_int(summary.get("num_trades"))
+    return {
+        "rank": rank,
+        "strategy": str(summary.get("strategy") or summary.get("engine_strategy") or ""),
+        "run_id": str(summary.get("run_id", "")),
+        "total_return": _as_float(metrics_map.get("total_return")),
+        "max_drawdown": _as_float(metrics_map.get("max_drawdown")),
+        "sharpe": _as_float(metrics_map.get("sharpe")),
+        "trades": trades,
+        "score": _strategy_score(summary),
+        "verdict": _prediction_sentence(
+            _as_float(metrics_map.get("total_return")),
+            _as_float(metrics_map.get("sharpe")),
+            trades,
+        ),
+    }
+
+
+def _comparison_recommendation(summary: Mapping[str, object]) -> str:
+    metrics = summary.get("metrics")
+    metrics_map = metrics if isinstance(metrics, dict) else {}
+    strategy = str(summary.get("strategy") or summary.get("engine_strategy") or "unknown")
+    total_return = _as_float(metrics_map.get("total_return"))
+    max_drawdown = _as_float(metrics_map.get("max_drawdown"))
+    sharpe = _as_float(metrics_map.get("sharpe"))
+    trades = _as_int(summary.get("num_trades"))
+    if trades <= 0:
+        return (
+            f"{strategy} ranked first but made no trades; treat this as no candidate "
+            "until a longer or different data window is tested."
+        )
+    if total_return > 0 and sharpe > 0 and max_drawdown > -0.35:
+        return f"Recommended first paper candidate: {strategy}. Paper trade before live use."
+    return (
+        f"{strategy} ranked first, but quality is not production-ready. "
+        "Use it for research, then rerun with more data and paper trading."
+    )
 
 
 def _series(
@@ -943,6 +1043,7 @@ def _render_backtest_page(
     label {{ display:grid; gap:7px; color:var(--muted); font-size:13px; font-weight:800; }}
     select, input {{ font:inherit; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:12px; padding:11px 12px; }}
     button {{ font:inherit; font-weight:850; color:#fff; background:var(--accent); border:0; border-radius:12px; padding:12px 16px; cursor:pointer; box-shadow:0 10px 24px rgba(11,116,107,.18); }}
+    button.secondary {{ color:var(--accent); background:#e8f3ef; box-shadow:none; }}
     button:disabled {{ background:#9aa6a1; cursor:not-allowed; box-shadow:none; }}
     table {{ width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }}
     th, td {{ border-bottom:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; font-size:13px; }}
@@ -973,6 +1074,7 @@ def _render_backtest_page(
     .progress {{ height:8px; border-radius:999px; background:#e2ddd1; overflow:hidden; margin-top:10px; }}
     .progress > div {{ height:100%; width:0; background:linear-gradient(90deg, var(--accent), var(--amber)); transition:width .35s ease; }}
     .run-status {{ margin-top:10px; font-weight:800; }}
+    .actions {{ display:grid; gap:8px; }}
     .learning-list {{ display:grid; gap:8px; padding-left:20px; }}
     @media (max-width: 900px) {{
       header, form, .grid, .two, .steps {{ grid-template-columns:1fr; }}
@@ -1011,10 +1113,14 @@ def _render_backtest_page(
         <label>Initial cash
           <input name="initial_cash" value="{_e(initial_cash_value)}" inputmode="decimal">
         </label>
-        <button type="submit"{submit_attrs}>Run backtest</button>
+        <div class="actions">
+          <button type="submit" name="mode" value="single"{submit_attrs}>Run backtest</button>
+          <button class="secondary" type="submit" name="mode" value="compare"{submit_attrs}>Auto compare strategies</button>
+        </div>
       </form>
       <div id="run-status" class="run-status" aria-live="polite">Ready. Select a strategy and press Run backtest.</div>
       <div class="progress" aria-hidden="true"><div id="run-progress"></div></div>
+      <div class="subtle" style="margin-top:10px"><strong>Auto mode:</strong> Let QT test DCA, trend, carry, and wick on the same data and cash, then rank them by return, drawdown, Sharpe, and trade sample.</div>
       <div class="two" style="margin-top:14px">{strategy_card}{source_card}</div>
     </section>
     <h2>Configuration guide</h2>
@@ -1049,11 +1155,18 @@ def _render_backtest_page(
         var status = document.getElementById('run-status');
         var progress = document.getElementById('run-progress');
         if (form && status && progress) {{
-          form.addEventListener('submit', function () {{
-            status.textContent = 'Running: loading local candles, applying the strategy, and writing result artifacts...';
+          form.addEventListener('submit', function (event) {{
+            var submitter = event.submitter;
+            var isCompare = submitter && submitter.value === 'compare';
+            status.textContent = isCompare
+              ? 'Running auto comparison: testing DCA, trend, carry, and wick on the same data...'
+              : 'Running: loading local candles, applying the strategy, and writing result artifacts...';
             progress.style.width = '35%';
-            var button = form.querySelector('button[type="submit"]');
-            if (button) {{ button.disabled = true; button.textContent = 'Running...'; }}
+            var buttons = form.querySelectorAll('button[type="submit"]');
+            buttons.forEach(function (button) {{
+              button.disabled = true;
+              if (button === submitter) button.textContent = isCompare ? 'Comparing...' : 'Running...';
+            }});
             window.setTimeout(function () {{ progress.style.width = '68%'; }}, 700);
             window.setTimeout(function () {{ progress.style.width = '88%'; status.textContent = 'Still running: large datasets can take a few seconds.'; }}, 1800);
           }});
@@ -1302,6 +1415,9 @@ def _render_backtest_result(result: JsonDict | None) -> str:
     summary = result.get("summary")
     if not isinstance(summary, dict):
         return ""
+    comparison = summary.get("comparison")
+    if isinstance(comparison, dict):
+        return _render_backtest_comparison_result(summary, comparison)
     metrics = summary.get("metrics")
     if not isinstance(metrics, dict):
         metrics = {}
@@ -1327,6 +1443,50 @@ def _render_backtest_result(result: JsonDict | None) -> str:
       {_card("Max Drawdown", _fmt_pct(metrics.get("max_drawdown")))}
       {_card("Trades", _e(str(trades)))}
     </div>
+    """
+
+
+def _render_backtest_comparison_result(
+    summary: Mapping[str, object],
+    comparison: Mapping[str, object],
+) -> str:
+    ranked = comparison.get("ranked")
+    rows: list[str] = []
+    if isinstance(ranked, list):
+        for raw in ranked:
+            if not isinstance(raw, dict):
+                continue
+            strategy = str(raw.get("strategy", ""))
+            rows.append(
+                "<tr "
+                f'data-strategy-rank="{_e(strategy)}">'
+                f'<td>{_e(str(raw.get("rank", "")))}</td>'
+                f'<td><strong>{_e(strategy)}</strong><br><span class="subtle">{_e(_strategy_label(strategy))}</span></td>'
+                f'<td>{_fmt_pct(raw.get("total_return"))}</td>'
+                f'<td>{_fmt_pct(raw.get("max_drawdown"))}</td>'
+                f'<td>{_fmt_num(raw.get("sharpe"))}</td>'
+                f'<td>{_e(str(raw.get("trades", 0)))}</td>'
+                f'<td>{_e(str(raw.get("verdict", "")))}</td>'
+                "</tr>"
+            )
+    recommendation = str(comparison.get("recommended", "No recommendation available."))
+    return f"""
+    <h2>Auto Comparison Complete</h2>
+    <section class="panel">
+      <span class="pill good">published</span>
+      <span class="mono">{_e(str(summary.get("run_id", "")))}</span>
+      <div class="subtle" style="margin-top:8px">
+        Compare strategies on the same data before trusting one isolated backtest.
+      </div>
+      <div class="subtle" style="margin-top:12px">Recommended first paper candidate</div>
+      <div class="metric" style="font-size:22px">{_e(recommendation)}</div>
+    </section>
+    <table style="margin-top:12px">
+      <thead>
+        <tr><th>Rank</th><th>Strategy</th><th>Total return</th><th>Max drawdown</th><th>Sharpe</th><th>Trades</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
     """
 
 

@@ -96,6 +96,8 @@ def test_backtest_route_explains_operator_workflow(
     assert "Backtest flight recorder" in body
     assert "id=\"run-status\"" in body
     assert "TradingView Lightweight Charts" in body
+    assert "Auto compare strategies" in body
+    assert "Let QT test DCA, trend, carry, and wick" in body
 
 
 def test_backtest_options_api_returns_safe_choices(
@@ -197,3 +199,27 @@ def test_backtest_post_returns_guided_result_and_chart_payload(
     assert len(payload["candles"]) > 10
     assert len(payload["equity"]) > 10
     assert isinstance(payload["markers"], list)
+
+
+def test_backtest_post_auto_compares_safe_strategies(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, body = _post(
+        port,
+        "/backtest/run",
+        {
+            "mode": "compare",
+            "strategy": "dca",
+            "ohlcv_key": "okx_BTCUSDT_1h",
+            "initial_cash": "100000",
+        },
+    )
+    assert status == 200
+    assert "Auto Comparison Complete" in body
+    assert "Recommended first paper candidate" in body
+    assert "Compare strategies on the same data" in body
+    assert "data-strategy-rank=\"dca\"" in body
+    assert "data-strategy-rank=\"trend\"" in body
+    assert "data-strategy-rank=\"carry\"" in body
+    assert "data-strategy-rank=\"wick\"" in body
