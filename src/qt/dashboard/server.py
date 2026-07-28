@@ -245,7 +245,7 @@ def _portfolio(context: DashboardContext, name: str) -> JsonDict | None:
 def _backtest_options(context: DashboardContext) -> JsonDict:
     return {
         "strategies": list(_BACKTEST_STRATEGIES),
-        "ohlcv_keys": _ohlcv_options(context),
+        "ohlcv_keys": _available_ohlcv_options(context),
         "defaults": {
             "strategy": "composite",
             "ohlcv_key": _default_ohlcv_key(context),
@@ -284,8 +284,15 @@ def _ohlcv_options(context: DashboardContext) -> list[JsonDict]:
     return options
 
 
+def _available_ohlcv_options(context: DashboardContext) -> list[JsonDict]:
+    return [
+        option for option in _ohlcv_options(context)
+        if _as_int(option.get("rows")) > 0
+    ]
+
+
 def _default_ohlcv_key(context: DashboardContext) -> str:
-    options = _ohlcv_options(context)
+    options = _available_ohlcv_options(context)
     if not options:
         return "okx_BTCUSDT_1h"
     for option in options:
@@ -304,9 +311,23 @@ def _run_backtest_request(
     initial_cash_raw = _form_value(fields, "initial_cash", "100000")
     if strategy not in _BACKTEST_STRATEGIES:
         return {"ok": False, "error": f"unknown strategy: {strategy}"}
-    known_keys = {str(item.get("key")) for item in _ohlcv_options(context)}
-    if ohlcv_key not in known_keys:
+    all_options = _ohlcv_options(context)
+    all_keys = {str(item.get("key")) for item in all_options}
+    available_keys = {
+        str(item.get("key"))
+        for item in all_options
+        if _as_int(item.get("rows")) > 0
+    }
+    if ohlcv_key not in all_keys:
         return {"ok": False, "error": f"unknown OHLCV key: {ohlcv_key}"}
+    if ohlcv_key not in available_keys:
+        return {
+            "ok": False,
+            "error": (
+                f"unavailable OHLCV key: {ohlcv_key} has no rows; "
+                "choose a listed non-empty data source"
+            ),
+        }
     try:
         initial_cash = float(initial_cash_raw)
     except ValueError:
@@ -670,7 +691,8 @@ def _render_backtest_page(
     context: DashboardContext,
     result: JsonDict | None = None,
 ) -> str:
-    options = _ohlcv_options(context)
+    all_options = _ohlcv_options(context)
+    options = _available_ohlcv_options(context)
     latest = _latest_backtest(context)
     selected_key = _default_ohlcv_key(context)
     result_html = _render_backtest_result(result)
@@ -685,8 +707,10 @@ def _render_backtest_page(
         "</option>"
         for option in options
     )
+    can_run = bool(data_options)
     if not data_options:
-        data_options = '<option value="">No local OHLCV files found</option>'
+        data_options = '<option value="">No non-empty OHLCV files found</option>'
+    submit_attrs = "" if can_run else " disabled"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -742,7 +766,7 @@ def _render_backtest_page(
         <label>Initial cash
           <input name="initial_cash" value="100000" inputmode="decimal">
         </label>
-        <button type="submit">Run backtest</button>
+        <button type="submit"{submit_attrs}>Run backtest</button>
       </form>
       <div class="subtle" style="margin-top:10px">
         <span class="mono">composite</span> uses QT's threshold/risk engine.
@@ -755,7 +779,7 @@ def _render_backtest_page(
     <h2>Latest Published Result</h2>
     {_render_backtest(latest)}
     <h2>Available OHLCV Data</h2>
-    {_render_ohlcv_table(options)}
+    {_render_ohlcv_table(all_options)}
   </main>
 </body>
 </html>

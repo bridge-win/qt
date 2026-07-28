@@ -25,6 +25,7 @@ def served_backtest_dashboard(tmp_path: Path) -> Iterator[tuple[int, Path]]:
     strategies_dir.mkdir()
     store = ParquetStore(parquet)
     store.write("ohlcv", "okx_BTCUSDT_1h", synthetic_btc_ohlcv(days=45))
+    store.write("ohlcv", "binance_BTCUSDT_1h", synthetic_btc_ohlcv(days=1).head(0))
     context = DashboardContext(
         parquet_dir=parquet,
         backtests_dir=backtests,
@@ -90,6 +91,7 @@ def test_backtest_options_api_returns_safe_choices(
     payload = json.loads(body)
     assert payload["defaults"]["ohlcv_key"] == "okx_BTCUSDT_1h"
     assert payload["strategies"] == ["composite", "dca", "trend", "carry", "wick"]
+    assert [item["key"] for item in payload["ohlcv_keys"]] == ["okx_BTCUSDT_1h"]
 
 
 def test_backtest_post_rejects_unknown_strategy(
@@ -107,6 +109,24 @@ def test_backtest_post_rejects_unknown_strategy(
     )
     assert status == 400
     assert "unknown strategy" in body
+
+
+def test_backtest_post_rejects_empty_ohlcv_file(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, body = _post(
+        port,
+        "/backtest/run",
+        {
+            "strategy": "dca",
+            "ohlcv_key": "binance_BTCUSDT_1h",
+            "initial_cash": "100000",
+        },
+    )
+    assert status == 400
+    assert "unavailable OHLCV key" in body
+    assert "has no rows" in body
 
 
 def test_backtest_post_runs_gallery_strategy_and_publishes_latest(
