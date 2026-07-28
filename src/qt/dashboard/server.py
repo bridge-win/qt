@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -33,6 +34,48 @@ from qt.portfolio import read_all_portfolios, read_portfolio
 
 JsonDict: TypeAlias = dict[str, object]
 _BACKTEST_STRATEGIES = ("composite", *SUPPORTED)
+_CHART_MAX_POINTS = 900
+_STRATEGY_GUIDE: dict[str, dict[str, str]] = {
+    "composite": {
+        "label": "Composite signal engine",
+        "plain": (
+            "Combines price action, sentiment, derivatives, on-chain and macro "
+            "inputs into QT's risk-gated BTC timing model."
+        ),
+        "best_for": "Understanding the full QT thesis before paper trading.",
+        "risk": "Can sit out for long periods; missing auxiliary data weakens the signal.",
+    },
+    "dca": {
+        "label": "Smart DCA",
+        "plain": (
+            "Buys BTC in staged allocations instead of all at once, with optional "
+            "fear/valuation context when local data exists."
+        ),
+        "best_for": "Learning position accumulation and drawdown tolerance.",
+        "risk": "Usually keeps market exposure, so large BTC drawdowns still matter.",
+    },
+    "trend": {
+        "label": "Trend following",
+        "plain": "Uses moving-average trend logic to join strength and step aside from weakness.",
+        "best_for": "Testing whether a simple momentum rule survives BTC chop.",
+        "risk": "Can whipsaw when the market ranges sideways.",
+    },
+    "carry": {
+        "label": "Funding / basis carry",
+        "plain": (
+            "Looks for futures funding or basis carry opportunities using local "
+            "funding data when available."
+        ),
+        "best_for": "Studying derivative yield rather than pure price direction.",
+        "risk": "Funding data gaps and exchange-specific execution risk can dominate results.",
+    },
+    "wick": {
+        "label": "Wick catcher",
+        "plain": "Looks for sharp intrabar downside wicks and rebound behavior.",
+        "best_for": "Testing crash-recovery entries and laddered dip buying.",
+        "risk": "Falling-knife entries can compound losses during real breakdowns.",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -309,8 +352,13 @@ def _run_backtest_request(
     strategy = _form_value(fields, "strategy", "composite")
     ohlcv_key = _form_value(fields, "ohlcv_key", _default_ohlcv_key(context))
     initial_cash_raw = _form_value(fields, "initial_cash", "100000")
+    request = {
+        "strategy": strategy,
+        "ohlcv_key": ohlcv_key,
+        "initial_cash": initial_cash_raw,
+    }
     if strategy not in _BACKTEST_STRATEGIES:
-        return {"ok": False, "error": f"unknown strategy: {strategy}"}
+        return {"ok": False, "error": f"unknown strategy: {strategy}", "request": request}
     all_options = _ohlcv_options(context)
     all_keys = {str(item.get("key")) for item in all_options}
     available_keys = {
@@ -319,7 +367,7 @@ def _run_backtest_request(
         if _as_int(item.get("rows")) > 0
     }
     if ohlcv_key not in all_keys:
-        return {"ok": False, "error": f"unknown OHLCV key: {ohlcv_key}"}
+        return {"ok": False, "error": f"unknown OHLCV key: {ohlcv_key}", "request": request}
     if ohlcv_key not in available_keys:
         return {
             "ok": False,
@@ -327,18 +375,19 @@ def _run_backtest_request(
                 f"unavailable OHLCV key: {ohlcv_key} has no rows; "
                 "choose a listed non-empty data source"
             ),
+            "request": request,
         }
     try:
         initial_cash = float(initial_cash_raw)
     except ValueError:
-        return {"ok": False, "error": "initial cash must be numeric"}
+        return {"ok": False, "error": "initial cash must be numeric", "request": request}
     if initial_cash <= 0:
-        return {"ok": False, "error": "initial cash must be positive"}
+        return {"ok": False, "error": "initial cash must be positive", "request": request}
 
     store = ParquetStore(context.parquet_dir)
     ohlcv = store.read("ohlcv", ohlcv_key)
     if ohlcv.empty:
-        return {"ok": False, "error": f"no OHLCV rows for {ohlcv_key}"}
+        return {"ok": False, "error": f"no OHLCV rows for {ohlcv_key}", "request": request}
 
     try:
         if strategy == "composite":
@@ -359,8 +408,8 @@ def _run_backtest_request(
                 initial_cash=initial_cash,
             )
     except Exception as error:
-        return {"ok": False, "error": str(error)}
-    return {"ok": True, "summary": summary}
+        return {"ok": False, "error": str(error), "request": request}
+    return {"ok": True, "summary": summary, "request": request}
 
 
 def _run_composite_backtest(
@@ -495,6 +544,150 @@ def _read_json_file(path: Path) -> JsonDict:
 
 def _write_json_file(path: Path, payload: Mapping[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
+
+
+def _backtest_chart_payload(
+    context: DashboardContext,
+    summary: Mapping[str, object] | None,
+) -> JsonDict:
+    if summary is None:
+        return {"candles": [], "equity": [], "markers": []}
+    ohlcv_key = str(summary.get("ohlcv_key") or "")
+    store = ParquetStore(context.parquet_dir)
+    ohlcv = store.read("ohlcv", ohlcv_key) if ohlcv_key else pd.DataFrame()
+    files = summary.get("files")
+    file_map = files if isinstance(files, dict) else {}
+    equity = _read_equity_points(file_map.get("equity"))
+    markers = _read_trade_markers(file_map.get("trades"))
+    return {
+        "ohlcv_key": ohlcv_key,
+        "candles": _candlestick_points(ohlcv),
+        "equity": equity,
+        "markers": markers,
+    }
+
+
+def _candlestick_points(frame: pd.DataFrame) -> list[JsonDict]:
+    if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
+        return []
+    trimmed = _sample_frame(frame)
+    points: list[JsonDict] = []
+    for ts, row in trimmed.iterrows():
+        point: JsonDict = {
+            "time": _unix_time(ts),
+            "open": _finite_float(row.get("open")),
+            "high": _finite_float(row.get("high")),
+            "low": _finite_float(row.get("low")),
+            "close": _finite_float(row.get("close")),
+        }
+        if all(value is not None for key, value in point.items() if key != "time"):
+            points.append(point)
+    return points
+
+
+def _read_equity_points(raw_path: object) -> list[JsonDict]:
+    path = _artifact_path(raw_path)
+    if path is None or not path.exists():
+        return []
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return []
+    if frame.empty:
+        return []
+    ts_col = "ts" if "ts" in frame.columns else str(frame.columns[0])
+    value_col = "equity" if "equity" in frame.columns else str(frame.columns[-1])
+    frame[ts_col] = pd.to_datetime(frame[ts_col], utc=True, errors="coerce")
+    frame[value_col] = pd.to_numeric(frame[value_col], errors="coerce")
+    frame = frame.dropna(subset=[ts_col, value_col])
+    if frame.empty:
+        return []
+    frame = _sample_frame(frame.set_index(ts_col))
+    return [
+        {"time": _unix_time(ts), "value": _finite_float(row[value_col])}
+        for ts, row in frame.iterrows()
+        if _finite_float(row[value_col]) is not None
+    ]
+
+
+def _read_trade_markers(raw_path: object) -> list[JsonDict]:
+    path = _artifact_path(raw_path)
+    if path is None or not path.exists():
+        return []
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return []
+    if frame.empty:
+        return []
+    ts_col = _first_column(frame, ("ts", "timestamp", "closed_at", "opened_at", "time"))
+    side_col = _first_column(frame, ("side", "action", "type"))
+    if ts_col is None:
+        return []
+    frame[ts_col] = pd.to_datetime(frame[ts_col], utc=True, errors="coerce")
+    frame = frame.dropna(subset=[ts_col])
+    markers: list[JsonDict] = []
+    for _, row in frame.iterrows():
+        side = str(row.get(side_col, "trade") if side_col else "trade").lower()
+        is_buy = side in {"buy", "long", "open"}
+        markers.append(
+            {
+                "time": _unix_time(row[ts_col]),
+                "position": "belowBar" if is_buy else "aboveBar",
+                "color": "#1f9d6a" if is_buy else "#d05a3b",
+                "shape": "arrowUp" if is_buy else "arrowDown",
+                "text": "Buy" if is_buy else "Sell",
+            }
+        )
+    return markers[:200]
+
+
+def _artifact_path(raw_path: object) -> Path | None:
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    return Path(raw_path)
+
+
+def _first_column(frame: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+    normalized = {str(column).lower(): str(column) for column in frame.columns}
+    for candidate in candidates:
+        if candidate in normalized:
+            return normalized[candidate]
+    return None
+
+
+def _sample_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if len(frame) <= _CHART_MAX_POINTS:
+        return frame
+    step = max(1, math.ceil(len(frame) / _CHART_MAX_POINTS))
+    return frame.iloc[::step]
+
+
+def _unix_time(value: object) -> int:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return int(ts.timestamp())
+
+
+def _finite_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value if isinstance(value, int | float | str) else str(value))
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _json_script(payload: Mapping[str, object]) -> str:
+    payload_json = json.dumps(payload, separators=(",", ":"), default=str)
+    return (
+        payload_json
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
 
 
 def _plain_summary(
@@ -694,10 +887,19 @@ def _render_backtest_page(
     all_options = _ohlcv_options(context)
     options = _available_ohlcv_options(context)
     latest = _latest_backtest(context)
-    selected_key = _default_ohlcv_key(context)
+    chart_summary = _summary_from_result(result) or latest
+    chart_payload = _backtest_chart_payload(context, chart_summary)
+    request = _request_from_result(result)
+    selected_strategy = str(request.get("strategy", "composite"))
+    selected_key = str(request.get("ohlcv_key", _default_ohlcv_key(context)))
+    if selected_key not in {str(option.get("key")) for option in options}:
+        selected_key = _default_ohlcv_key(context)
+    initial_cash_value = str(request.get("initial_cash", "100000"))
     result_html = _render_backtest_result(result)
     strategy_options = "".join(
-        f'<option value="{_e(strategy)}">{_e(strategy)}</option>'
+        f'<option value="{_e(strategy)}"'
+        f'{" selected" if strategy == selected_strategy else ""}>'
+        f'{_e(_strategy_label(strategy))}</option>'
         for strategy in _BACKTEST_STRATEGIES
     )
     data_options = "".join(
@@ -711,6 +913,10 @@ def _render_backtest_page(
     if not data_options:
         data_options = '<option value="">No non-empty OHLCV files found</option>'
     submit_attrs = "" if can_run else " disabled"
+    selected_option = _option_for_key(options, selected_key)
+    strategy_card = _strategy_explainer_card(selected_strategy)
+    source_card = _data_source_card(selected_option)
+    latest_explanation = _result_explainer(chart_summary)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -718,44 +924,83 @@ def _render_backtest_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QT — Backtest</title>
   <style>
-    :root {{ color-scheme: light; --bg:#f6f7f3; --ink:#15201b; --muted:#66736c; --line:#dce2dd;
-              --accent:#0b7a75; --warn:#ad5a00; --bad:#a73737; --good:#197447;
-              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }}
-    body {{ margin:0; background: var(--bg); color: var(--ink); }}
-    main {{ width:min(1080px, calc(100vw - 32px)); margin:0 auto; padding:28px 0 48px; }}
-    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:22px; }}
-    h1 {{ font-size:28px; line-height:1.1; margin:0; }}
-    h2 {{ font-size:17px; margin:28px 0 10px; }}
+    :root {{
+      color-scheme: light;
+      --bg:#f4f2ea; --ink:#172019; --muted:#66726b; --panel:#fffdf7;
+      --line:#ded8ca; --accent:#0b746b; --amber:#c27a15; --bad:#a93d34;
+      --good:#166c4f; --slate:#18221e; --tape:#101715;
+      font-family: "Aptos", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; background:radial-gradient(circle at top left, #fffaf0 0, var(--bg) 36%, #ece7dc 100%); color:var(--ink); }}
+    main {{ width:min(1180px, calc(100vw - 32px)); margin:0 auto; padding:30px 0 56px; }}
+    header {{ display:grid; grid-template-columns:1.2fr .8fr; gap:22px; align-items:end; margin-bottom:18px; }}
+    h1 {{ font-size:clamp(34px, 5vw, 62px); line-height:.92; margin:0; letter-spacing:-0.055em; max-width:760px; }}
+    h2 {{ font-size:20px; margin:30px 0 12px; letter-spacing:-0.02em; }}
+    h3 {{ font-size:15px; margin:0 0 8px; }}
     a {{ color:var(--accent); }}
-    form {{ display:grid; grid-template-columns: 1.2fr 1.5fr 1fr auto; gap:12px; align-items:end; }}
-    label {{ display:grid; gap:6px; color:var(--muted); font-size:13px; font-weight:700; }}
-    select, input {{ font:inherit; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px 11px; }}
-    button {{ font:inherit; font-weight:700; color:#fff; background:var(--accent); border:0; border-radius:8px; padding:11px 14px; cursor:pointer; }}
-    table {{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }}
+    form {{ display:grid; grid-template-columns:1.05fr 1.35fr .8fr auto; gap:12px; align-items:end; }}
+    label {{ display:grid; gap:7px; color:var(--muted); font-size:13px; font-weight:800; }}
+    select, input {{ font:inherit; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:12px; padding:11px 12px; }}
+    button {{ font:inherit; font-weight:850; color:#fff; background:var(--accent); border:0; border-radius:12px; padding:12px 16px; cursor:pointer; box-shadow:0 10px 24px rgba(11,116,107,.18); }}
+    button:disabled {{ background:#9aa6a1; cursor:not-allowed; box-shadow:none; }}
+    table {{ width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }}
     th, td {{ border-bottom:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; font-size:13px; }}
-    th {{ color:var(--muted); font-weight:700; background:#fbfcfa; }}
+    th {{ color:var(--muted); font-weight:800; background:#fbf7ed; }}
     tr:last-child td {{ border-bottom:0; }}
     .subtle {{ color:var(--muted); font-size:14px; }}
-    .panel {{ border:1px solid var(--line); background:#fff; border-radius:8px; padding:14px; }}
-    .grid {{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:12px; }}
-    .metric {{ font-size:24px; font-weight:700; margin-top:6px; }}
-    .pill {{ display:inline-flex; border-radius:999px; padding:2px 8px; font-weight:700; font-size:12px; }}
-    .good {{ color:var(--good); background:#e8f3ed; }}
-    .bad {{ color:var(--bad); background:#f8e7e7; }}
-    .mono {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    @media (max-width: 900px) {{ header {{ display:block; }} form, .grid {{ grid-template-columns:1fr; }} table {{ display:block; overflow-x:auto; }} }}
+    .eyebrow {{ color:var(--amber); font-weight:900; text-transform:uppercase; letter-spacing:.12em; font-size:12px; }}
+    .panel {{ border:1px solid var(--line); background:rgba(255,253,247,.92); border-radius:18px; padding:16px; }}
+    .hero-note {{ border-left:4px solid var(--accent); padding:12px 14px; background:#fffdf7; border-radius:12px; }}
+    .grid {{ display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }}
+    .two {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }}
+    .steps {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin:18px 0; }}
+    .step {{ border:1px solid var(--line); border-radius:18px; padding:15px; background:#fffdf7; }}
+    .step .num {{ display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; background:var(--tape); color:#fff; font-weight:900; margin-bottom:10px; }}
+    .metric {{ font-size:26px; font-weight:900; margin-top:7px; letter-spacing:-.03em; }}
+    .pill {{ display:inline-flex; border-radius:999px; padding:3px 9px; font-weight:850; font-size:12px; }}
+    .good {{ color:var(--good); background:#e5f3ed; }}
+    .warn {{ color:#805000; background:#fff1cf; }}
+    .bad {{ color:var(--bad); background:#f9e5e1; }}
+    .muted {{ color:var(--muted); background:#edf0ed; }}
+    .mono {{ font-family:"SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    .recorder {{ background:linear-gradient(135deg, #121916, #26322c); color:#f4f7ef; border:0; box-shadow:0 18px 48px rgba(18,25,22,.24); }}
+    .recorder .subtle, .recorder th {{ color:#b8c6bd; }}
+    .recorder table {{ background:#151d19; border-color:#38443d; }}
+    .recorder th, .recorder td {{ border-color:#38443d; background:transparent; }}
+    .chart-shell {{ min-height:420px; border:1px solid var(--line); border-radius:18px; background:#fff; padding:10px; }}
+    #price-chart {{ min-height:390px; }}
+    .progress {{ height:8px; border-radius:999px; background:#e2ddd1; overflow:hidden; margin-top:10px; }}
+    .progress > div {{ height:100%; width:0; background:linear-gradient(90deg, var(--accent), var(--amber)); transition:width .35s ease; }}
+    .run-status {{ margin-top:10px; font-weight:800; }}
+    .learning-list {{ display:grid; gap:8px; padding-left:20px; }}
+    @media (max-width: 900px) {{
+      header, form, .grid, .two, .steps {{ grid-template-columns:1fr; }}
+      table {{ display:block; overflow-x:auto; }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{ .progress > div {{ transition:none; }} }}
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <h1>Backtest</h1>
-        <div class="subtle">Run controlled local-data replays and publish the result to the monitor.</div>
+        <div class="eyebrow">BTC strategy replay</div>
+        <h1>Backtest without guessing what the button did.</h1>
       </div>
-      <div class="subtle mono"><a href="/">← monitor</a> · <a href="/api/backtests/latest">latest JSON</a></div>
+      <div class="hero-note">
+        <strong>Safe mode:</strong> this page replays historical local data only.
+        No exchange key is used and no real order is sent.
+        <div class="subtle mono" style="margin-top:8px"><a href="/">← monitor</a> · <a href="/api/backtests/latest">latest JSON</a></div>
+      </div>
     </header>
+    <section class="steps" aria-label="Backtest workflow">
+      <div class="step"><div class="num">1</div><h3>Step 1 · Choose what to test</h3><div class="subtle">Pick the strategy, local OHLCV data, and starting cash. The page explains each control before you run.</div></div>
+      <div class="step"><div class="num">2</div><h3>Step 2 · Run the replay</h3><div class="subtle">The server replays every historical candle, applies the algorithm, writes artifacts, then reloads the result.</div></div>
+      <div class="step"><div class="num">3</div><h3>Step 3 · Read the result</h3><div class="subtle">Check return, drawdown, trade count, buy/sell markers, and whether the risk is acceptable before paper trading.</div></div>
+    </section>
     <section class="panel">
+      <h2 style="margin-top:0">Configure the replay</h2>
       <form method="post" action="/backtest/run">
         <label>Strategy
           <select name="strategy">{strategy_options}</select>
@@ -764,26 +1009,284 @@ def _render_backtest_page(
           <select name="ohlcv_key">{data_options}</select>
         </label>
         <label>Initial cash
-          <input name="initial_cash" value="100000" inputmode="decimal">
+          <input name="initial_cash" value="{_e(initial_cash_value)}" inputmode="decimal">
         </label>
         <button type="submit"{submit_attrs}>Run backtest</button>
       </form>
-      <div class="subtle" style="margin-top:10px">
-        <span class="mono">composite</span> uses QT's threshold/risk engine.
-        <span class="mono">dca</span>, <span class="mono">trend</span>,
-        <span class="mono">carry</span>, and <span class="mono">wick</span>
-        use the independent BTC backtest engine through QT's adapter.
+      <div id="run-status" class="run-status" aria-live="polite">Ready. Select a strategy and press Run backtest.</div>
+      <div class="progress" aria-hidden="true"><div id="run-progress"></div></div>
+      <div class="two" style="margin-top:14px">{strategy_card}{source_card}</div>
+    </section>
+    <h2>Configuration guide</h2>
+    {_render_backtest_config_guide()}
+    <h2>Algorithm guide</h2>
+    {_render_strategy_guide_table()}
+    {result_html}
+    <h2>Backtest flight recorder</h2>
+    <section class="panel recorder">
+      {latest_explanation}
+    </section>
+    <h2>Price curve with Buy/sell markers</h2>
+    <section class="chart-shell">
+      <div id="price-chart" role="img" aria-label="Candlestick price chart with equity curve and trade markers"></div>
+      <div class="subtle" style="margin-top:8px">
+        Chart powered by TradingView Lightweight Charts
+        (<a href="https://www.tradingview.com/" rel="noopener">TradingView</a>).
+        If the chart script is blocked, use the tables below.
       </div>
     </section>
-    {result_html}
     <h2>Latest Published Result</h2>
     {_render_backtest(latest)}
+    <h2>What to learn before automation</h2>
+    {_render_learning_before_automation()}
     <h2>Available OHLCV Data</h2>
     {_render_ohlcv_table(all_options)}
+    <script type="application/json" id="backtest-chart-data">{_json_script(chart_payload)}</script>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
+    <script>
+      (function () {{
+        var form = document.querySelector('form[action="/backtest/run"]');
+        var status = document.getElementById('run-status');
+        var progress = document.getElementById('run-progress');
+        if (form && status && progress) {{
+          form.addEventListener('submit', function () {{
+            status.textContent = 'Running: loading local candles, applying the strategy, and writing result artifacts...';
+            progress.style.width = '35%';
+            var button = form.querySelector('button[type="submit"]');
+            if (button) {{ button.disabled = true; button.textContent = 'Running...'; }}
+            window.setTimeout(function () {{ progress.style.width = '68%'; }}, 700);
+            window.setTimeout(function () {{ progress.style.width = '88%'; status.textContent = 'Still running: large datasets can take a few seconds.'; }}, 1800);
+          }});
+        }}
+        var chartNode = document.getElementById('price-chart');
+        var dataNode = document.getElementById('backtest-chart-data');
+        if (!chartNode || !dataNode || !window.LightweightCharts) {{
+          if (chartNode) chartNode.innerHTML = '<div class="subtle" style="padding:18px">Chart library unavailable. The result tables remain valid.</div>';
+          return;
+        }}
+        var payload = JSON.parse(dataNode.textContent || '{{}}');
+        if (!payload.candles || payload.candles.length === 0) {{
+          chartNode.innerHTML = '<div class="subtle" style="padding:18px">Run a backtest to draw price, equity, and trade markers.</div>';
+          return;
+        }}
+        var chart = LightweightCharts.createChart(chartNode, {{
+          height: 390,
+          layout: {{ background: {{ type: 'solid', color: '#ffffff' }}, textColor: '#28332d' }},
+          grid: {{ vertLines: {{ color: '#eee7db' }}, horzLines: {{ color: '#eee7db' }} }},
+          rightPriceScale: {{ borderColor: '#ded8ca' }},
+          timeScale: {{ borderColor: '#ded8ca' }}
+        }});
+        var candles = chart.addSeries(LightweightCharts.CandlestickSeries, {{
+          upColor: '#1f9d6a', downColor: '#d05a3b', borderVisible: false,
+          wickUpColor: '#1f9d6a', wickDownColor: '#d05a3b'
+        }});
+        candles.setData(payload.candles);
+        if (payload.equity && payload.equity.length) {{
+          var equity = chart.addSeries(LightweightCharts.LineSeries, {{
+            color: '#0b746b', lineWidth: 2, priceScaleId: 'left'
+          }});
+          equity.setData(payload.equity);
+        }}
+        if (payload.markers && payload.markers.length) {{
+          if (LightweightCharts.createSeriesMarkers) {{
+            LightweightCharts.createSeriesMarkers(candles, payload.markers);
+          }} else if (candles.setMarkers) {{
+            candles.setMarkers(payload.markers);
+          }}
+        }}
+        chart.timeScale().fitContent();
+        window.addEventListener('resize', function () {{
+          chart.applyOptions({{ width: chartNode.clientWidth }});
+        }});
+      }})();
+    </script>
   </main>
 </body>
 </html>
 """
+
+
+def _summary_from_result(result: JsonDict | None) -> Mapping[str, object] | None:
+    if result is None or result.get("ok") is not True:
+        return None
+    summary = result.get("summary")
+    return summary if isinstance(summary, dict) else None
+
+
+def _request_from_result(result: JsonDict | None) -> Mapping[str, object]:
+    if result is None:
+        return {}
+    request = result.get("request")
+    return request if isinstance(request, dict) else {}
+
+
+def _strategy_label(strategy: str) -> str:
+    guide = _STRATEGY_GUIDE.get(strategy)
+    if guide is None:
+        return strategy
+    return f"{guide['label']} ({strategy})"
+
+
+def _strategy_explainer_card(strategy: str) -> str:
+    guide = _STRATEGY_GUIDE.get(strategy, _STRATEGY_GUIDE["composite"])
+    return (
+        '<div class="panel">'
+        '<div class="eyebrow">Algorithm</div>'
+        f'<h3>{_e(guide["label"])}</h3>'
+        f'<div class="subtle">{_e(guide["plain"])}</div>'
+        '<table style="margin-top:10px"><tbody>'
+        f'<tr><th>Good for</th><td>{_e(guide["best_for"])}</td></tr>'
+        f'<tr><th>Main risk</th><td>{_e(guide["risk"])}</td></tr>'
+        '</tbody></table>'
+        '</div>'
+    )
+
+
+def _data_source_card(option: Mapping[str, object] | None) -> str:
+    if option is None:
+        return (
+            '<div class="panel"><div class="eyebrow">Data source</div>'
+            '<h3>No runnable OHLCV data</h3>'
+            '<div class="subtle">Fetch or restore a non-empty local OHLCV parquet file before running.</div></div>'
+        )
+    key = str(option.get("key", ""))
+    rows = _as_int(option.get("rows"))
+    start = str(option.get("start", ""))
+    end = str(option.get("end", ""))
+    provider = "OKX public BTC/USDT candles" if key.startswith("okx_") else "Local parquet OHLCV"
+    return (
+        '<div class="panel">'
+        '<div class="eyebrow">Data source</div>'
+        f'<h3 class="mono">{_e(key)}</h3>'
+        f'<div class="subtle">{_e(provider)}. Period: {_e(_timeframe_label(key))}. '
+        'This is historical market data, not a forecast feed.</div>'
+        '<table style="margin-top:10px"><tbody>'
+        f'<tr><th>Rows</th><td>{rows:,}</td></tr>'
+        f'<tr><th>Window</th><td class="mono">{_e(start)} → {_e(end)}</td></tr>'
+        '</tbody></table>'
+        '</div>'
+    )
+
+
+def _option_for_key(
+    options: Sequence[Mapping[str, object]],
+    key: str,
+) -> Mapping[str, object] | None:
+    for option in options:
+        if option.get("key") == key:
+            return option
+    return None
+
+
+def _timeframe_label(key: str) -> str:
+    if key.endswith("_1h"):
+        return "1-hour candles"
+    if key.endswith("_4h"):
+        return "4-hour candles"
+    if key.endswith("_1d"):
+        return "1-day candles"
+    return "local candle interval"
+
+
+def _render_backtest_config_guide() -> str:
+    return """
+    <div class="grid">
+      <div class="panel"><div class="eyebrow">Strategy</div><h3>Which rule is being tested?</h3><div class="subtle">The strategy determines when the engine enters, exits, or stays in cash. Change only one strategy at a time when comparing results.</div></div>
+      <div class="panel"><div class="eyebrow">Data source</div><h3>Which market history is replayed?</h3><div class="subtle">Only non-empty local OHLCV files are runnable. The current production-safe source is OKX BTC/USDT 1-hour candles.</div></div>
+      <div class="panel"><div class="eyebrow">Initial cash</div><h3>What account size is simulated?</h3><div class="subtle">This scales position sizes and P&amp;L. It does not connect to a real wallet.</div></div>
+      <div class="panel"><div class="eyebrow">Result</div><h3>What should you read first?</h3><div class="subtle">Start with drawdown, trade count, and data window before total return. A high return with high drawdown is not production-ready.</div></div>
+    </div>
+    """
+
+
+def _render_strategy_guide_table() -> str:
+    rows = []
+    for strategy in _BACKTEST_STRATEGIES:
+        guide = _STRATEGY_GUIDE[strategy]
+        rows.append(
+            "<tr>"
+            f'<td class="mono">{_e(strategy)}</td>'
+            f'<td>{_e(guide["label"])}</td>'
+            f'<td>{_e(guide["plain"])}</td>'
+            f'<td>{_e(guide["risk"])}</td>'
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>ID</th><th>Name</th><th>Algorithm</th>"
+        f"<th>Main risk</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _result_explainer(summary: Mapping[str, object] | None) -> str:
+    if summary is None:
+        return (
+            '<h3>Backtest flight recorder</h3>'
+            '<div class="subtle">No completed run yet. Configure the replay above and run once; '
+            'this panel will explain the result in plain language.</div>'
+        )
+    metrics = summary.get("metrics")
+    counts = summary.get("counts")
+    metrics_map = metrics if isinstance(metrics, dict) else {}
+    counts_map = counts if isinstance(counts, dict) else {}
+    total_return = _as_float(metrics_map.get("total_return"))
+    max_drawdown = _as_float(metrics_map.get("max_drawdown"))
+    sharpe = _as_float(metrics_map.get("sharpe"))
+    trades = _as_int(counts_map.get("trades", summary.get("num_trades")))
+    risk_class = "good" if max_drawdown > -0.15 else "warn" if max_drawdown > -0.35 else "bad"
+    prediction = _prediction_sentence(total_return, sharpe, trades)
+    risk = _risk_sentence(max_drawdown, sharpe, trades)
+    return f"""
+    <div class="grid">
+      {_card("Prediction result", _e(prediction))}
+      {_card("Risk readout", f'<span class="pill {risk_class}">{_e(risk)}</span>')}
+      {_card("Data window", _e(str(summary.get("ohlcv_key", ""))))}
+      {_card("Run id", f'<span class="mono">{_e(str(summary.get("run_id", "")))}</span>')}
+    </div>
+    <table style="margin-top:12px">
+      <tbody>
+        <tr><th>What was tested</th><td>{_e(str(summary.get("strategy") or summary.get("engine_strategy") or "composite"))} on {_e(str(summary.get("ohlcv_key", "")))}</td></tr>
+        <tr><th>How to read it</th><td>Total return answers “did this rule make money in this window?” Drawdown answers “how much pain did it require?” Trade count answers “was it active enough to trust the sample?”</td></tr>
+        <tr><th>What it does not prove</th><td>It does not predict tomorrow’s BTC price and it does not include every live-trading cost, outage, spread, key, or exchange failure mode.</td></tr>
+      </tbody>
+    </table>
+    """
+
+
+def _prediction_sentence(total_return: float, sharpe: float, trades: int) -> str:
+    if trades <= 0:
+        return "No trade fired in this window; the rule mostly stayed out."
+    if total_return > 0 and sharpe > 0:
+        return "Historically favorable in this window; candidate for paper trading, not live trading."
+    if total_return > 0:
+        return "Positive return but weak risk-adjusted quality; inspect drawdown before trusting it."
+    return "Historically unfavorable in this window; do not automate without changing assumptions."
+
+
+def _risk_sentence(max_drawdown: float, sharpe: float, trades: int) -> str:
+    if trades < 5:
+        return "thin sample"
+    if max_drawdown <= -0.35:
+        return "high drawdown"
+    if sharpe <= 0:
+        return "weak quality"
+    if max_drawdown <= -0.15:
+        return "moderate drawdown"
+    return "controlled"
+
+
+def _render_learning_before_automation() -> str:
+    return """
+    <div class="panel">
+      <ol class="learning-list">
+        <li><strong>Backtest first:</strong> learn OHLCV, fees, slippage, drawdown, Sharpe, and overfitting.</li>
+        <li><strong>Paper trade next:</strong> run the same strategy without real money and compare live paper fills with backtest assumptions.</li>
+        <li><strong>Risk controls:</strong> define max position, max daily loss, stop behavior, exchange failure handling, and kill switch.</li>
+        <li><strong>Execution:</strong> understand market/limit orders, spread, liquidity, funding, API keys, IP allowlists, and no-withdrawal permissions.</li>
+        <li><strong>Operations:</strong> monitor logs, alerts, heartbeat, data freshness, and reconciliation before considering live automation.</li>
+      </ol>
+      <div class="subtle">Use <span class="mono">/learn</span> and <span class="mono">docs/live-checklist.md</span> before moving from research to paper, and from paper to live.</div>
+    </div>
+    """
 
 
 def _render_backtest_result(result: JsonDict | None) -> str:
@@ -806,17 +1309,23 @@ def _render_backtest_result(result: JsonDict | None) -> str:
     if not isinstance(counts, dict):
         counts = {}
     strategy = summary.get("strategy") or summary.get("engine_strategy") or "composite"
+    total_return = _as_float(metrics.get("total_return"))
+    sharpe = _as_float(metrics.get("sharpe"))
+    trades = _as_int(counts.get("trades", summary.get("num_trades", 0)))
     return f"""
     <h2>Run Complete</h2>
     <div class="panel">
       <span class="pill good">published</span>
       <span class="mono">{_e(str(summary.get("run_id", "")))}</span>
+      <div class="subtle" style="margin-top:8px">
+        Prediction result: {_e(_prediction_sentence(total_return, sharpe, trades))}
+      </div>
     </div>
     <div class="grid" style="margin-top:12px">
       {_card("Strategy", _e(str(strategy)))}
       {_card("Total Return", _fmt_pct(metrics.get("total_return")))}
       {_card("Max Drawdown", _fmt_pct(metrics.get("max_drawdown")))}
-      {_card("Trades", _e(str(counts.get("trades", summary.get("num_trades", 0)))))}
+      {_card("Trades", _e(str(trades)))}
     </div>
     """
 
