@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from collections.abc import Iterator
 from html import unescape
 from http.client import HTTPConnection
@@ -11,6 +12,7 @@ from socketserver import TCPServer
 from urllib.parse import urlencode
 
 import pytest
+from btc_backtest.strategies.registry import BUILTIN_STRATEGY_IDS
 
 from qt.backtest.strategy_backtest import synthetic_btc_ohlcv
 from qt.dashboard.server import DashboardContext, _make_handler
@@ -70,6 +72,22 @@ def _post(port: int, path: str, payload: dict[str, str]) -> tuple[int, str]:
     return response.status, text
 
 
+def _post_json(port: int, path: str, payload: dict[str, object]) -> tuple[int, str, str]:
+    body = json.dumps(payload)
+    connection = HTTPConnection("127.0.0.1", port, timeout=20)
+    connection.request(
+        "POST",
+        path,
+        body=body,
+        headers={"Content-Type": "application/json"},
+    )
+    response = connection.getresponse()
+    text = response.read().decode("utf-8")
+    content_type = response.getheader("Content-Type", "")
+    connection.close()
+    return response.status, content_type, text
+
+
 def test_backtest_route_lists_strategies_and_local_ohlcv(
     served_backtest_dashboard: tuple[int, Path],
 ) -> None:
@@ -111,6 +129,155 @@ def test_backtest_options_api_returns_safe_choices(
     assert payload["defaults"]["ohlcv_key"] == "okx_BTCUSDT_1h"
     assert payload["strategies"] == ["composite", "dca", "trend", "carry", "wick"]
     assert [item["key"] for item in payload["ohlcv_keys"]] == ["okx_BTCUSDT_1h"]
+
+
+def test_backtest_catalog_api_exposes_full_guided_catalog(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, content_type, body = _get(port, "/api/v1/backtest/catalog")
+    assert status == 200
+    assert content_type == "application/json; charset=utf-8"
+    payload = json.loads(body)
+    strategy_ids = [item["id"] for item in payload["strategies"]]
+    assert strategy_ids[: len(BUILTIN_STRATEGY_IDS)] == list(BUILTIN_STRATEGY_IDS)
+    assert payload["defaults"]["strategy_id"] == "sma_crossover"
+    first_strategy = payload["strategies"][0]
+    assert first_strategy["explain_like_beginner"]
+    assert first_strategy["parameter_guide"]
+    assert first_strategy["risk_notes"]
+    assert "trend" in payload["groups"]
+    assert payload["data"]["standard"]["provider"] == "bitstamp"
+    assert payload["data"]["standard"]["years"] == 10
+
+
+def test_backtest_recipe_validation_rejects_unavailable_ohlcv(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, content_type, body = _post_json(
+        port,
+        "/api/v1/backtest/recipes/validate",
+        {
+            "strategy_id": "sma_crossover",
+            "ohlcv_key": "binance_BTCUSDT_1h",
+            "initial_cash": 10_000,
+            "rules": {
+                "entry": {"operator": "ALL", "conditions": [{"indicator": "close_above_sma", "window": 200}]},
+                "exit": {"operator": "ANY", "conditions": [{"indicator": "close_below_sma", "window": 200}]},
+            },
+        },
+    )
+    assert status == 400
+    assert content_type == "application/json; charset=utf-8"
+    payload = json.loads(body)
+    assert payload["ok"] is False
+    assert "has no rows" in payload["errors"][0]
+
+
+def test_backtest_job_api_runs_and_publishes_result_route(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, backtests = served_backtest_dashboard
+    status, content_type, body = _post_json(
+        port,
+        "/api/v1/backtest/jobs",
+        {
+            "strategy_id": "sma_crossover",
+            "ohlcv_key": "okx_BTCUSDT_1h",
+            "initial_cash": 10_000,
+            "fee_bps": 10,
+            "slippage_bps": 5,
+        },
+    )
+    assert status == 202
+    assert content_type == "application/json; charset=utf-8"
+    submitted = json.loads(body)
+    assert submitted["job"]["status"] in {"queued", "running", "complete"}
+    assert submitted["job"]["stages"][0]["name"] == "queued"
+
+    job_id = submitted["job"]["job_id"]
+    final_payload: dict[str, object] | None = None
+    for _ in range(20):
+        status, _, job_body = _get(port, f"/api/v1/backtest/jobs/{job_id}")
+        assert status == 200
+        payload = json.loads(job_body)
+        if payload["job"]["status"] == "complete":
+            final_payload = payload
+            break
+        time.sleep(0.2)
+    assert final_payload is not None
+    job = final_payload["job"]
+    assert isinstance(job, dict)
+    assert job["progress"] == 100
+    result = job["result"]
+    assert isinstance(result, dict)
+    assert result["strategy"] == "sma_crossover"
+    assert result["run_id"]
+    assert (backtests / "latest.json").exists()
+
+    run_id = result["run_id"]
+    status, _, result_page = _get(port, f"/backtest/runs/{run_id}")
+    assert status == 200
+    assert "Research verdict" in result_page
+    assert "sma_crossover" in result_page
+
+
+def test_backtest_job_applies_submitted_rule_recipe(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, _, body = _post_json(
+        port,
+        "/api/v1/backtest/jobs",
+        {
+            "strategy_id": "sma_crossover",
+            "ohlcv_key": "okx_BTCUSDT_1h",
+            "initial_cash": 10_000,
+            "rules": {
+                "entry": {
+                    "operator": "ALL",
+                    "conditions": [{"indicator": "close_above_sma", "window": 12}],
+                },
+                "exit": {
+                    "operator": "ANY",
+                    "conditions": [{"indicator": "close_below_sma", "window": 12}],
+                },
+            },
+        },
+    )
+    assert status == 202
+    job_id = json.loads(body)["job"]["job_id"]
+    result: dict[str, object] | None = None
+    for _ in range(20):
+        status, _, job_body = _get(port, f"/api/v1/backtest/jobs/{job_id}")
+        assert status == 200
+        job = json.loads(job_body)["job"]
+        if job["status"] == "complete":
+            raw_result = job["result"]
+            assert isinstance(raw_result, dict)
+            result = raw_result
+            break
+        time.sleep(0.2)
+    assert result is not None
+    recipe = result["recipe"]
+    assert isinstance(recipe, dict)
+    assert recipe["entry_operator"] == "ALL"
+    assert recipe["exit_operator"] == "ANY"
+    assert recipe["conditions"] == ["close_above_sma", "close_below_sma"]
+
+
+def test_backtest_builder_page_has_beginner_controls(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, _, body = _get(port, "/backtest/build")
+    assert status == 200
+    assert "Build a rule recipe" in body
+    assert "ALL entry conditions" in body
+    assert "ANY exit condition" in body
+    assert "10-year Bitstamp standard" in body
+    assert "Run research job" in body
 
 
 def test_backtest_post_rejects_unknown_strategy(
