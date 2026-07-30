@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh QT managed Bitstamp research data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=qt
+Group=qt
+WorkingDirectory=/opt/qt
+EnvironmentFile=/opt/qt/.env
+ExecStart=/opt/qt/.venv/bin/python scripts/sync_research_data.py \
+  --parquet-dir data/parquet
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true

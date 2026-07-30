@@ -30,6 +30,7 @@ from btc_backtest.strategies.channels import (
     TurtleTrend,
     TurtleTrendParams,
 )
+from btc_backtest.strategies.ensemble import EnsembleComponent, WeightedEnsemble
 from btc_backtest.strategies.grid import GridParams, GridRebalance
 from btc_backtest.strategies.loader import (
     discover_entry_point_strategies,
@@ -105,6 +106,7 @@ __all__ = [
     "DualMomentumParams",
     "EMACrossover",
     "EMACrossoverParams",
+    "EnsembleComponent",
     "FinalizationContext",
     "FixedDCA",
     "FixedDCAParams",
@@ -139,6 +141,7 @@ __all__ = [
     "TurtleTrendParams",
     "VWAPMeanReversion",
     "VWAPMeanReversionParams",
+    "WeightedEnsemble",
     "WickCatcher",
     "WickCatcherParams",
     "default_strategy_registry",

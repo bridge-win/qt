@@ -17,6 +17,7 @@ from btc_backtest.strategies.registry import BUILTIN_STRATEGY_IDS
 from qt.backtest.strategy_backtest import synthetic_btc_ohlcv
 from qt.dashboard.server import DashboardContext, _make_handler
 from qt.data.store import ParquetStore
+from qt.research.repository import ResearchRepository
 
 
 @pytest.fixture()
@@ -223,7 +224,7 @@ def test_backtest_job_api_runs_and_publishes_result_route(
     assert "sma_crossover" in result_page
 
 
-def test_backtest_job_applies_submitted_rule_recipe(
+def test_backtest_job_rejects_rules_that_silently_replace_template(
     served_backtest_dashboard: tuple[int, Path],
 ) -> None:
     port, _ = served_backtest_dashboard
@@ -246,25 +247,10 @@ def test_backtest_job_applies_submitted_rule_recipe(
             },
         },
     )
-    assert status == 202
-    job_id = json.loads(body)["job"]["job_id"]
-    result: dict[str, object] | None = None
-    for _ in range(20):
-        status, _, job_body = _get(port, f"/api/v1/backtest/jobs/{job_id}")
-        assert status == 200
-        job = json.loads(job_body)["job"]
-        if job["status"] == "complete":
-            raw_result = job["result"]
-            assert isinstance(raw_result, dict)
-            result = raw_result
-            break
-        time.sleep(0.2)
-    assert result is not None
-    recipe = result["recipe"]
-    assert isinstance(recipe, dict)
-    assert recipe["entry_operator"] == "ALL"
-    assert recipe["exit_operator"] == "ANY"
-    assert recipe["conditions"] == ["close_above_sma", "close_below_sma"]
+    assert status == 400
+    payload = json.loads(body)
+    assert payload["ok"] is False
+    assert "custom_rule_recipe" in payload["errors"][0]
 
 
 def test_backtest_builder_page_has_beginner_controls(
@@ -273,11 +259,162 @@ def test_backtest_builder_page_has_beginner_controls(
     port, _ = served_backtest_dashboard
     status, _, body = _get(port, "/backtest/build")
     assert status == 200
-    assert "Build a rule recipe" in body
-    assert "ALL entry conditions" in body
-    assert "ANY exit condition" in body
-    assert "10-year Bitstamp standard" in body
-    assert "Run research job" in body
+    assert "BTC Research Flight Plan" in body
+    assert "1 · Choose your goal" in body
+    assert "2 · Select verified data" in body
+    assert "3 · Build the strategy" in body
+    assert "4 · Set assumptions" in body
+    assert "5 · Review and run" in body
+    assert "10-year standard is not installed" in body
+    assert "Sync 10-year Bitstamp data" in body
+    assert "/api/v2/backtests/datasets/bitstamp-btcusd-1d-10y/sync" in body
+    assert 'id="template-parameters"' in body
+    assert "readTemplateParameters" in body
+
+
+def test_v2_catalog_limits_beginner_recommendations(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+    status, _, body = _get(port, "/api/v2/backtests/catalog")
+    assert status == 200
+    strategies = json.loads(body)["strategies"]
+    beginner_ids = {
+        item["id"] for item in strategies if item["beginner_friendly"] is True
+    }
+    assert beginner_ids == {
+        "buy_and_hold",
+        "fixed_dca",
+        "smart_dca",
+        "sma_crossover",
+        "rsi_mean_reversion",
+        "bollinger_mean_reversion",
+        "donchian_breakout",
+    }
+
+
+def test_v2_catalog_datasets_health_and_job_contracts(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, _ = served_backtest_dashboard
+
+    status, _, catalog_body = _get(port, "/api/v2/backtests/catalog")
+    assert status == 200
+    catalog = json.loads(catalog_body)
+    assert catalog["api_version"] == "2"
+    assert catalog["modes"] == ["template", "custom_rules", "ensemble"]
+
+    status, _, datasets_body = _get(port, "/api/v2/backtests/datasets")
+    assert status == 200
+    datasets = json.loads(datasets_body)["datasets"]
+    assert any(item["dataset_id"] == "okx-btcusdt-1h" for item in datasets)
+    bitstamp = next(
+        item
+        for item in datasets
+        if item["dataset_id"] == "bitstamp-btcusd-1d-10y"
+    )
+    assert bitstamp["status"] == "missing"
+    assert bitstamp["standard_ready"] is False
+
+    status, _, health_body = _get(port, "/api/v2/backtests/health")
+    assert status == 200
+    health = json.loads(health_body)
+    assert health["status"] in {"healthy", "degraded"}
+    assert health["worker"]["queue_limit"] == 5
+
+    status, _, job_body = _post_json(
+        port,
+        "/api/v2/backtests/jobs",
+        {
+            "dataset_id": "okx-btcusdt-1h",
+            "mode": "template",
+            "template": {
+                "strategy_id": "sma_crossover",
+                "parameters": {"fast_window": 10, "slow_window": 30},
+            },
+            "validation_profile": "quick",
+            "assumptions": {
+                "initial_cash": 10_000,
+                "fee_bps": 10,
+                "slippage_bps": 5,
+            },
+            "seed": 7,
+        },
+    )
+    assert status == 202
+    job = json.loads(job_body)["job"]
+    assert job["status"] == "queued"
+    assert job["spec"]["mode"] == "template"
+
+    status, _, cancel_body = _post_json(
+        port,
+        f"/api/v2/backtests/jobs/{job['job_id']}/cancel",
+        {},
+    )
+    assert status == 200
+    assert json.loads(cancel_body)["job"]["status"] == "cancelled"
+
+
+def test_v2_run_series_and_artifact_allow_list(
+    served_backtest_dashboard: tuple[int, Path],
+) -> None:
+    port, backtests = served_backtest_dashboard
+    repository = ResearchRepository(backtests / "research.sqlite3")
+    job = repository.enqueue({"kind": "test"})
+    repository.claim_next("test-worker")
+    run_id = "a" * 32
+    run_dir = backtests / run_id
+    run_dir.mkdir()
+    (run_dir / "equity.csv").write_text(
+        "timestamp,strategy,buy_and_hold,fixed_dca\n"
+        "2022-01-01T00:00:00+00:00,10000,10000,10000\n",
+        encoding="utf-8",
+    )
+    (run_dir / "trades.csv").write_text(
+        "ts,side,qty,price,fee,pnl\n",
+        encoding="utf-8",
+    )
+    (run_dir / "summary.json").write_text("{}\n", encoding="utf-8")
+    (run_dir / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    repository.complete(
+        str(job["job_id"]),
+        {
+            "run_id": run_id,
+            "configuration": {"ohlcv_key": "okx_BTCUSDT_1h"},
+            "artifacts": [
+                "data_manifest.json",
+                "equity.csv",
+                "summary.json",
+                "trades.csv",
+            ],
+        },
+    )
+
+    status, _, series_body = _get(
+        port, f"/api/v2/backtests/runs/{run_id}/series"
+    )
+    assert status == 200
+    assert json.loads(series_body)["equity"]
+
+    status, content_type, artifact_body = _get(
+        port,
+        f"/api/v2/backtests/runs/{run_id}/artifacts/equity.csv",
+    )
+    assert status == 200
+    assert content_type == "text/csv; charset=utf-8"
+    assert "strategy,buy_and_hold,fixed_dca" in artifact_body
+
+    status, _, _ = _get(
+        port,
+        f"/api/v2/backtests/runs/{run_id}/artifacts/research.sqlite3",
+    )
+    assert status == 404
+
+    status, _, result_page = _get(port, f"/backtest/runs/{run_id}")
+    assert status == 200
+    assert "Parameter sensitivity heatmap" in result_page
+    assert "Monte Carlo percentile paths" in result_page
+    assert "Monthly returns and trade ledger" in result_page
 
 
 def test_backtest_post_rejects_unknown_strategy(

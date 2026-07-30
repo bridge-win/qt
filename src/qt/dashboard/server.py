@@ -9,7 +9,7 @@ import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,6 +53,9 @@ from qt.data.store import ParquetStore
 from qt.intel.ranker import read_opportunities
 from qt.monitoring.state import MonitorStateStore
 from qt.portfolio import read_all_portfolios, read_portfolio
+from qt.research.datasets import DatasetCatalog
+from qt.research.repository import ResearchRepository
+from qt.research.service import normalize_job_request
 
 JsonDict: TypeAlias = dict[str, object]
 _BACKTEST_STRATEGIES = ("composite", *SUPPORTED)
@@ -111,12 +114,9 @@ _BEGINNER_STRATEGIES = {
     "fixed_dca",
     "smart_dca",
     "sma_crossover",
-    "ema_crossover",
     "rsi_mean_reversion",
     "bollinger_mean_reversion",
     "donchian_breakout",
-    "turtle_trend",
-    "grid_rebalance",
 }
 _STRATEGY_PLAIN_GUIDE: dict[str, str] = {
     "fixed_dca": "Buy a fixed amount on a schedule. It tests disciplined accumulation rather than market timing.",
@@ -273,6 +273,20 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path == "/static/lightweight-charts-5.2.0.js":
+                asset = (
+                    Path(__file__).parent
+                    / "static"
+                    / "lightweight-charts.standalone.production.js"
+                )
+                if not asset.is_file():
+                    self.send_error(HTTPStatus.NOT_FOUND, "chart asset not found")
+                    return
+                self._send_bytes(
+                    asset.read_bytes(),
+                    content_type="text/javascript; charset=utf-8",
+                )
+                return
             if path == "/":
                 self._send_html(_render_home(context))
                 return
@@ -326,13 +340,88 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
             if path == "/api/v1/backtest/catalog":
                 self._send_json(_backtest_catalog(context))
                 return
-            if path.startswith("/api/v1/backtest/jobs/"):
-                job_id = path[len("/api/v1/backtest/jobs/"):].strip("/")
-                job = _read_backtest_job(context, job_id)
-                if job is None:
+            if path == "/api/v2/backtests/catalog":
+                self._send_json(_v2_backtest_catalog(context))
+                return
+            if path == "/api/v2/backtests/datasets":
+                self._send_json(
+                    {"datasets": _managed_dataset_catalog(context).list_datasets()}
+                )
+                return
+            if path == "/api/v2/backtests/health":
+                self._send_json(_research_health(context))
+                return
+            if path == "/api/v2/backtests/runs":
+                self._send_json(
+                    {"runs": _research_repository(context).list_runs()}
+                )
+                return
+            if path.startswith("/api/v2/backtests/jobs/"):
+                job_id = path[len("/api/v2/backtests/jobs/"):].strip("/")
+                if "/" in job_id:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return
+                try:
+                    job = _research_repository(context).get_job(job_id)
+                except KeyError:
                     self.send_error(HTTPStatus.NOT_FOUND, f"no backtest job for {job_id}")
                     return
                 self._send_json({"job": job})
+                return
+            if path.startswith("/api/v2/backtests/runs/"):
+                suffix = path[len("/api/v2/backtests/runs/"):].strip("/")
+                parts = suffix.split("/")
+                run_id = parts[0]
+                try:
+                    run = _research_repository(context).get_run(run_id)
+                except KeyError:
+                    self.send_error(HTTPStatus.NOT_FOUND, f"no backtest run for {run_id}")
+                    return
+                if len(parts) == 2 and parts[1] == "series":
+                    self._send_json(
+                        {"run_id": run_id, **_v2_run_series(context, run)}
+                    )
+                    return
+                if len(parts) == 3 and parts[1] == "artifacts":
+                    artifact_name = parts[2]
+                    allowed = run.get("artifacts")
+                    if (
+                        not _is_opaque_run_id(run_id)
+                        or
+                        not isinstance(allowed, list)
+                        or artifact_name not in allowed
+                        or artifact_name not in {
+                            "data_manifest.json",
+                            "equity.csv",
+                            "summary.json",
+                            "trades.csv",
+                        }
+                    ):
+                        self.send_error(HTTPStatus.NOT_FOUND, "artifact not found")
+                        return
+                    artifact = context.backtests_dir / run_id / artifact_name
+                    if not artifact.is_file():
+                        self.send_error(HTTPStatus.NOT_FOUND, "artifact not found")
+                        return
+                    content_type = (
+                        "application/json; charset=utf-8"
+                        if artifact.suffix == ".json"
+                        else "text/csv; charset=utf-8"
+                    )
+                    self._send_bytes(artifact.read_bytes(), content_type=content_type)
+                    return
+                if len(parts) != 1:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return
+                self._send_json({"run": run})
+                return
+            if path.startswith("/api/v1/backtest/jobs/"):
+                job_id = path[len("/api/v1/backtest/jobs/"):].strip("/")
+                legacy_job = _read_backtest_job(context, job_id)
+                if legacy_job is None:
+                    self.send_error(HTTPStatus.NOT_FOUND, f"no backtest job for {job_id}")
+                    return
+                self._send_json({"job": legacy_job})
                 return
             if path.startswith("/api/v1/backtest/runs/"):
                 run_id = path[len("/api/v1/backtest/runs/"):].strip("/")
@@ -377,6 +466,106 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/v2/backtests/"):
+                if self.headers.get_content_type() != "application/json":
+                    self._send_json(
+                        {"ok": False, "errors": ["application/json is required"]},
+                        status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                    )
+                    return
+                origin = self.headers.get("Origin")
+                host = self.headers.get("Host", "")
+                if origin and urlparse(origin).netloc != host:
+                    self._send_json(
+                        {"ok": False, "errors": ["cross-origin submission rejected"]},
+                        status=HTTPStatus.FORBIDDEN,
+                    )
+                    return
+            if (
+                path.startswith("/api/v2/backtests/datasets/")
+                and path.endswith("/sync")
+            ):
+                dataset_id = path[
+                    len("/api/v2/backtests/datasets/"):-len("/sync")
+                ].strip("/")
+                if "/" in dataset_id:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return
+                try:
+                    dataset = _managed_dataset_catalog(context).get(dataset_id)
+                    if dataset.get("provider") != "bitstamp":
+                        raise ValueError(
+                            f"dataset does not support synchronization: {dataset_id}"
+                        )
+                    repository = _research_repository(context)
+                    _enforce_research_rate_limit(repository)
+                    job = repository.enqueue(
+                        {"kind": "dataset_sync", "dataset_id": dataset_id}
+                    )
+                except ResearchRateLimitError as error:
+                    self._send_json(
+                        {"ok": False, "errors": [str(error)]},
+                        status=HTTPStatus.TOO_MANY_REQUESTS,
+                    )
+                    return
+                except (KeyError, ValueError) as error:
+                    self._send_json(
+                        {"ok": False, "errors": [str(error)]},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                self._send_json(
+                    {"ok": True, "job": job},
+                    status=HTTPStatus.ACCEPTED,
+                )
+                return
+            if path == "/api/v2/backtests/jobs":
+                payload = self._read_json_body()
+                if payload.get("_error"):
+                    self._send_json(
+                        {"ok": False, "errors": [str(payload["_error"])]},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    spec = normalize_job_request(
+                        payload,
+                        _managed_dataset_catalog(context),
+                    )
+                    repository = _research_repository(context)
+                    _enforce_research_rate_limit(repository)
+                    job = repository.enqueue(spec)
+                except ResearchRateLimitError as error:
+                    self._send_json(
+                        {"ok": False, "errors": [str(error)]},
+                        status=HTTPStatus.TOO_MANY_REQUESTS,
+                    )
+                    return
+                except (KeyError, ValueError) as error:
+                    self._send_json(
+                        {"ok": False, "errors": [str(error)]},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                self._send_json(
+                    {"ok": True, "job": job},
+                    status=HTTPStatus.ACCEPTED,
+                )
+                return
+            if (
+                path.startswith("/api/v2/backtests/jobs/")
+                and path.endswith("/cancel")
+            ):
+                job_id = path[
+                    len("/api/v2/backtests/jobs/"):-len("/cancel")
+                ].strip("/")
+                try:
+                    job = _research_repository(context).request_cancel(job_id)
+                except KeyError:
+                    self.send_error(HTTPStatus.NOT_FOUND, f"no backtest job for {job_id}")
+                    return
+                self._send_json({"ok": True, "job": job})
+                return
             if path == "/api/v1/backtest/recipes/validate":
                 payload = self._read_json_body()
                 validation = _validate_backtest_recipe(context, payload)
@@ -415,8 +604,22 @@ def _make_handler(context: DashboardContext) -> type[BaseHTTPRequestHandler]:
 
         def _send_json(self, body: JsonDict, *, status: HTTPStatus = HTTPStatus.OK) -> None:
             payload = json.dumps(body, indent=2, sort_keys=True, default=str).encode("utf-8")
+            self._send_bytes(
+                payload,
+                content_type="application/json; charset=utf-8",
+                status=status,
+            )
+
+        def _send_bytes(
+            self,
+            payload: bytes,
+            *,
+            content_type: str,
+            status: HTTPStatus = HTTPStatus.OK,
+        ) -> None:
             self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Type", content_type)
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -446,10 +649,14 @@ def _backtest_catalog(context: DashboardContext) -> JsonDict:
                 "id": strategy_id,
                 "name": strategy_id.replace("_", " ").title(),
                 "description": metadata.description,
+                "principle": metadata.description,
                 "explain_like_beginner": _STRATEGY_PLAIN_GUIDE.get(
                     strategy_id,
                     metadata.description,
                 ),
+                "suitable_market_regime": _strategy_regime(strategy_id),
+                "failure_mode": _strategy_failure_mode(strategy_id),
+                "risk_level": _strategy_risk_level(strategy_id),
                 "groups": _groups_for_strategy(strategy_id),
                 "beginner_friendly": strategy_id in _BEGINNER_STRATEGIES,
                 "warmup_bars": metadata.warmup_bars,
@@ -460,6 +667,7 @@ def _backtest_catalog(context: DashboardContext) -> JsonDict:
                 "parameter_schema": parameter_schema,
                 "parameter_guide": _parameter_guide(parameter_schema),
                 "risk_notes": _risk_notes(strategy_id),
+                "presets": _strategy_presets(strategy_id),
                 "runnable_now": _is_spot_only(strategy_id),
             }
         )
@@ -472,8 +680,18 @@ def _backtest_catalog(context: DashboardContext) -> JsonDict:
                 "symbol": "BTC/USD",
                 "timeframe": "1d",
                 "years": 10,
-                "badge": "10-year standard",
-                "note": "Use this for serious BTC spot research after the local dataset is synced.",
+                "badge": (
+                    "10-year standard"
+                    if any(
+                        item.get("standard_ready") is True
+                        for item in _managed_dataset_catalog(context).list_datasets()
+                    )
+                    else None
+                ),
+                "note": (
+                    "Use this for serious BTC spot research only after the "
+                    "local manifest passes validation."
+                ),
             },
             "available_ohlcv_keys": _available_ohlcv_options(context),
             "exchange_specific": {
@@ -496,6 +714,70 @@ def _backtest_catalog(context: DashboardContext) -> JsonDict:
             "slippage_bps": 5,
             "seed": 7,
         },
+    }
+
+
+def _v2_backtest_catalog(context: DashboardContext) -> JsonDict:
+    catalog = _backtest_catalog(context)
+    catalog["api_version"] = "2"
+    catalog["modes"] = ["template", "custom_rules", "ensemble"]
+    catalog["validation_profiles"] = {
+        "quick": "Single replay plus buy-and-hold and fixed-DCA benchmarks.",
+        "standard": (
+            "Purged walk-forward, sensitivity, 500 seeded bootstrap paths, "
+            "cost stress, and bias/stability gates."
+        ),
+    }
+    catalog["datasets"] = _managed_dataset_catalog(context).list_datasets()
+    return catalog
+
+
+def _research_repository(context: DashboardContext) -> ResearchRepository:
+    return ResearchRepository(context.backtests_dir / "research.sqlite3")
+
+
+def _managed_dataset_catalog(context: DashboardContext) -> DatasetCatalog:
+    repository = _research_repository(context)
+    return DatasetCatalog(
+        context.parquet_dir,
+        syncing_ids=repository.syncing_dataset_ids(),
+    )
+
+
+class ResearchRateLimitError(ValueError):
+    pass
+
+
+def _enforce_research_rate_limit(repository: ResearchRepository) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+    if repository.submissions_since(cutoff) >= 10:
+        raise ResearchRateLimitError(
+            "research submission limit reached: ten jobs per hour"
+        )
+
+
+def _research_health(context: DashboardContext) -> JsonDict:
+    repository = _research_repository(context)
+    datasets = _managed_dataset_catalog(context).list_datasets()
+    standard_ready = any(
+        item.get("standard_ready") is True for item in datasets
+    )
+    counts = repository.queue_counts()
+    worker = repository.worker_status(online_within=timedelta(seconds=15))
+    return {
+        "status": (
+            "healthy"
+            if standard_ready and worker.get("online") is True
+            else "degraded"
+        ),
+        "worker": {**counts, **worker},
+        "data": {
+            "standard_ready": standard_ready,
+            "ready_datasets": sum(
+                1 for item in datasets if item.get("status") == "ready"
+            ),
+        },
+        "live_trading": False,
     }
 
 
@@ -555,6 +837,79 @@ def _risk_notes(strategy_id: str) -> list[str]:
     if strategy_id == "grid_rebalance":
         notes.append("Grid systems can look strong in ranges and weak in one-way markets.")
     return notes
+
+
+def _strategy_regime(strategy_id: str) -> str:
+    groups = set(_groups_for_strategy(strategy_id))
+    if strategy_id in {"buy_and_hold", "fixed_dca", "smart_dca"}:
+        return "Long-horizon accumulation across mixed market regimes."
+    if "trend" in groups or "breakout" in groups:
+        return "Persistent directional markets with enough movement to cover costs."
+    if "mean_reversion" in groups or strategy_id == "grid_rebalance":
+        return "Sideways or oscillating markets without a structural breakdown."
+    if "derivatives" in groups:
+        return "Specialized basis and funding conditions with complete derivatives data."
+    return "Regime-dependent; compare several market cycles before drawing conclusions."
+
+
+def _strategy_failure_mode(strategy_id: str) -> str:
+    groups = set(_groups_for_strategy(strategy_id))
+    if strategy_id == "buy_and_hold":
+        return "It remains fully exposed through deep multi-year drawdowns."
+    if "trend" in groups or "breakout" in groups:
+        return "Repeated false signals can compound losses in choppy markets."
+    if "mean_reversion" in groups:
+        return "A genuine trend can keep moving against the assumed reversion."
+    if strategy_id in {"fixed_dca", "smart_dca"}:
+        return "Accumulation does not protect capital when the asset falls permanently."
+    if "derivatives" in groups:
+        return "Missing funding, liquidity, or liquidation mechanics can invalidate results."
+    return "Performance may depend on a narrow historical regime or sensitive parameters."
+
+
+def _strategy_risk_level(strategy_id: str) -> str:
+    if strategy_id in _BEGINNER_STRATEGIES:
+        return "beginner"
+    if strategy_id in {
+        "funding_basis_carry",
+        "grid_rebalance",
+        "capitulation",
+        "wick_catcher",
+    }:
+        return "advanced or data-constrained"
+    return "intermediate"
+
+
+def _strategy_presets(strategy_id: str) -> list[JsonDict]:
+    presets: dict[str, list[JsonDict]] = {
+        "buy_and_hold": [{"name": "Full BTC", "parameters": {"allocation": "1"}}],
+        "fixed_dca": [{"name": "Weekly $100", "parameters": {"quote_amount": "100"}}],
+        "sma_crossover": [
+            {
+                "name": "Classic 50/200",
+                "parameters": {"fast_window": 50, "slow_window": 200},
+            }
+        ],
+        "rsi_mean_reversion": [
+            {
+                "name": "Balanced 14/30/55",
+                "parameters": {"window": 14, "entry": "30", "exit": "55"},
+            }
+        ],
+        "bollinger_mean_reversion": [
+            {
+                "name": "Classic 20/2",
+                "parameters": {"window": 20, "stddev": "2"},
+            }
+        ],
+        "donchian_breakout": [
+            {
+                "name": "Classic 20/10",
+                "parameters": {"entry_window": 20, "exit_window": 10},
+            }
+        ],
+    }
+    return presets.get(strategy_id, [])
 
 
 def _is_spot_only(strategy_id: str) -> bool:
@@ -797,6 +1152,11 @@ def _validate_backtest_payload(
             return [f"{name} must be numeric"]
         if value < 0:
             return [f"{name} must be non-negative"]
+    if _recipe_has_conditions(payload.get("rules")):
+        return [
+            "built-in templates cannot be silently replaced by rules; use "
+            "custom_rules mode with the custom_rule_recipe identity"
+        ]
     return []
 
 
@@ -1137,12 +1497,42 @@ def _research_run_summary(
     run_id: str,
 ) -> JsonDict | None:
     safe = "".join(c for c in run_id if c.isalnum() or c in "-_")
-    if not safe:
+    if not safe or safe != run_id:
         return None
     path = context.backtests_dir / safe / "summary.json"
     if not path.exists():
         return None
     return _read_json_file(path)
+
+
+def _is_opaque_run_id(run_id: str) -> bool:
+    return len(run_id) == 32 and all(
+        character in "0123456789abcdef" for character in run_id
+    )
+
+
+def _v2_run_series(
+    context: DashboardContext,
+    summary: Mapping[str, object],
+) -> JsonDict:
+    configuration = summary.get("configuration")
+    config = configuration if isinstance(configuration, dict) else {}
+    key = str(config.get("ohlcv_key", ""))
+    frame = ParquetStore(context.parquet_dir).read("ohlcv", key) if key else pd.DataFrame()
+    run_id = str(summary.get("run_id", ""))
+    run_dir = context.backtests_dir / run_id
+    comparisons = _read_comparison_series(run_dir / "equity.csv")
+    return {
+        "candles": _candlestick_points(frame),
+        "volume": _volume_points(frame),
+        "equity": comparisons.get("strategy", []),
+        "benchmark_equity": {
+            "buy_and_hold": comparisons.get("buy_and_hold", []),
+            "fixed_dca": comparisons.get("fixed_dca", []),
+        },
+        "drawdown": comparisons.get("drawdown", []),
+        "markers": _read_trade_markers(str(run_dir / "trades.csv")),
+    }
 
 
 def _sources(context: DashboardContext) -> list[JsonDict]:
@@ -1571,6 +1961,8 @@ def _backtest_chart_payload(
 ) -> JsonDict:
     if summary is None:
         return {"candles": [], "equity": [], "markers": []}
+    if str(summary.get("schema_version", "")) == "2":
+        return _v2_run_series(context, summary)
     ohlcv_key = str(summary.get("ohlcv_key") or "")
     store = ParquetStore(context.parquet_dir)
     ohlcv = store.read("ohlcv", ohlcv_key) if ohlcv_key else pd.DataFrame()
@@ -1602,6 +1994,66 @@ def _candlestick_points(frame: pd.DataFrame) -> list[JsonDict]:
         if all(value is not None for key, value in point.items() if key != "time"):
             points.append(point)
     return points
+
+
+def _volume_points(frame: pd.DataFrame) -> list[JsonDict]:
+    if (
+        frame.empty
+        or not isinstance(frame.index, pd.DatetimeIndex)
+        or "volume" not in frame.columns
+    ):
+        return []
+    trimmed = _sample_frame(frame)
+    points: list[JsonDict] = []
+    for ts, row in trimmed.iterrows():
+        value = _finite_float(row.get("volume"))
+        close = _finite_float(row.get("close"))
+        open_price = _finite_float(row.get("open"))
+        if value is None or close is None or open_price is None:
+            continue
+        points.append(
+            {
+                "time": _unix_time(ts),
+                "value": value,
+                "color": "#38d6c855" if close >= open_price else "#ff6b6b55",
+            }
+        )
+    return points
+
+
+def _read_comparison_series(path: Path) -> dict[str, list[JsonDict]]:
+    if not path.is_file():
+        return {}
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, ValueError):
+        return {}
+    if frame.empty or "timestamp" not in frame.columns:
+        return {}
+    frame["timestamp"] = pd.to_datetime(
+        frame["timestamp"], utc=True, errors="coerce"
+    )
+    frame = frame.dropna(subset=["timestamp"]).set_index("timestamp")
+    frame = _sample_frame(frame)
+    output: dict[str, list[JsonDict]] = {}
+    for column in ("strategy", "buy_and_hold", "fixed_dca"):
+        if column not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        output[column] = [
+            {"time": _unix_time(ts), "value": value}
+            for ts, raw in values.items()
+            if (value := _finite_float(raw)) is not None
+        ]
+    if "strategy" in frame.columns:
+        values = pd.to_numeric(frame["strategy"], errors="coerce")
+        drawdown = values / values.cummax() - 1
+        output["drawdown"] = [
+            {"time": _unix_time(ts), "value": value}
+            for ts, raw in drawdown.items()
+            if (value := _finite_float(raw)) is not None
+        ]
+    return output
 
 
 def _read_equity_points(raw_path: object) -> list[JsonDict]:
@@ -2089,7 +2541,7 @@ def _render_backtest_page(
     <h2>Available OHLCV Data</h2>
     {_render_ohlcv_table(all_options)}
     <script type="application/json" id="backtest-chart-data">{_json_script(chart_payload)}</script>
-    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/static/lightweight-charts-5.2.0.js"></script>
     <script>
       (function () {{
         var form = document.querySelector('form[action="/backtest/run"]');
@@ -2161,143 +2613,385 @@ def _render_backtest_page(
 
 
 def _render_backtest_builder_page(context: DashboardContext) -> str:
-    catalog = _backtest_catalog(context)
+    catalog = _v2_backtest_catalog(context)
     strategies = catalog.get("strategies")
+    strategy_client_catalog: dict[str, JsonDict] = {}
     strategy_options = ""
     if isinstance(strategies, list):
         for raw in strategies:
             if not isinstance(raw, dict):
                 continue
             strategy_id = str(raw.get("id", ""))
+            strategy_client_catalog[strategy_id] = {
+                "parameter_schema": raw.get("parameter_schema", {}),
+                "parameter_guide": raw.get("parameter_guide", []),
+                "presets": raw.get("presets", []),
+            }
             disabled = "" if raw.get("runnable_now") is True else " disabled"
             badge = "beginner" if raw.get("beginner_friendly") is True else "advanced"
             strategy_options += (
-                f'<option value="{_e(strategy_id)}"{disabled}>'
+                f'<option value="{_e(strategy_id)}" '
+                f'data-description="{_e(str(raw.get("explain_like_beginner", "")))}" '
+                f'data-risk="{_e(str(raw.get("risk_notes", "")))}"{disabled}>'
                 f'{_e(strategy_id)} · {_e(badge)}</option>'
             )
+    datasets = _managed_dataset_catalog(context).list_datasets()
+    ready_dataset_ids = [
+        str(option.get("dataset_id", ""))
+        for option in datasets
+        if option.get("status") == "ready"
+    ]
+    preferred_dataset_id = (
+        "bitstamp-btcusd-1d-10y"
+        if any(
+            option.get("dataset_id") == "bitstamp-btcusd-1d-10y"
+            and option.get("standard_ready") is True
+            for option in datasets
+        )
+        else (ready_dataset_ids[0] if ready_dataset_ids else "")
+    )
     data_options = "".join(
-        f'<option value="{_e(str(option.get("key", "")))}">'
-        f'{_e(str(option.get("key", "")))} · {option.get("rows", 0)} rows</option>'
-        for option in _available_ohlcv_options(context)
+        f'<option value="{_e(str(option.get("dataset_id", "")))}" '
+        f'data-status="{_e(str(option.get("status", "")))}"'
+        f'{" selected" if option.get("dataset_id") == preferred_dataset_id else ""}'
+        f'{" disabled" if option.get("status") != "ready" else ""}>'
+        f'{_e(str(option.get("symbol", "")))} · '
+        f'{_e(str(option.get("timeframe", "")))} · '
+        f'{_e(str(option.get("status", "")))} · {option.get("rows", 0)} rows'
+        f'</option>'
+        for option in datasets
     )
     if not data_options:
-        data_options = '<option value="">No non-empty OHLCV files found</option>'
+        data_options = '<option value="">No managed datasets found</option>'
+    standard_ready = any(
+        item.get("standard_ready") is True for item in datasets
+    )
+    standard_notice = (
+        "10-year Bitstamp standard is verified and ready."
+        if standard_ready
+        else (
+            "10-year standard is not installed. Standard validation stays "
+            "disabled until Bitstamp BTC/USD daily data passes its manifest."
+        )
+    )
+    strategy_catalog_json = json.dumps(
+        strategy_client_catalog,
+        separators=(",", ":"),
+    ).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QT - Backtest Builder</title>
+  <title>QT — BTC Research Flight Plan</title>
   <style>
-    :root {{ color-scheme:light; --bg:#f5f4ef; --ink:#18211d; --muted:#66736b; --line:#ddd8cc; --panel:#fffdf8; --accent:#0b746b; --amber:#b66a00; --bad:#a43e36; font-family:Aptos, Inter, ui-sans-serif, system-ui, sans-serif; }}
+    :root {{ color-scheme:dark; --navy:#08111f; --deck:#0e1b2e; --panel:#13243a; --line:#29405e; --ink:#f4f7fb; --muted:#a8b8cc; --blue:#4f7cff; --cyan:#38d6c8; --amber:#f2a93b; --bad:#ff6b6b; font-family:Inter, Aptos, ui-sans-serif, system-ui, sans-serif; }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; background:var(--bg); color:var(--ink); }}
-    main {{ width:min(1180px, calc(100vw - 32px)); margin:0 auto; padding:28px 0 52px; }}
-    header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-end; margin-bottom:18px; }}
-    h1 {{ margin:0; font-size:clamp(30px, 4vw, 52px); line-height:1; letter-spacing:0; }}
-    h2 {{ font-size:20px; margin:28px 0 12px; }}
-    h3 {{ margin:0 0 8px; font-size:15px; }}
-    a {{ color:var(--accent); }}
-    label {{ display:grid; gap:7px; color:var(--muted); font-weight:800; font-size:13px; }}
-    select, input {{ width:100%; border:1px solid var(--line); border-radius:8px; padding:10px 11px; background:#fff; font:inherit; }}
-    button {{ border:0; border-radius:8px; padding:11px 14px; background:var(--accent); color:#fff; font:inherit; font-weight:850; cursor:pointer; }}
-    .subtle {{ color:var(--muted); font-size:14px; }}
-    .panel {{ border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:16px; }}
+    body {{ margin:0; background:radial-gradient(circle at 70% 0%, #162c49 0, var(--navy) 42%); color:var(--ink); min-height:100vh; }}
+    main {{ width:min(1320px, calc(100vw - 32px)); margin:0 auto; padding:28px 0 56px; }}
+    header {{ display:flex; justify-content:space-between; gap:24px; align-items:flex-end; margin-bottom:22px; }}
+    h1 {{ margin:4px 0 8px; font:800 clamp(32px, 5vw, 64px)/.95 ui-rounded, "Arial Rounded MT Bold", sans-serif; letter-spacing:-.04em; }}
+    h2 {{ font-size:18px; margin:0 0 8px; }}
+    h3 {{ margin:0 0 6px; font-size:14px; }}
+    a {{ color:var(--cyan); }}
+    label {{ display:grid; gap:7px; color:var(--muted); font-weight:750; font-size:13px; }}
+    select, input {{ width:100%; border:1px solid var(--line); border-radius:6px; padding:11px; background:#0b1728; color:var(--ink); font:inherit; }}
+    button {{ border:0; border-radius:6px; padding:12px 16px; background:var(--blue); color:#fff; font:inherit; font-weight:850; cursor:pointer; }}
+    button:disabled {{ opacity:.45; cursor:not-allowed; }}
+    .subtle {{ color:var(--muted); font-size:13px; line-height:1.5; }}
+    .shell {{ display:grid; grid-template-columns:210px minmax(0, 1fr) 280px; gap:14px; align-items:start; }}
+    .panel {{ border:1px solid var(--line); background:color-mix(in srgb, var(--panel) 92%, transparent); border-radius:8px; padding:16px; box-shadow:0 18px 60px #02071155; }}
     .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }}
     .three {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }}
     .mono {{ font-family:"SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    .pill {{ display:inline-flex; border-radius:999px; padding:3px 9px; background:#e8f2ef; color:var(--accent); font-weight:850; font-size:12px; }}
+    .pill {{ display:inline-flex; border:1px solid #38d6c866; border-radius:999px; padding:4px 9px; color:var(--cyan); font-weight:850; font-size:11px; text-transform:uppercase; letter-spacing:.08em; }}
+    .notice {{ border-left:3px solid var(--amber); padding:10px 12px; background:#f2a93b15; color:#ffd899; font-size:13px; margin-top:12px; }}
+    .rail {{ position:sticky; top:16px; display:grid; gap:4px; }}
+    .rail-item {{ display:grid; grid-template-columns:28px 1fr; gap:8px; padding:10px; border-left:2px solid var(--line); color:var(--muted); }}
+    .rail-item strong {{ color:var(--ink); font-size:13px; }}
+    .rail-num {{ width:24px; height:24px; display:grid; place-items:center; border:1px solid var(--line); border-radius:50%; font:700 11px "SF Mono", monospace; }}
+    .stage {{ margin-bottom:12px; }}
+    .stage-head {{ display:flex; align-items:center; gap:9px; margin-bottom:12px; }}
+    .stage-head span {{ color:var(--cyan); font:700 11px "SF Mono", monospace; }}
+    .mode-row {{ display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }}
+    .mode-card {{ display:block; border:1px solid var(--line); border-radius:7px; padding:11px; cursor:pointer; }}
+    .mode-card:has(input:checked) {{ border-color:var(--cyan); background:#38d6c811; }}
+    .mode-card input {{ width:auto; margin-right:6px; }}
+    .evidence {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; margin-bottom:14px; }}
+    .gate {{ min-height:68px; padding:9px; border-top:3px solid var(--line); background:#091525; }}
+    .gate.active {{ border-color:var(--cyan); }}
+    .gate b {{ display:block; font-size:12px; margin-bottom:4px; }}
+    .hidden {{ display:none !important; }}
     .rule-row {{ display:grid; grid-template-columns:1fr 120px; gap:8px; margin-top:8px; }}
-    .status {{ margin-top:12px; font-weight:800; }}
-    @media (max-width: 820px) {{ header, .grid, .three, .rule-row {{ display:block; }} .panel, label {{ margin-top:10px; }} }}
+    .parameter-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }}
+    .parameter-card {{ border:1px solid var(--line); border-radius:7px; padding:10px; }}
+    .parameter-card input {{ margin-top:7px; }}
+    .status {{ margin-top:12px; font-weight:800; color:var(--cyan); }}
+    .progress {{ height:7px; background:#07101d; border-radius:99px; overflow:hidden; margin-top:10px; }}
+    .progress > div {{ height:100%; width:0; background:linear-gradient(90deg,var(--blue),var(--cyan)); transition:width .3s ease; }}
+    .facts {{ display:grid; gap:10px; }}
+    .fact {{ border-bottom:1px solid var(--line); padding-bottom:9px; }}
+    .fact b {{ display:block; font-size:12px; margin-bottom:4px; }}
+    @media (max-width: 980px) {{ .shell {{ grid-template-columns:1fr; }} .rail {{ position:static; grid-template-columns:repeat(5,1fr); }} .rail-item {{ display:block; }} .rail-item div:last-child {{ display:none; }} }}
+    @media (max-width: 680px) {{ header, .grid, .three, .rule-row, .mode-row, .evidence {{ display:block; }} .panel, label, .gate {{ margin-top:9px; }} }}
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <span class="pill">10-year Bitstamp standard</span>
-        <h1>Build a rule recipe</h1>
-        <div class="subtle">Choose a known BTC algorithm, then add a small set of readable entry and exit rules. Phase 1 runs spot long/cash research only.</div>
+        <span class="pill">Private · spot long/cash · research only</span>
+        <h1>BTC Research Flight Plan</h1>
+        <div class="subtle">Build one reproducible historical experiment. A passing backtest is evidence—not a forecast and never a live-trading approval.</div>
       </div>
-      <div class="subtle mono"><a href="/backtest">classic backtest</a> · <a href="/api/v1/backtest/catalog">catalog JSON</a></div>
+      <div class="subtle mono"><a href="/backtest">classic view</a> · <a href="/api/v2/backtests/catalog">v2 catalog</a> · <a href="/api/v2/backtests/health">health</a></div>
     </header>
-    <section class="panel">
-      <div class="grid">
-        <label>Algorithm
-          <select id="strategy-id">{strategy_options}</select>
-        </label>
-        <label>Data source
-          <select id="ohlcv-key">{data_options}</select>
-        </label>
+    <div class="evidence" aria-label="Validation pipeline">
+      <div class="gate active"><b>DATA</b><span class="subtle">schema + fingerprint</span></div>
+      <div class="gate"><b>SIMULATION</b><span class="subtle">strategy + benchmarks</span></div>
+      <div class="gate"><b>ROBUSTNESS</b><span class="subtle">bias + costs + paths</span></div>
+      <div class="gate"><b>VERDICT</b><span class="subtle">exact pass/fail gates</span></div>
+    </div>
+    <div class="shell">
+      <nav class="rail" aria-label="Five research steps">
+        <div class="rail-item"><div class="rail-num">1</div><div><strong>1 · Choose your goal</strong><div class="subtle">Know the claim</div></div></div>
+        <div class="rail-item"><div class="rail-num">2</div><div><strong>2 · Select verified data</strong><div class="subtle">Verify provenance</div></div></div>
+        <div class="rail-item"><div class="rail-num">3</div><div><strong>3 · Build the strategy</strong><div class="subtle">Choose identity</div></div></div>
+        <div class="rail-item"><div class="rail-num">4</div><div><strong>4 · Set assumptions</strong><div class="subtle">Control behavior</div></div></div>
+        <div class="rail-item"><div class="rail-num">5</div><div><strong>5 · Review and run</strong><div class="subtle">Review assumptions</div></div></div>
+      </nav>
+      <div>
+        <section class="panel stage">
+          <div class="stage-head"><span>STEP 01</span><h2>Choose the research goal</h2></div>
+          <label>What are you trying to learn?
+            <select id="goal"><option>Compare a strategy with passive BTC ownership</option><option>Reduce drawdown while staying profitable</option><option>Learn how an indicator changes exposure</option></select>
+          </label>
+          <div class="notice">Backtests describe this historical sample. They cannot prove future profit, fill quality, or operational safety.</div>
+        </section>
+        <section class="panel stage">
+          <div class="stage-head"><span>STEP 02</span><h2>Select verified market data</h2></div>
+          <label>Dataset
+            <select id="dataset-id">{data_options}</select>
+          </label>
+          <div class="notice">{_e(standard_notice)}</div>
+          <button id="sync-data" type="button" style="margin-top:12px;background:#0b746b">Sync 10-year Bitstamp data</button>
+          <div id="sync-status" class="subtle" aria-live="polite" style="margin-top:8px"></div>
+        </section>
+        <section class="panel stage">
+          <div class="stage-head"><span>STEP 03</span><h2>Choose how the algorithm is created</h2></div>
+          <div class="mode-row">
+            <label class="mode-card"><span><input type="radio" name="mode" value="template" checked> Template</span><div class="subtle">One built-in strategy with its true identity.</div></label>
+            <label class="mode-card"><span><input type="radio" name="mode" value="custom_rules"> Custom rules</span><div class="subtle">A no-code recipe named custom_rule_recipe.</div></label>
+            <label class="mode-card"><span><input type="radio" name="mode" value="ensemble"> Ensemble</span><div class="subtle">Weighted exposure from two or three compatible strategies.</div></label>
+          </div>
+          <div id="template-fields" style="margin-top:12px"><label>Template algorithm<select id="strategy-id">{strategy_options}</select></label></div>
+          <div id="custom-fields" class="hidden" style="margin-top:12px">
+            <div class="subtle">Entry uses ALL conditions. Exit uses ANY condition. Window means how many candles each indicator reads.</div>
+            <div class="rule-row"><select id="entry-1"><option value="close_above_sma">Close above SMA</option><option value="rsi_below">RSI below threshold</option><option value="donchian_breakout">Donchian breakout</option></select><input id="entry-window-1" value="200" aria-label="Entry indicator window"></div>
+            <div class="rule-row"><select id="exit-1"><option value="close_below_sma">Close below SMA</option><option value="rsi_above">RSI above threshold</option><option value="bollinger_upper_touch">Bollinger upper touch</option></select><input id="exit-window-1" value="200" aria-label="Exit indicator window"></div>
+          </div>
+          <div id="ensemble-fields" class="hidden grid" style="margin-top:12px">
+            <label>Component 1<select id="ensemble-1">{strategy_options}</select></label>
+            <label>Weight<input id="ensemble-weight-1" value="60" inputmode="decimal"></label>
+            <label>Component 2<select id="ensemble-2">{strategy_options}</select></label>
+            <label>Weight<input id="ensemble-weight-2" value="40" inputmode="decimal"></label>
+          </div>
+        </section>
+        <section class="panel stage">
+          <div class="stage-head"><span>STEP 04</span><h2>Control assumptions and parameters</h2></div>
+          <div class="three">
+            <label>Initial cash <input id="initial-cash" value="10000" inputmode="decimal"><span class="subtle">Simulated USD/USDT starting balance.</span></label>
+            <label>Fee (bps) <input id="fee-bps" value="10" inputmode="decimal"><span class="subtle">10 bps = 0.10% each fill.</span></label>
+            <label>Slippage (bps) <input id="slippage-bps" value="5" inputmode="decimal"><span class="subtle">Extra adverse fill movement.</span></label>
+          </div>
+          <div class="subtle" id="strategy-explanation" style="margin-top:12px"></div>
+          <div id="template-parameters" class="parameter-grid" aria-live="polite"></div>
+        </section>
+        <section class="panel stage">
+          <div class="stage-head"><span>STEP 05</span><h2>Review and launch</h2></div>
+          <div class="grid">
+            <label>Validation profile
+              <select id="validation-profile"><option value="quick">Quick · replay + benchmarks</option><option value="standard"{" selected" if standard_ready else " disabled"}>Standard · full evidence pipeline</option></select>
+            </label>
+            <label>Deterministic seed<input id="seed" value="7" inputmode="numeric"></label>
+          </div>
+          <button id="run-job" type="button" style="margin-top:14px">Launch historical research</button>
+          <button id="cancel-job" type="button" class="hidden" style="margin-top:14px;background:#5c3340">Cancel job</button>
+          <div id="builder-status" class="status" aria-live="polite">Ready for a quick diagnostic run.</div>
+          <div class="progress"><div id="job-progress"></div></div>
+        </section>
       </div>
-      <div class="three" style="margin-top:12px">
-        <label>Initial cash
-          <input id="initial-cash" value="10000" inputmode="decimal">
-        </label>
-        <label>Fee bps
-          <input id="fee-bps" value="10" inputmode="decimal">
-        </label>
-        <label>Slippage bps
-          <input id="slippage-bps" value="5" inputmode="decimal">
-        </label>
-      </div>
-    </section>
-    <h2>ALL entry conditions</h2>
-    <section class="panel">
-      <div class="subtle">All selected entry conditions must be true before the recipe opens a position. Keep this to three conditions or fewer so the test remains explainable.</div>
-      <div class="rule-row"><select id="entry-1"><option value="close_above_sma">Close above SMA</option><option value="rsi_below">RSI below threshold</option><option value="donchian_breakout">Donchian breakout</option></select><input id="entry-window-1" value="200"></div>
-      <div class="rule-row"><select id="entry-2"><option value="">No second condition</option><option value="close_above_sma">Close above SMA</option><option value="bollinger_lower_touch">Bollinger lower touch</option></select><input id="entry-window-2" value="50"></div>
-    </section>
-    <h2>ANY exit condition</h2>
-    <section class="panel">
-      <div class="subtle">Any selected exit condition can close the position. Exits should be simpler than entries so the strategy is easy to audit.</div>
-      <div class="rule-row"><select id="exit-1"><option value="close_below_sma">Close below SMA</option><option value="rsi_above">RSI above threshold</option><option value="bollinger_upper_touch">Bollinger upper touch</option></select><input id="exit-window-1" value="200"></div>
-    </section>
-    <section class="panel" style="margin-top:14px">
-      <button id="run-job" type="button">Run research job</button>
-      <div id="builder-status" class="status" aria-live="polite">Ready.</div>
-      <div class="subtle" style="margin-top:8px">The job API records progress and writes a result page. No exchange key is used.</div>
-    </section>
+      <aside class="panel">
+        <span class="pill">Evidence brief</span>
+        <div class="facts" style="margin-top:14px">
+          <div class="fact"><b>Market</b><span class="subtle">BTC spot, long or cash only</span></div>
+          <div class="fact"><b>Benchmarks</b><span class="subtle">Buy-and-hold and fixed DCA</span></div>
+          <div class="fact"><b>Default costs</b><span class="subtle">0.10% fee + 0.05% slippage</span></div>
+          <div class="fact"><b>Standard gates</b><span class="subtle">Walk-forward, sensitivity, 500 paths, cost stress, future-data and warm-up consistency</span></div>
+          <div class="fact"><b>Safety boundary</b><span class="subtle">No keys, leverage, shorts, exchange connector, or real orders</span></div>
+        </div>
+      </aside>
+    </div>
     <script>
       (function () {{
+        var strategyCatalog = {strategy_catalog_json};
+        var currentJob = null;
+        function mode() {{ return document.querySelector('input[name="mode"]:checked').value; }}
+        function syncMode() {{
+          ['template', 'custom', 'ensemble'].forEach(function (name) {{
+            document.getElementById(name + '-fields').classList.toggle('hidden', mode() !== (name === 'custom' ? 'custom_rules' : name));
+          }});
+        }}
+        document.querySelectorAll('input[name="mode"]').forEach(function (node) {{ node.addEventListener('change', syncMode); }});
         function condition(selectId, windowId) {{
           var indicator = document.getElementById(selectId).value;
           if (!indicator) return null;
           return {{ indicator: indicator, window: Number(document.getElementById(windowId).value || 0) }};
         }}
         function payload() {{
-          return {{
-            strategy_id: document.getElementById('strategy-id').value,
-            ohlcv_key: document.getElementById('ohlcv-key').value,
-            initial_cash: Number(document.getElementById('initial-cash').value || 10000),
-            fee_bps: Number(document.getElementById('fee-bps').value || 10),
-            slippage_bps: Number(document.getElementById('slippage-bps').value || 5),
-            rules: {{
-              entry: {{ operator: 'ALL', conditions: [condition('entry-1', 'entry-window-1'), condition('entry-2', 'entry-window-2')].filter(Boolean) }},
-              exit: {{ operator: 'ANY', conditions: [condition('exit-1', 'exit-window-1')].filter(Boolean) }}
+          var value = {{
+            dataset_id: document.getElementById('dataset-id').value,
+            mode: mode(),
+            validation_profile: document.getElementById('validation-profile').value,
+            seed: Number(document.getElementById('seed').value || 7),
+            assumptions: {{
+              initial_cash: Number(document.getElementById('initial-cash').value || 10000),
+              fee_bps: Number(document.getElementById('fee-bps').value || 10),
+              slippage_bps: Number(document.getElementById('slippage-bps').value || 5)
             }}
           }};
+          if (value.mode === 'template') value.template = {{
+            strategy_id: document.getElementById('strategy-id').value,
+            parameters: readTemplateParameters()
+          }};
+          if (value.mode === 'custom_rules') value.rules = {{
+              entry: {{ operator: 'ALL', conditions: [condition('entry-1', 'entry-window-1')].filter(Boolean) }},
+              exit: {{ operator: 'ANY', conditions: [condition('exit-1', 'exit-window-1')].filter(Boolean) }}
+          }};
+          if (value.mode === 'ensemble') value.ensemble = {{ components: [
+            {{ strategy_id: document.getElementById('ensemble-1').value, parameters: {{}}, weight: Number(document.getElementById('ensemble-weight-1').value || 0) }},
+            {{ strategy_id: document.getElementById('ensemble-2').value, parameters: {{}}, weight: Number(document.getElementById('ensemble-weight-2').value || 0) }}
+          ] }};
+          return value;
+        }}
+        function readTemplateParameters() {{
+          var parameters = {{}};
+          document.querySelectorAll('#template-parameters [data-parameter]').forEach(function (input) {{
+            var raw = input.value;
+            if (input.dataset.kind === 'array') {{
+              parameters[input.dataset.parameter] = raw.split(',').map(function (item) {{ return Number(item.trim()); }}).filter(Number.isFinite);
+              return;
+            }}
+            parameters[input.dataset.parameter] = Number(raw);
+          }});
+          return parameters;
+        }}
+        function numericRule(schema) {{
+          if (schema.type === 'integer' || schema.type === 'number') return schema;
+          return (schema.anyOf || []).find(function (item) {{ return item.type === 'number' || item.type === 'integer'; }}) || {{}};
+        }}
+        function renderTemplateParameters() {{
+          var strategyId = document.getElementById('strategy-id').value;
+          var metadata = strategyCatalog[strategyId] || {{}};
+          var properties = (metadata.parameter_schema || {{}}).properties || {{}};
+          var guide = metadata.parameter_guide || [];
+          var impactByName = {{}};
+          guide.forEach(function (item) {{ impactByName[item.name] = item.impact; }});
+          var root = document.getElementById('template-parameters');
+          root.replaceChildren();
+          Object.keys(properties).forEach(function (name) {{
+            var schema = properties[name] || {{}};
+            var numeric = numericRule(schema);
+            var card = document.createElement('label');
+            card.className = 'parameter-card';
+            var title = document.createElement('span');
+            title.textContent = (schema.title || name) + ' · default ' + String(schema.default);
+            var input = document.createElement('input');
+            input.dataset.parameter = name;
+            input.dataset.kind = schema.type === 'array' ? 'array' : 'number';
+            input.type = schema.type === 'array' ? 'text' : 'number';
+            input.value = Array.isArray(schema.default) ? schema.default.join(', ') : String(schema.default);
+            if (numeric.minimum !== undefined) input.min = String(numeric.minimum);
+            if (numeric.exclusiveMinimum !== undefined) input.min = String(Number(numeric.exclusiveMinimum) + 0.000001);
+            if (numeric.maximum !== undefined) input.max = String(numeric.maximum);
+            input.step = schema.type === 'integer' ? '1' : 'any';
+            var help = document.createElement('span');
+            help.className = 'subtle';
+            help.textContent = impactByName[name] || 'Change one input at a time and compare the evidence.';
+            card.append(title, input, help);
+            root.appendChild(card);
+          }});
+          if (!Object.keys(properties).length) {{
+            root.innerHTML = '<div class="subtle">This strategy has no configurable parameters.</div>';
+          }}
         }}
         function poll(jobId) {{
-          fetch('/api/v1/backtest/jobs/' + jobId).then(function (res) {{ return res.json(); }}).then(function (data) {{
+          fetch('/api/v2/backtests/jobs/' + jobId).then(function (res) {{ return res.json(); }}).then(function (data) {{
             var job = data.job || {{}};
-            document.getElementById('builder-status').textContent = 'Job ' + job.status + ' · ' + (job.progress || 0) + '%';
+            document.getElementById('builder-status').textContent = (job.stage || job.status) + ' · ' + (job.progress || 0) + '%';
+            document.getElementById('job-progress').style.width = (job.progress || 0) + '%';
             if (job.status === 'complete' && job.result && job.result.run_id) {{
               window.location.href = '/backtest/runs/' + job.result.run_id;
               return;
             }}
-            if (job.status === 'failed') {{
+            if (job.status === 'failed' || job.status === 'cancelled') {{
               document.getElementById('builder-status').textContent = 'Failed: ' + (job.error || 'unknown error');
               return;
             }}
             window.setTimeout(function () {{ poll(jobId); }}, 700);
-          }});
+          }}).catch(function () {{ document.getElementById('builder-status').textContent = 'Connection lost. Retrying…'; window.setTimeout(function () {{ poll(jobId); }}, 1200); }});
         }}
+        document.getElementById('strategy-id').addEventListener('change', function (event) {{
+          var selected = event.target.options[event.target.selectedIndex];
+          document.getElementById('strategy-explanation').textContent = selected.dataset.description || '';
+          renderTemplateParameters();
+        }});
+        document.getElementById('strategy-id').dispatchEvent(new Event('change'));
+        document.getElementById('sync-data').addEventListener('click', function () {{
+          var button = this;
+          var status = document.getElementById('sync-status');
+          button.disabled = true;
+          status.textContent = 'Queueing the verified Bitstamp download…';
+          fetch('/api/v2/backtests/datasets/bitstamp-btcusd-1d-10y/sync', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: '{{}}'
+          }}).then(function (res) {{ return res.json(); }}).then(function (data) {{
+            if (!data.ok || !data.job) {{
+              status.textContent = 'Sync could not start: ' + ((data.errors || []).join('; ') || 'unknown error');
+              button.disabled = false;
+              return;
+            }}
+            function pollSync() {{
+              fetch('/api/v2/backtests/jobs/' + data.job.job_id).then(function (res) {{ return res.json(); }}).then(function (current) {{
+                var job = current.job || {{}};
+                status.textContent = (job.stage || job.status) + ' · ' + (job.progress || 0) + '%';
+                if (job.status === 'complete') {{
+                  status.textContent = 'Dataset verified. Reloading the catalog…';
+                  window.location.reload();
+                  return;
+                }}
+                if (job.status === 'failed' || job.status === 'cancelled') {{
+                  status.textContent = 'Sync failed: ' + (job.error || 'unknown error');
+                  button.disabled = false;
+                  return;
+                }}
+                window.setTimeout(pollSync, 900);
+              }}).catch(function () {{
+                status.textContent = 'Connection lost while checking sync. Retrying…';
+                window.setTimeout(pollSync, 1500);
+              }});
+            }}
+            pollSync();
+          }}).catch(function () {{
+            status.textContent = 'Sync request failed. Check the worker health and retry.';
+            button.disabled = false;
+          }});
+        }});
         document.getElementById('run-job').addEventListener('click', function () {{
           var status = document.getElementById('builder-status');
           status.textContent = 'Submitting research job...';
-          fetch('/api/v1/backtest/jobs', {{
+          fetch('/api/v2/backtests/jobs', {{
             method: 'POST',
             headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify(payload())
@@ -2306,8 +3000,14 @@ def _render_backtest_builder_page(context: DashboardContext) -> str:
               status.textContent = 'Cannot run: ' + ((data.errors || []).join('; ') || 'invalid request');
               return;
             }}
-            poll(data.job.job_id);
+            currentJob = data.job.job_id;
+            document.getElementById('cancel-job').classList.remove('hidden');
+            poll(currentJob);
           }});
+        }});
+        document.getElementById('cancel-job').addEventListener('click', function () {{
+          if (!currentJob) return;
+          fetch('/api/v2/backtests/jobs/' + currentJob + '/cancel', {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:'{{}}' }});
         }});
       }})();
     </script>
@@ -2326,11 +3026,40 @@ def _render_research_run_page(
     metrics_map = metrics if isinstance(metrics, dict) else {}
     counts = summary.get("counts")
     counts_map = counts if isinstance(counts, dict) else {}
+    verdict = summary.get("verdict")
+    verdict_map = verdict if isinstance(verdict, dict) else {}
+    validation = summary.get("validation")
+    validation_map = validation if isinstance(validation, dict) else {}
+    benchmarks = summary.get("benchmarks")
+    benchmarks_map = benchmarks if isinstance(benchmarks, dict) else {}
+    data = summary.get("data")
+    data_map = data if isinstance(data, dict) else {}
     scorecard = summary.get("scorecard")
     scorecard_map = scorecard if isinstance(scorecard, dict) else _research_scorecard(summary)
-    robustness = summary.get("robustness")
-    robustness_map = robustness if isinstance(robustness, dict) else _lightweight_robustness(summary)
     strategy = str(summary.get("strategy") or summary.get("engine_strategy") or "")
+    run_id = str(summary.get("run_id", ""))
+    trade_count = metrics_map.get("trade_count", counts_map.get("trades", 0))
+    verdict_label = str(
+        verdict_map.get("label")
+        or scorecard_map.get("verdict")
+        or "No evidence verdict is available."
+    )
+    failed_gates = verdict_map.get("failed_gates")
+    failed_gate_items = (
+        "".join(f"<li>{_e(str(item))}</li>" for item in failed_gates)
+        if isinstance(failed_gates, list) and failed_gates
+        else "<li>All configured verdict gates passed.</li>"
+    )
+    buy_hold = benchmarks_map.get("buy_and_hold")
+    buy_hold_map = buy_hold if isinstance(buy_hold, dict) else {}
+    fixed_dca = benchmarks_map.get("fixed_dca")
+    fixed_dca_map = fixed_dca if isinstance(fixed_dca, dict) else {}
+    buy_hold_metrics = buy_hold_map.get("metrics")
+    buy_hold_metric_map = buy_hold_metrics if isinstance(buy_hold_metrics, dict) else {}
+    dca_metrics = fixed_dca_map.get("metrics")
+    dca_metric_map = dca_metrics if isinstance(dca_metrics, dict) else {}
+    monthly_rows, trade_rows = _research_run_tables(context, run_id)
+    robustness_visuals = _robustness_visuals(validation_map)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2359,6 +3088,9 @@ def _render_research_run_page(
     .warn {{ color:#805000; background:#fff1cf; }}
     .chart-shell {{ min-height:420px; border:1px solid var(--line); border-radius:8px; background:#fff; padding:10px; }}
     #price-chart {{ min-height:390px; }}
+    #monte-carlo-chart {{ min-height:260px; }}
+    .heatmap {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:10px; }}
+    .heat-cell {{ border:1px solid var(--line); border-radius:7px; padding:10px; min-height:78px; }}
     @media (max-width: 860px) {{ header, .grid {{ display:block; }} .panel {{ margin-top:10px; }} table {{ display:block; overflow-x:auto; }} }}
   </style>
 </head>
@@ -2366,42 +3098,66 @@ def _render_research_run_page(
   <main>
     <header>
       <div>
-        <span class="pill good">Research verdict</span>
+        <span class="pill good">{_e(str(verdict_map.get("status", "research verdict")))}</span>
         <h1>{_e(strategy)} result</h1>
-        <div class="subtle mono">{_e(str(summary.get("run_id", "")))} · {_e(str(summary.get("ohlcv_key", "")))}</div>
+        <div class="subtle mono">{_e(run_id)} · {_e(str(data_map.get("dataset_id", summary.get("ohlcv_key", ""))))}</div>
       </div>
-      <div class="subtle mono"><a href="/backtest/build">build another</a> · <a href="/api/v1/backtest/runs/{_e(str(summary.get("run_id", "")))}">result JSON</a></div>
+      <div class="subtle mono"><a href="/backtest/build">build another</a> · <a href="/api/v2/backtests/runs/{_e(run_id)}">result JSON</a></div>
     </header>
     <section class="grid">
       {_card("Return", _fmt_pct(metrics_map.get("total_return")))}
       {_card("Max drawdown", _fmt_pct(metrics_map.get("max_drawdown")))}
       {_card("Sharpe", _fmt_num(metrics_map.get("sharpe")))}
-      {_card("Trades", _e(str(counts_map.get("trades", 0))))}
+      {_card("Trades", _e(str(trade_count)))}
     </section>
     <h2>Research verdict</h2>
     <section class="panel">
-      <div class="metric">{_e(str(scorecard_map.get("score", 0)))}/100</div>
-      <div class="subtle">{_e(str(scorecard_map.get("verdict", "")))}</div>
+      <div class="metric">{_e(str(verdict_map.get("status", scorecard_map.get("score", "unscored"))))}</div>
+      <div class="subtle">{_e(verdict_label)}</div>
+      <ul>{failed_gate_items}</ul>
       <table style="margin-top:12px"><tbody>
-        <tr><th>Data quality</th><td>{_e(str(scorecard_map.get("data_quality", "")))}</td></tr>
-        <tr><th>Drawdown</th><td>{_e(str(scorecard_map.get("drawdown", "")))}</td></tr>
-        <tr><th>Sample size</th><td>{_e(str(scorecard_map.get("sample_size", "")))}</td></tr>
-        <tr><th>Risk-adjusted quality</th><td>{_e(str(scorecard_map.get("risk_adjusted_quality", "")))}</td></tr>
+        <tr><th>Data integrity</th><td>{_e("pass" if validation_map.get("data_complete") is True else "fail")}</td></tr>
+        <tr><th>Future-data consistency</th><td>{_e("pass" if validation_map.get("lookahead_consistent") is True else "fail or not run")}</td></tr>
+        <tr><th>Warm-up stability</th><td>{_e("pass" if validation_map.get("recursive_stable") is True else "fail or not run")}</td></tr>
+        <tr><th>Validation profile complete</th><td>{_e("yes" if validation_map.get("profile_complete") is True else "quick diagnostic only")}</td></tr>
       </tbody></table>
     </section>
-    <h2>Price curve and buy/sell markers</h2>
+    <h2>Price, volume, equity, and drawdown</h2>
     <section class="chart-shell"><div id="price-chart"></div></section>
+    <h2>Strategy versus passive benchmarks</h2>
+    <section class="panel">
+      <table><thead><tr><th>Approach</th><th>Total return</th><th>Max drawdown</th><th>Sharpe</th><th>Fees</th></tr></thead><tbody>
+        <tr><td>{_e(strategy)}</td><td>{_fmt_pct(metrics_map.get("total_return"))}</td><td>{_fmt_pct(metrics_map.get("max_drawdown"))}</td><td>{_fmt_num(metrics_map.get("sharpe"))}</td><td>{_fmt_num(metrics_map.get("total_fees"))}</td></tr>
+        <tr><td>Buy and hold</td><td>{_fmt_pct(buy_hold_metric_map.get("total_return"))}</td><td>{_fmt_pct(buy_hold_metric_map.get("max_drawdown"))}</td><td>{_fmt_num(buy_hold_metric_map.get("sharpe"))}</td><td>{_fmt_num(buy_hold_metric_map.get("total_fees"))}</td></tr>
+        <tr><td>Fixed DCA</td><td>{_fmt_pct(dca_metric_map.get("total_return"))}</td><td>{_fmt_pct(dca_metric_map.get("max_drawdown"))}</td><td>{_fmt_num(dca_metric_map.get("sharpe"))}</td><td>{_fmt_num(dca_metric_map.get("total_fees"))}</td></tr>
+      </tbody></table>
+    </section>
     <h2>Robustness checklist</h2>
     <section class="panel">
+      {robustness_visuals}
+      <div id="monte-carlo-chart" aria-label="Monte Carlo percentile paths"></div>
+      <div class="subtle">The Monte Carlo chart shows pessimistic 5th percentile, median, and optimistic 95th percentile bootstrapped paths. It is a distribution of historical return blocks, not a price forecast.</div>
+    </section>
+    <h2>Monthly returns and trade ledger</h2>
+    <section class="panel">
+      <h3>Recent monthly strategy returns</h3>
+      <table><thead><tr><th>UTC month</th><th>Return</th></tr></thead><tbody>{monthly_rows}</tbody></table>
+      <h3 style="margin-top:18px">Trades and fills</h3>
+      <table><thead><tr><th>UTC time</th><th>Side</th><th>Quantity</th><th>Price</th><th>Fee</th><th>P&amp;L</th><th>Reason</th><th>Holding hours</th></tr></thead><tbody>{trade_rows}</tbody></table>
+    </section>
+    <h2>Data provenance and reproducibility</h2>
+    <section class="panel">
       <table><tbody>
-        <tr><th>Walk-forward</th><td>{_e(str(robustness_map.get("walk_forward", "")))}</td></tr>
-        <tr><th>Monte Carlo</th><td>{_e(str(robustness_map.get("monte_carlo", "")))}</td></tr>
-        <tr><th>Cost stress</th><td class="mono">{_e(json.dumps(robustness_map.get("cost_stress", {}), sort_keys=True, default=str))}</td></tr>
-        <tr><th>Risk note</th><td>{_e(str(robustness_map.get("note", "")))}</td></tr>
+        <tr><th>Source</th><td>{_e(str(data_map.get("provider", "")))} · {_e(str(data_map.get("symbol", "")))} · {_e(str(data_map.get("timeframe", "")))}</td></tr>
+        <tr><th>Coverage</th><td>{_e(str(data_map.get("start", "")))} → {_e(str(data_map.get("end", "")))} · {_e(str(data_map.get("rows", "")))} rows</td></tr>
+        <tr><th>Fingerprint</th><td class="mono">{_e(str(data_map.get("fingerprint", "")))}</td></tr>
+        <tr><th>Artifacts</th><td><a href="/api/v2/backtests/runs/{_e(run_id)}/artifacts/summary.json">summary</a> · <a href="/api/v2/backtests/runs/{_e(run_id)}/artifacts/data_manifest.json">manifest</a> · <a href="/api/v2/backtests/runs/{_e(run_id)}/artifacts/equity.csv">equity</a> · <a href="/api/v2/backtests/runs/{_e(run_id)}/artifacts/trades.csv">trades</a></td></tr>
       </tbody></table>
+      <div class="subtle" style="margin-top:10px">This result is research evidence only. It is never labeled live-ready.</div>
     </section>
     <script type="application/json" id="backtest-chart-data">{_json_script(chart_payload)}</script>
-    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
+    <script type="application/json" id="validation-chart-data">{_json_script(validation_map)}</script>
+    <script src="/static/lightweight-charts-5.2.0.js"></script>
     <script>
       (function () {{
         var node = document.getElementById('price-chart');
@@ -2409,24 +3165,193 @@ def _render_research_run_page(
         if (!node || !dataNode || !window.LightweightCharts) {{ if (node) node.innerHTML = '<div class="subtle" style="padding:18px">Chart library unavailable.</div>'; return; }}
         var payload = JSON.parse(dataNode.textContent || '{{}}');
         if (!payload.candles || !payload.candles.length) {{ node.innerHTML = '<div class="subtle" style="padding:18px">No chart data.</div>'; return; }}
-        var chart = LightweightCharts.createChart(node, {{ height:390, layout:{{ background:{{ type:'solid', color:'#ffffff' }}, textColor:'#28332d' }}, grid:{{ vertLines:{{ color:'#eee7db' }}, horzLines:{{ color:'#eee7db' }} }} }});
+        var chart = LightweightCharts.createChart(node, {{ height:620, layout:{{ background:{{ type:'solid', color:'#ffffff' }}, textColor:'#28332d' }}, grid:{{ vertLines:{{ color:'#eee7db' }}, horzLines:{{ color:'#eee7db' }} }} }});
         var candles = chart.addSeries(LightweightCharts.CandlestickSeries, {{ upColor:'#1f9d6a', downColor:'#d05a3b', borderVisible:false, wickUpColor:'#1f9d6a', wickDownColor:'#d05a3b' }});
         candles.setData(payload.candles);
+        if (payload.volume && payload.volume.length) {{
+          var volume = chart.addSeries(LightweightCharts.HistogramSeries, {{ priceFormat:{{type:'volume'}}, priceScaleId:'' }}, 1);
+          volume.setData(payload.volume);
+        }}
         if (payload.equity && payload.equity.length) {{
-          var equity = chart.addSeries(LightweightCharts.LineSeries, {{ color:'#0b746b', lineWidth:2, priceScaleId:'left' }});
+          var equity = chart.addSeries(LightweightCharts.LineSeries, {{ color:'#2f6bff', lineWidth:2, title:'Strategy' }}, 2);
           equity.setData(payload.equity);
+        }}
+        if (payload.benchmark_equity && payload.benchmark_equity.buy_and_hold) {{
+          var hold = chart.addSeries(LightweightCharts.LineSeries, {{ color:'#f2a93b', lineWidth:1, title:'Buy & hold' }}, 2);
+          hold.setData(payload.benchmark_equity.buy_and_hold);
+          var dca = chart.addSeries(LightweightCharts.LineSeries, {{ color:'#38d6c8', lineWidth:1, title:'Fixed DCA' }}, 2);
+          dca.setData(payload.benchmark_equity.fixed_dca || []);
+        }}
+        if (payload.drawdown && payload.drawdown.length) {{
+          var drawdown = chart.addSeries(LightweightCharts.AreaSeries, {{ lineColor:'#a43e36', topColor:'#a43e3633', bottomColor:'#a43e3605', title:'Drawdown' }}, 3);
+          drawdown.setData(payload.drawdown);
         }}
         if (payload.markers && payload.markers.length) {{
           if (LightweightCharts.createSeriesMarkers) LightweightCharts.createSeriesMarkers(candles, payload.markers);
           else if (candles.setMarkers) candles.setMarkers(payload.markers);
         }}
         chart.timeScale().fitContent();
+        var validationNode = document.getElementById('validation-chart-data');
+        var monteNode = document.getElementById('monte-carlo-chart');
+        var validation = validationNode ? JSON.parse(validationNode.textContent || '{{}}') : {{}};
+        var paths = validation.monte_carlo && validation.monte_carlo.percentile_paths;
+        if (monteNode && paths && paths.p05 && paths.p05.length) {{
+          var monte = LightweightCharts.createChart(monteNode, {{ height:260, layout:{{ background:{{ type:'solid', color:'#fffdf8' }}, textColor:'#28332d' }}, grid:{{ vertLines:{{ color:'#eee7db' }}, horzLines:{{ color:'#eee7db' }} }} }});
+          [['p05','#a43e36'],['p50','#0b746b'],['p95','#2f6bff']].forEach(function (entry) {{
+            var line = monte.addSeries(LightweightCharts.LineSeries, {{ color:entry[1], lineWidth:entry[0] === 'p50' ? 3 : 1, title:entry[0].toUpperCase() }});
+            line.setData(paths[entry[0]].map(function (value, index) {{ return {{ time:946684800 + index * 86400, value:value }}; }}));
+          }});
+          monte.timeScale().fitContent();
+        }} else if (monteNode) {{
+          monteNode.innerHTML = '<div class="subtle" style="padding:18px">Run the standard profile to generate 500 Monte Carlo paths.</div>';
+        }}
       }})();
     </script>
   </main>
 </body>
 </html>
 """
+
+
+def _research_run_tables(
+    context: DashboardContext,
+    run_id: str,
+) -> tuple[str, str]:
+    if not _is_opaque_run_id(run_id):
+        return (
+            '<tr><td colspan="2">No monthly return data.</td></tr>',
+            '<tr><td colspan="8">No trade data.</td></tr>',
+        )
+    run_dir = context.backtests_dir / run_id
+    monthly_rows = _monthly_return_rows(run_dir / "equity.csv")
+    trade_rows = _trade_ledger_rows(run_dir / "trades.csv")
+    return monthly_rows, trade_rows
+
+
+def _monthly_return_rows(path: Path) -> str:
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, ValueError):
+        return '<tr><td colspan="2">No monthly return data.</td></tr>'
+    if frame.empty or not {"timestamp", "strategy"}.issubset(frame.columns):
+        return '<tr><td colspan="2">No monthly return data.</td></tr>'
+    frame["timestamp"] = pd.to_datetime(
+        frame["timestamp"],
+        utc=True,
+        errors="coerce",
+    )
+    frame = frame.dropna(subset=["timestamp"])
+    values = pd.to_numeric(frame["strategy"], errors="coerce")
+    series = pd.Series(
+        values.to_numpy(),
+        index=pd.DatetimeIndex(frame["timestamp"]),
+    ).dropna()
+    if series.empty:
+        return '<tr><td colspan="2">No monthly return data.</td></tr>'
+    returns = series.resample("ME").last().pct_change().dropna().tail(24)
+    if returns.empty:
+        return '<tr><td colspan="2">Not enough history for monthly returns.</td></tr>'
+    return "".join(
+        f"<tr><td>{_e(timestamp.strftime('%Y-%m'))}</td>"
+        f"<td>{_fmt_pct(value)}</td></tr>"
+        for timestamp, value in returns.items()
+    )
+
+
+def _trade_ledger_rows(path: Path) -> str:
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, ValueError):
+        return '<tr><td colspan="8">No trade data.</td></tr>'
+    if frame.empty:
+        return '<tr><td colspan="8">This strategy placed no trades.</td></tr>'
+    rows: list[str] = []
+    for _, row in frame.tail(100).iterrows():
+        rows.append(
+            "<tr>"
+            f"<td>{_e(str(row.get('ts', '')))}</td>"
+            f"<td>{_e(str(row.get('side', '')))}</td>"
+            f"<td>{_fmt_num(row.get('qty'))}</td>"
+            f"<td>{_fmt_num(row.get('price'))}</td>"
+            f"<td>{_fmt_num(row.get('fee'))}</td>"
+            f"<td>{_fmt_num(row.get('pnl'))}</td>"
+            f"<td>{_e(str(row.get('reason', '')))}</td>"
+            f"<td>{_fmt_num(row.get('holding_hours'))}</td>"
+            "</tr>"
+        )
+    return "".join(rows)
+
+
+def _robustness_visuals(validation: Mapping[str, object]) -> str:
+    walk_forward = validation.get("walk_forward")
+    walk_map = walk_forward if isinstance(walk_forward, dict) else {}
+    folds = walk_map.get("folds")
+    fold_rows = ""
+    if isinstance(folds, list):
+        for index, raw in enumerate(folds, start=1):
+            if not isinstance(raw, dict):
+                continue
+            metrics = raw.get("test_metrics")
+            metric_map = metrics if isinstance(metrics, dict) else {}
+            fold_rows += (
+                f"<tr><td>{index}</td>"
+                f"<td>{_e(str(raw.get('test_start', ''))[:10])}</td>"
+                f"<td>{_fmt_pct(metric_map.get('total_return'))}</td>"
+                f"<td>{_fmt_num(metric_map.get('sharpe'))}</td>"
+                f"<td>{_fmt_pct(metric_map.get('max_drawdown'))}</td></tr>"
+            )
+    if not fold_rows:
+        fold_rows = '<tr><td colspan="5">Run the standard profile to create expanding out-of-sample folds.</td></tr>'
+
+    sensitivity = validation.get("sensitivity")
+    sensitivity_map = sensitivity if isinstance(sensitivity, dict) else {}
+    evaluations = sensitivity_map.get("evaluations")
+    heat_cells = ""
+    if isinstance(evaluations, list):
+        for raw in evaluations:
+            if not isinstance(raw, dict):
+                continue
+            metrics = raw.get("metrics")
+            metric_map = metrics if isinstance(metrics, dict) else {}
+            sharpe = _finite_float(metric_map.get("sharpe")) or 0.0
+            hue = "#d9efe7" if sharpe >= 0 else "#f4d9d5"
+            heat_cells += (
+                f'<div class="heat-cell" style="background:{hue}">'
+                f'<div class="mono">{_e(json.dumps(raw.get("parameters", {}), sort_keys=True, default=str))}</div>'
+                f'<strong>Sharpe {_fmt_num(sharpe)}</strong> · '
+                f'{_fmt_pct(metric_map.get("total_return"))}</div>'
+            )
+    if not heat_cells:
+        heat_cells = '<div class="subtle">Run the standard profile to compare curated parameter variants.</div>'
+
+    monte_carlo = validation.get("monte_carlo")
+    monte_map = monte_carlo if isinstance(monte_carlo, dict) else {}
+    cost_stress = validation.get("cost_stress")
+    cost_map = cost_stress if isinstance(cost_stress, dict) else {}
+    cost_rows = "".join(
+        f"<tr><td>{_e(str(multiplier))}</td>"
+        f"<td>{_fmt_pct(metrics.get('total_return') if isinstance(metrics, dict) else None)}</td>"
+        f"<td>{_fmt_pct(metrics.get('max_drawdown') if isinstance(metrics, dict) else None)}</td></tr>"
+        for multiplier, metrics in cost_map.items()
+    )
+    if not cost_rows:
+        cost_rows = '<tr><td colspan="3">Run the standard profile for 1x, 2x, and 3x costs.</td></tr>'
+    return f"""
+      <h3>Purged walk-forward folds</h3>
+      <table><thead><tr><th>Fold</th><th>Test starts</th><th>Return</th><th>Sharpe</th><th>Drawdown</th></tr></thead><tbody>{fold_rows}</tbody></table>
+      <h3 style="margin-top:18px">Parameter sensitivity heatmap</h3>
+      <div class="heatmap">{heat_cells}</div>
+      <h3 style="margin-top:18px">500-path block bootstrap</h3>
+      <div class="grid">
+        {_card("Loss probability", _fmt_pct(monte_map.get("loss_probability")))}
+        {_card("P05 return", _fmt_pct(monte_map.get("return_p05")))}
+        {_card("Median return", _fmt_pct(monte_map.get("return_p50")))}
+        {_card("P95 return", _fmt_pct(monte_map.get("return_p95")))}
+      </div>
+      <h3 style="margin-top:18px">Fee and slippage stress</h3>
+      <table><thead><tr><th>Cost assumption</th><th>Return</th><th>Drawdown</th></tr></thead><tbody>{cost_rows}</tbody></table>
+      <div style="margin-top:14px"><strong>Deflated Sharpe probability:</strong> {_fmt_pct(validation.get("deflated_sharpe_probability"))}</div>
+    """
 
 
 def _summary_from_result(result: JsonDict | None) -> Mapping[str, object] | None:
@@ -3208,6 +4133,8 @@ def _fmt_pct(value: object) -> str:
 
 def _fmt_num(value: object) -> str:
     if not isinstance(value, int | float):
+        return "n/a"
+    if not math.isfinite(float(value)):
         return "n/a"
     return f"{value:.2f}"
 

@@ -18,6 +18,9 @@ That single command:
 5. installs and starts the `qt.service` systemd unit, which runs
    `scripts/run_service.py` — a watchdog that supervises the paper loop
    and the dashboard, restarting on stale heartbeats.
+6. runs `qt-research-worker.service` separately with SQLite WAL job recovery,
+   and enables a daily managed-data refresh timer.
+7. configures Caddy for authenticated HTTPS at `qt.followkol.live`.
 
 To upgrade later, run the same one-liner again — it `git pull`s and
 `pip install -e .`s in place.
@@ -49,10 +52,9 @@ The sync intentionally excludes `.env`, `.git`, `.venv`, caches, logs, and
 generated runtime data. Server secrets stay in `/opt/qt/.env`; if that file
 does not exist, the remote deploy seeds it from `.env.example`.
 
-The script finishes by checking `http://localhost:8765/` on the server and
-`http://<follow-host>:8765/` from this Mac. If the public check fails while
-the localhost check passes, open `8765/tcp` in the Aliyun security group or
-Lighthouse firewall for this instance.
+The script checks the loopback dashboard and authenticated
+`https://qt.followkol.live/api/v2/backtests/health`. Allow inbound TCP 80 and
+443 in the Aliyun security group; port 8765 stays bound to loopback.
 
 ## Where to put your keys / passwords
 
@@ -121,11 +123,20 @@ sudo -u qt /opt/qt/.venv/bin/python -c \
 You should receive both an email and a Telegram message within a few
 seconds. Failures are logged but never crash the trading loop.
 
-## Dashboard
+## Dashboard and research lab
 
-The watchdog also starts the local dashboard on `0.0.0.0:8765`. Open port
-`8765/tcp` in the Lighthouse firewall (and ufw if active), then visit
-`http://<lighthouse-public-ip>:8765`.
+The watchdog starts the dashboard on `127.0.0.1:8765`; Caddy is the only public
+entry point. Visit:
 
-For production, front it with nginx + TLS and HTTP basic auth — the
-dashboard has no authentication of its own.
+```text
+https://qt.followkol.live/backtest/build
+```
+
+The generated Basic Auth credential is stored only on the server:
+
+```bash
+sudo cat /etc/qt/research-auth
+```
+
+See [`../docs/btc-research-lab-v2.md`](../docs/btc-research-lab-v2.md) for the
+beginner workflow, verdict definitions, learning path, and operations.

@@ -1,0 +1,25 @@
+[Unit]
+Description=QT durable BTC research worker
+After=network-online.target qt.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qt
+Group=qt
+WorkingDirectory=/opt/qt
+EnvironmentFile=/opt/qt/.env
+ExecStart=/opt/qt/.venv/bin/python scripts/run_research_worker.py \
+  --parquet-dir data/parquet \
+  --backtests-dir data/backtests
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

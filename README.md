@@ -135,6 +135,9 @@ Acceptance evidence is tracked in
 [`docs/verification/btc-backtest-acceptance.md`](docs/verification/btc-backtest-acceptance.md).
 Historical backtests are not a profitability guarantee.
 
+The private, durable five-step web workflow is documented in
+[`docs/btc-research-lab-v2.md`](docs/btc-research-lab-v2.md).
+
 ## Daily Usage
 
 ```bash

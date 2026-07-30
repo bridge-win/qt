@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily QT managed research data refresh
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

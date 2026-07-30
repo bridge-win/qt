@@ -13,7 +13,7 @@ ExecStart=/opt/qt/.venv/bin/python scripts/run_service.py \
   --config config/default.yaml \
   --interval 3600 \
   --state-path data/runtime/monitor_state.json \
-  --dashboard-host 0.0.0.0 \
+  --dashboard-host 127.0.0.1 \
   --dashboard-port 8765
 Restart=always
 RestartSec=10

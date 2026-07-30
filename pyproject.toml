@@ -55,6 +55,9 @@ qt = "qt.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"qt.dashboard" = ["static/*.js", "static/LICENSE.*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"

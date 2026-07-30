@@ -1,0 +1,7 @@
+qt.followkol.live {
+	encode zstd gzip
+	basic_auth {
+		qt {$QT_RESEARCH_PASSWORD_HASH}
+	}
+	reverse_proxy 127.0.0.1:8765
+}
