@@ -19,7 +19,8 @@ def test_ssh_deploy_defaults_to_follow_alias_and_opt_qt() -> None:
     assert "--exclude='.git'" in script
     assert "--exclude='.venv'" in script
     assert "deploy/deploy.sh" in script
-    assert "http://localhost:${WEB_PORT}/" in script
+    assert "DASHBOARD_HOST=127.0.0.1" in script
+    assert "docker inspect kol-caddy" in script
 
 
 def test_remote_deploy_preserves_env_and_installs_systemd_service() -> None:
@@ -58,6 +59,10 @@ def test_deploy_configures_private_https_and_daily_data_refresh() -> None:
     assert "research-auth" in script
     assert "caddy validate" in script
     assert "    basicauth " in script
+    assert "USE_DOCKER_CADDY" in script
+    assert "DOCKER_CADDYFILE" in script
+    assert "caddy reload --config /etc/caddy/Caddyfile" in script
+    assert "--dashboard-host ${DASHBOARD_HOST}" in script
     assert "https://qt.followkol.live/api/v2/backtests/health" in script
     assert "qt-research-data-refresh.timer" in script
     assert "OnCalendar=" in timer

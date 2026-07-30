@@ -41,7 +41,19 @@ log "running remote deploy"
 ssh "${SSH_HOST}" "cd '${REMOTE_DIR}' && chmod +x deploy/deploy.sh && QT_INSTALL_DIR='${REMOTE_DIR}' QT_DASHBOARD_PORT='${WEB_PORT}' deploy/deploy.sh"
 
 log "checking remote localhost dashboard"
-ssh "${SSH_HOST}" "curl -fsS --ignore-content-length -o /dev/null -w '[ssh-deploy] localhost: %{http_code}\n' 'http://localhost:${WEB_PORT}/'"
+ssh "${SSH_HOST}" "
+  DASHBOARD_HOST=127.0.0.1
+  if ! curl -fsS --ignore-content-length -o /dev/null \
+      'http://\${DASHBOARD_HOST}:${WEB_PORT}/'; then
+    DASHBOARD_HOST=\$(
+      docker inspect kol-caddy \
+        --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'
+    )
+  fi
+  curl -fsS --ignore-content-length -o /dev/null \
+    -w '[ssh-deploy] dashboard: %{http_code}\\n' \
+    \"http://\${DASHBOARD_HOST}:${WEB_PORT}/\"
+"
 
 log "checking public HTTPS authentication boundary"
 PUBLIC_STATUS="$(
