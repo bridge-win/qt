@@ -57,6 +57,7 @@ def test_deploy_configures_private_https_and_daily_data_refresh() -> None:
     assert "qt.followkol.live" in caddy
     assert "research-auth" in script
     assert "caddy validate" in script
+    assert "    basicauth " in script
     assert "https://qt.followkol.live/api/v2/backtests/health" in script
     assert "qt-research-data-refresh.timer" in script
     assert "OnCalendar=" in timer

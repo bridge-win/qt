@@ -93,7 +93,7 @@ if ! grep -Fq 'import /etc/caddy/sites/*.caddy' /etc/caddy/Caddyfile; then
   printf '\nimport /etc/caddy/sites/*.caddy\n' >>/etc/caddy/Caddyfile
 fi
 if ! caddy validate --config /etc/caddy/Caddyfile; then
-  sed -i 's/^[[:space:]]*basic_auth /\\tbasicauth /' \
+  sed -i 's/^[[:space:]]*basic_auth /    basicauth /' \
     /etc/caddy/sites/qt.caddy
   caddy validate --config /etc/caddy/Caddyfile
 fi
