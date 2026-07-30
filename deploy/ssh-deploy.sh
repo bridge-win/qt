@@ -44,7 +44,7 @@ log "checking remote localhost dashboard"
 ssh "${SSH_HOST}" "
   DASHBOARD_HOST=127.0.0.1
   if ! curl -fsS --ignore-content-length -o /dev/null \
-      'http://\${DASHBOARD_HOST}:${WEB_PORT}/'; then
+      \"http://\${DASHBOARD_HOST}:${WEB_PORT}/\"; then
     DASHBOARD_HOST=\$(
       docker inspect kol-caddy \
         --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'
