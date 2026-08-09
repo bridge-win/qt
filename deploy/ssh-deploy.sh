@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy this local checkout to the Alibaba Cloud host used by the Follow project.
 #
-# Prereq: ~/.ssh/config has a host alias named `follow`.
+# Prereq: ~/.ssh/config has `Host follow` using ~/.ssh/follow.pem.
 # Usage:
 #   deploy/ssh-deploy.sh
 #

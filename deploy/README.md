@@ -38,6 +38,16 @@ This repo also supports the same SSH access pattern as the Follow project:
 the local deploy script defaults to `SSH_HOST=follow`, syncs this checkout to
 `/opt/qt`, and runs the server-side deploy script there.
 
+The local SSH alias should resolve through `~/.ssh/config`:
+
+```sshconfig
+Host follow
+  HostName 47.77.239.77
+  User root
+  IdentityFile ~/.ssh/follow.pem
+  IdentitiesOnly yes
+```
+
 ```bash
 deploy/ssh-deploy.sh
 ```
