@@ -41,12 +41,14 @@ the local deploy script defaults to `SSH_HOST=follow`, syncs this checkout to
 The local SSH alias should resolve through `~/.ssh/config`:
 
 ```sshconfig
-Host follow
+Host follow a aliyun ali
   HostName 47.77.239.77
   User root
   IdentityFile ~/.ssh/follow.pem
   IdentitiesOnly yes
 ```
+
+`ssh follow`、`ssh a`、`ssh aliyun`、`ssh ali` all resolve to the same Aliyun host.
 
 ```bash
 deploy/ssh-deploy.sh

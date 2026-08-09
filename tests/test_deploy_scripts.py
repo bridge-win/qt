@@ -80,6 +80,7 @@ def test_deploy_readme_documents_ssh_flow_and_public_https_ports() -> None:
     readme = read("deploy/README.md")
     assert "deploy/ssh-deploy.sh" in readme
     assert "SSH_HOST=follow" in readme
+    assert "Host follow a aliyun ali" in readme
     assert "IdentityFile ~/.ssh/follow.pem" in readme
     assert "/opt/qt" in readme
     assert "TCP 80" in readme
