@@ -32,7 +32,9 @@ def test_platform_dockerfile_builds_and_installs_both_distributions() -> None:
     assert "btc_backtest-0.1.0" in source
     assert "qt-0.1.0" in source
     assert "btc-backtest==0.1.0" in source
-    assert "qt==0.1.0" in source
+    # The runtime must install the built wheel (not import the copied source)
+    # and deliberately includes the optional PostgreSQL platform integration.
+    assert "qt[platform-postgres]==0.1.0" in source
 
 
 def test_platform_entrypoint_verifies_installed_package_versions() -> None:

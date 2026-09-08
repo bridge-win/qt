@@ -13,6 +13,8 @@ from typing import TypeAlias
 
 import httpx
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from btc_backtest.data.models import DataRequest
 from btc_backtest.data.providers import BitstampProvider
 
@@ -26,6 +28,8 @@ class DatasetDefinition:
     provider: str
     symbol: str
     timeframe: str
+    market: str = "spot"
+    feed_types: tuple[str, ...] = ("bar",)
     standard: bool = False
 
 
@@ -75,9 +79,14 @@ class DatasetCatalog:
         return datasets
 
     def get(self, dataset_id: str) -> JsonDict:
-        for dataset in self.list_datasets():
-            if dataset["dataset_id"] == dataset_id:
-                return dataset
+        for definition in MANAGED_DATASETS:
+            if definition.dataset_id == dataset_id:
+                return self._describe(definition)
+        local_path = self._local_path_for_id(dataset_id)
+        if local_path is not None:
+            described = self._describe_local(local_path)
+            if described is not None:
+                return described
         raise KeyError(dataset_id)
 
     def path_for(self, dataset_id: str) -> Path:
@@ -94,6 +103,12 @@ class DatasetCatalog:
             "provider": definition.provider,
             "symbol": definition.symbol,
             "timeframe": definition.timeframe,
+            "market": definition.market,
+            "feed_types": list(definition.feed_types),
+            # This catalog currently manages OHLCV parquet only.  A request
+            # for trades or an order book must name a dataset that declares
+            # that precision; it may not silently run on bars.
+            "precisions": ["bar"],
             "standard": definition.standard,
             "standard_ready": False,
             "status": "missing",
@@ -103,6 +118,7 @@ class DatasetCatalog:
             "fingerprint": None,
             "gaps": None,
             "retrieved_at": None,
+            "freshness_status": "unknown",
             "source": (
                 "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
                 if definition.provider == "bitstamp"
@@ -129,16 +145,15 @@ class DatasetCatalog:
                     datetime.now(timezone.utc)
                     - retrieved_at.to_pydatetime().astimezone(timezone.utc)
                 ).total_seconds() > 48 * 3600:
-                    base["status"] = "stale"
-                    base["standard_ready"] = False
-                    base["warning"] = (
-                        "The managed dataset has not been refreshed in 48 hours."
-                    )
-                    return base
+                    # Historical data remains immutable and reproducible even
+                    # when it is not fresh enough for a live-like study.
+                    base["freshness_status"] = "stale"
+                    base["freshness_warning"] = "The managed dataset has not been refreshed in 48 hours."
+                else:
+                    base["freshness_status"] = "fresh"
             except (OSError, ValueError, AttributeError, TypeError):
-                base["status"] = "invalid"
-                base["warning"] = "The dataset manifest cannot be verified."
-                return base
+                base["freshness_status"] = "unknown"
+                base["freshness_warning"] = "The dataset freshness manifest cannot be verified."
         if definition.standard:
             span_days = _integer_value(inspected.get("span_days"), 0)
             ready = _integer_value(inspected.get("rows"), 0) >= 3650 and span_days >= 3649
@@ -153,21 +168,40 @@ class DatasetCatalog:
         if inspected is None or _integer_value(inspected.get("rows"), 0) <= 0:
             return None
         parts = path.stem.split("_")
-        provider = parts[0] if parts else "local"
-        timeframe = parts[-1] if parts else "unknown"
-        symbol_token = parts[1] if len(parts) > 2 else path.stem
+        contract = _local_dataset_contract(path)
+        provider = str(contract.get("provider", parts[0] if parts else "local"))
+        timeframe = str(contract.get("timeframe", parts[-1] if parts else "unknown"))
+        symbol_token = str(contract.get("symbol", parts[1] if len(parts) > 2 else path.stem))
+        market = str(contract.get("market", "spot"))
+        if market not in {"spot", "perpetual"}:
+            return None
         return {
             "dataset_id": path.stem.lower().replace("_", "-"),
             "key": path.stem,
             "provider": provider,
             "symbol": symbol_token,
             "timeframe": timeframe,
+            "market": market,
+            "feed_types": ["bar"],
+            "precisions": ["bar"],
             "standard": False,
             "standard_ready": False,
             "status": "ready",
             "source": "local parquet",
+            "freshness_status": "not_managed",
             **inspected,
         }
+
+    def _local_path_for_id(self, dataset_id: str) -> Path | None:
+        """Resolve an unmanaged ID by filename only; never scan parquet payloads."""
+
+        directory = self.parquet_root / "ohlcv"
+        if not directory.exists():
+            return None
+        for path in directory.glob("*.parquet"):
+            if path.stem.lower().replace("_", "-") == dataset_id:
+                return path
+        return None
 
 
 class DatasetSynchronizer:
@@ -229,42 +263,134 @@ class DatasetSynchronizer:
         return DatasetCatalog(self.parquet_root).get(dataset_id)
 
 
+def _local_dataset_contract(path: Path) -> JsonDict:
+    """Read optional immutable local market metadata; never infer a perp from a filename."""
+
+    manifest_path = path.with_suffix(".manifest.json")
+    if not manifest_path.exists():
+        return {}
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    allowed = {"provider", "symbol", "timeframe", "market"}
+    return {
+        key: value
+        for key, value in raw.items()
+        if key in allowed and isinstance(value, str) and value.strip()
+    }
+
+
 def _inspect_parquet(path: Path) -> JsonDict | None:
     if not path.exists():
         return None
     try:
-        frame = pd.read_parquet(path)
-    except (OSError, ValueError):
-        return {
-            "status": "invalid",
-            "rows": 0,
-            "start": None,
-            "end": None,
-            "fingerprint": None,
-            "span_days": 0,
-        }
-    if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
-        return {
-            "status": "invalid",
-            "rows": 0,
-            "start": None,
-            "end": None,
-            "fingerprint": None,
-            "span_days": 0,
-        }
-    start = frame.index.min()
-    end = frame.index.max()
-    fingerprint = hashlib.sha256(
-        frame.to_csv(index=True, float_format="%.12g").encode("utf-8")
-    ).hexdigest()
+        parquet = pq.ParquetFile(path)  # type: ignore[no-untyped-call]
+        metadata = parquet.metadata
+        rows = metadata.num_rows
+        if rows <= 0:
+            return {
+                "status": "invalid",
+                "rows": 0,
+                "start": None,
+                "end": None,
+                "fingerprint": None,
+                "span_days": 0,
+            }
+        start, end = _parquet_time_bounds(parquet)
+        if start is None or end is None:
+            # Statistics-free parquet is rare but valid.  Read the index only
+            # as a correctness fallback, not on the normal catalog hot path.
+            frame = pd.read_parquet(path, columns=["__index_level_0__"])
+            if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
+                return _invalid_dataset()
+            start, end = frame.index.min(), frame.index.max()
+    except (OSError, ValueError, pa.ArrowInvalid):
+        return _invalid_dataset()
+    if start is None or end is None:
+        return _invalid_dataset()
+    fingerprint = _immutable_file_fingerprint(path)
     return {
         "status": "ready",
-        "rows": len(frame),
+        "rows": rows,
         "start": start.isoformat(),
         "end": end.isoformat(),
         "fingerprint": fingerprint,
         "span_days": int((end - start).total_seconds() // 86400),
     }
+
+
+def _invalid_dataset() -> JsonDict:
+    return {
+        "status": "invalid",
+        "rows": 0,
+        "start": None,
+        "end": None,
+        "fingerprint": None,
+        "span_days": 0,
+    }
+
+
+def _parquet_time_bounds(parquet: pq.ParquetFile) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """Use row-group statistics for timestamp bounds without loading candles."""
+
+    metadata = parquet.metadata
+    column_index = next(
+        (
+            index
+            for index in range(metadata.num_columns)
+            if metadata.schema.column(index).name in {"__index_level_0__", "date", "timestamp"}
+        ),
+        None,
+    )
+    if column_index is None:
+        return None, None
+    values: list[tuple[object, object]] = []
+    for row_group in range(metadata.num_row_groups):
+        statistics = metadata.row_group(row_group).column(column_index).statistics
+        if statistics is None or not statistics.has_min_max:
+            return None, None
+        values.append((statistics.min, statistics.max))
+    try:
+        starts = [pd.Timestamp(value[0]) for value in values]
+        ends = [pd.Timestamp(value[1]) for value in values]
+    except (TypeError, ValueError):
+        return None, None
+    return min(starts), max(ends)
+
+
+def _immutable_file_fingerprint(path: Path) -> str:
+    """Cache a content hash by inode metadata; recompute only after replacement."""
+
+    state = path.stat()
+    index_path = path.with_suffix(".workbench-index.json")
+    try:
+        cached = json.loads(index_path.read_text(encoding="utf-8"))
+        if (
+            cached.get("size") == state.st_size
+            and cached.get("mtime_ns") == state.st_mtime_ns
+            and isinstance(cached.get("fingerprint"), str)
+        ):
+            return str(cached["fingerprint"])
+    except (OSError, ValueError, TypeError):
+        pass
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    fingerprint = digest.hexdigest()
+    temporary = index_path.with_suffix(".workbench-index.tmp")
+    try:
+        temporary.write_text(
+            json.dumps({"size": state.st_size, "mtime_ns": state.st_mtime_ns, "fingerprint": fingerprint}),
+            encoding="utf-8",
+        )
+        os.replace(temporary, index_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return fingerprint
 
 
 def _integer_value(value: object, default: int) -> int:

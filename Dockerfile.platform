@@ -70,7 +70,7 @@ RUN --network=none python -m pip install \
     --no-index \
     --find-links=/wheelhouse \
     btc-backtest==0.1.0 \
-    qt==0.1.0 \
+    'qt[platform-postgres]==0.1.0' \
     && test -f /wheelhouse/qt-0.1.0-py3-none-any.whl \
     && python -c "import shutil; shutil.rmtree('/wheelhouse')"
 

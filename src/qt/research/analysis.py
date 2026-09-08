@@ -17,13 +17,83 @@ def deflated_sharpe_probability(
     returns: pd.Series,
     *,
     attempted_variants: int,
+    trial_sharpe_variance: float | None = None,
 ) -> float:
+    """Return DSR only when the variance of trial Sharpe estimates is known.
+
+    A return-series volatility is not the dispersion of estimated Sharpe
+    ratios across the search.  When the latter is absent, return zero so
+    existing scalar consumers remain conservative; callers that can present
+    research evidence should use :func:`deflated_sharpe_details` instead.
+    """
+
+    details = deflated_sharpe_details(
+        returns,
+        attempted_variants=attempted_variants,
+        trial_sharpe_variance=trial_sharpe_variance,
+    )
+    value = details.get("value")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def deflated_sharpe_details(
+    returns: pd.Series | None,
+    *,
+    attempted_variants: int,
+    trial_sharpe_variance: float | None,
+    trial_scope: JsonDict | None = None,
+) -> JsonDict:
+    """Compute Bailey--López de Prado DSR with an explicit trial-SR variance.
+
+    The selection threshold is ``sqrt(V[SR_hat]) * ((1-gamma) z_1 + gamma z_2)``.
+    It is scale-invariant because both the observed Sharpe and ``V[SR_hat]``
+    are dimensionless.  The required variance must come from comparable trial
+    Sharpe estimates, never raw-return volatility.
+    """
+
+    scope = trial_scope or {}
+    if attempted_variants < 1:
+        return {
+            "status": "not_applicable",
+            "reason": "attempted_variants must be positive",
+            "multiple_testing_scope": scope,
+        }
+    if returns is None:
+        return {
+            "status": "not_applicable",
+            "reason": "native executor did not provide OOS return series",
+            "multiple_testing_scope": scope,
+        }
     values = returns.dropna().astype("float64")
-    if len(values) < 3 or attempted_variants < 1:
-        return 0.0
+    if len(values) < 3 or not np.isfinite(values.to_numpy()).all():
+        return {
+            "status": "not_applicable",
+            "reason": "at least three finite OOS returns are required",
+            "multiple_testing_scope": scope,
+        }
     standard_deviation = float(values.std(ddof=1))
     if standard_deviation <= 0 or not math.isfinite(standard_deviation):
-        return 0.0
+        return {
+            "status": "not_applicable",
+            "reason": "OOS returns have no finite sample volatility",
+            "multiple_testing_scope": scope,
+        }
+    if attempted_variants > 1 and trial_sharpe_variance is None:
+        return {
+            "status": "not_applicable",
+            "reason": (
+                "multiple-trial DSR requires variance of comparable trial Sharpe estimates; "
+                "raw-return volatility is not a valid substitute"
+            ),
+            "multiple_testing_scope": scope,
+        }
+    variance = 0.0 if trial_sharpe_variance is None else float(trial_sharpe_variance)
+    if variance < 0 or not math.isfinite(variance):
+        return {
+            "status": "not_applicable",
+            "reason": "trial_sharpe_variance must be finite and non-negative",
+            "multiple_testing_scope": scope,
+        }
     observed = float(values.mean() / standard_deviation)
     trials = max(attempted_variants, 1)
     expected_max = 0.0
@@ -32,7 +102,7 @@ def deflated_sharpe_probability(
         first = norm.ppf(1 - 1 / trials)
         second = norm.ppf(1 - 1 / (trials * math.e))
         expected_max = float(
-            standard_deviation
+            math.sqrt(variance)
             * ((1 - euler_gamma) * first + euler_gamma * second)
         )
     skewness = float(skew(values, bias=False))
@@ -48,7 +118,15 @@ def deflated_sharpe_probability(
     statistic = (
         (observed - expected_max) * math.sqrt(len(values) - 1) / denominator
     )
-    return float(max(0.0, min(1.0, norm.cdf(statistic))))
+    return {
+        "status": "computed",
+        "value": float(max(0.0, min(1.0, norm.cdf(statistic)))),
+        "observed_sharpe": observed,
+        "expected_max_sharpe": expected_max,
+        "trial_sharpe_variance": variance,
+        "multiple_testing_scope": scope,
+        "reference": "Bailey and Lopez de Prado (2014), Deflated Sharpe Ratio",
+    }
 
 
 def block_bootstrap_summary(

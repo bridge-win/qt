@@ -1,0 +1,34 @@
+[Unit]
+Description=QT research-only unified workbench worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qt
+Group=qt
+WorkingDirectory=/opt/qt
+EnvironmentFile=-/opt/qt/.env.workbench
+ExecStart=/opt/qt/.venv-native-research/bin/python scripts/run_workbench_worker.py \
+  --parquet-root data/parquet \
+  --state-root data/workbench \
+  --worker-id qt-workbench-worker \
+  --poll-seconds 2 \
+  --stale-after-seconds 90
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# The production node is intentionally small.  One worker and a bounded
+# memory ceiling prevent concurrent native studies from crowding existing
+# dashboard/paper services.  The API only queues work; it never sends orders.
+MemoryMax=512M
+CPUQuota=150%
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/qt/data/workbench /opt/qt/data/parquet
+
+[Install]
+WantedBy=multi-user.target

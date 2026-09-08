@@ -4,9 +4,26 @@ from __future__ import annotations
 
 import logging
 import sys
+from threading import RLock
 from typing import cast
 
 import structlog
+
+
+class _CurrentStderrLogger:
+    """A structlog-compatible printer that never retains a redirected stderr."""
+
+    _lock = RLock()
+
+    def __init__(self, *_args: object) -> None:
+        pass
+
+    def msg(self, message: str) -> None:
+        with self._lock:
+            print(message, file=sys.stderr, flush=True)
+
+    log = debug = info = warn = warning = msg
+    fatal = failure = err = error = critical = exception = msg
 
 
 def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
@@ -26,7 +43,10 @@ def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
         processors=[*shared, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level.upper())),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        # CLI tests (and embedded callers) can replace sys.stderr temporarily.
+        # The factory resolves it at emission time, so cached bound loggers never
+        # retain a closed Click capture stream.
+        logger_factory=_CurrentStderrLogger,
         cache_logger_on_first_use=True,
     )
 

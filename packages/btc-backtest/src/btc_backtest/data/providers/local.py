@@ -25,7 +25,7 @@ class LocalParquetProvider:
     metadata = ProviderMetadata(
         id="local",
         real_data=True,
-        timeframes=("1h", "1d"),
+        timeframes=("1m", "5m", "15m", "1h", "4h", "1d"),
         markets=("spot", "futures"),
     )
 
@@ -82,6 +82,11 @@ class LocalParquetProvider:
 
 
 def _timeframe_delta(request: DataRequest) -> timedelta:
-    if request.timeframe == "1h":
-        return timedelta(hours=1)
-    return timedelta(days=1)
+    return {
+        "1m": timedelta(minutes=1),
+        "5m": timedelta(minutes=5),
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "1d": timedelta(days=1),
+    }[request.timeframe]

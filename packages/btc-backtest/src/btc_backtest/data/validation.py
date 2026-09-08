@@ -12,8 +12,22 @@ from btc_backtest.data.models import DataGap, DataRequest
 from btc_backtest.errors import DataCoverageError, DataValidationError
 
 REQUIRED_OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
-_TIMEFRAME_FREQUENCY = {"1h": "1h", "1d": "1D"}
-_TIMEFRAME_DELTA = {"1h": timedelta(hours=1), "1d": timedelta(days=1)}
+_TIMEFRAME_FREQUENCY = {
+    "1m": "1min",
+    "5m": "5min",
+    "15m": "15min",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1D",
+}
+_TIMEFRAME_DELTA = {
+    "1m": timedelta(minutes=1),
+    "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+    "1d": timedelta(days=1),
+}
 
 
 def _normalize_structure(frame: pd.DataFrame) -> pd.DataFrame:

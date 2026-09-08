@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,10 +11,18 @@ from btc_backtest.strategies.registry import (
     default_strategy_registry,
 )
 
-from .catalog_support import canonical_summary, run_catalog
+from .catalog_support import canonical_summary, catalog_bundle, run_catalog
 
 GOLDEN_PATH = Path(__file__).with_name("golden") / "catalog-v1.json"
 ALL_STRATEGY_IDS = BUILTIN_STRATEGY_IDS + EXTRA_STRATEGY_IDS
+
+
+def test_catalog_close_fixture_is_runtime_stable() -> None:
+    close = catalog_bundle().primary.frame["close"].to_numpy(dtype="float64")
+
+    assert hashlib.sha256(close.tobytes()).hexdigest() == (
+        "72512a4cd6d7903b4ce91d91aab6a49668d8bc96e7c62c2323c26a120e8ec57f"
+    )
 
 
 @pytest.mark.parametrize("strategy_id", ALL_STRATEGY_IDS)

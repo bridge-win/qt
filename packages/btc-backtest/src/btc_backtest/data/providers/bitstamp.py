@@ -26,7 +26,14 @@ from btc_backtest.errors import (
 )
 
 BITSTAMP_OHLC_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
-_TIMEFRAME_SECONDS = {"1h": 3_600, "1d": 86_400}
+_TIMEFRAME_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3_600,
+    "4h": 14_400,
+    "1d": 86_400,
+}
 
 
 class _BitstampCandle(BaseModel):
@@ -54,7 +61,7 @@ class BitstampProvider:
     metadata = ProviderMetadata(
         id="bitstamp",
         real_data=True,
-        timeframes=("1h", "1d"),
+        timeframes=("1m", "5m", "15m", "1h", "4h", "1d"),
         markets=("spot",),
         symbols=("BTC/USD",),
     )

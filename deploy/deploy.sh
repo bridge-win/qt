@@ -72,6 +72,19 @@ runuser -u "${SERVICE_USER}" -- bash -lc "
   ./.venv/bin/pip install -e .
 "
 
+if [[ "${QT_ENABLE_WORKBENCH:-false}" == "true" ]]; then
+  NATIVE_PYTHON="${QT_NATIVE_PYTHON:-python3.12}"
+  log "building Python 3.12 native-research environment for the workbench"
+  runuser -u "${SERVICE_USER}" -- bash -lc "
+    set -euo pipefail
+    cd '${INSTALL_DIR}'
+    '${NATIVE_PYTHON}' -m venv .venv-native-research
+    ./.venv-native-research/bin/pip install --upgrade pip wheel
+    ./.venv-native-research/bin/pip install -e packages/btc-backtest
+    ./.venv-native-research/bin/pip install -e '.[native-research,r2-publish]'
+  "
+fi
+
 log "installing systemd service"
 sed "s/--dashboard-host 127\\.0\\.0\\.1/--dashboard-host ${DASHBOARD_HOST}/" \
   "${INSTALL_DIR}/deploy/qt.service" \
@@ -81,6 +94,14 @@ rm -f /tmp/qt.service
 install -m 0644 \
   "${INSTALL_DIR}/deploy/qt-research-worker.service" \
   /etc/systemd/system/qt-research-worker.service
+if [[ "${QT_ENABLE_WORKBENCH:-false}" == "true" ]]; then
+  install -m 0644 \
+    "${INSTALL_DIR}/deploy/qt-workbench-api.service" \
+    /etc/systemd/system/qt-workbench-api.service
+  install -m 0644 \
+    "${INSTALL_DIR}/deploy/qt-workbench-worker.service" \
+    /etc/systemd/system/qt-workbench-worker.service
+fi
 install -m 0644 \
   "${INSTALL_DIR}/deploy/qt-research-data-refresh.service" \
   /etc/systemd/system/qt-research-data-refresh.service
@@ -94,6 +115,11 @@ systemctl enable \
   qt-research-data-refresh.timer
 systemctl restart qt.service
 systemctl restart qt-research-worker.service
+if [[ "${QT_ENABLE_WORKBENCH:-false}" == "true" ]]; then
+  systemctl enable qt-workbench-api.service qt-workbench-worker.service
+  systemctl restart qt-workbench-api.service
+  systemctl restart qt-workbench-worker.service
+fi
 systemctl restart qt-research-data-refresh.timer
 systemctl start qt-research-data-refresh.service
 

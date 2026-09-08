@@ -32,6 +32,10 @@ def test_remote_deploy_preserves_env_and_installs_systemd_service() -> None:
     assert "install -m 0644" in script
     assert "/etc/systemd/system/qt.service" in script
     assert "/etc/systemd/system/qt-research-worker.service" in script
+    assert "/etc/systemd/system/qt-workbench-api.service" in script
+    assert "/etc/systemd/system/qt-workbench-worker.service" in script
+    assert "QT_ENABLE_WORKBENCH" in script
+    assert "native-research,r2-publish" in script
     assert "systemctl restart qt.service" in script
     assert "systemctl restart qt-research-worker.service" in script
     assert "curl -fsS" in script
@@ -46,6 +50,23 @@ def test_research_worker_service_is_separate_and_hardened() -> None:
     assert "Restart=always" in unit
     assert "NoNewPrivileges=true" in unit
     assert "User=qt" in unit
+
+
+def test_workbench_worker_is_optional_and_resource_bounded() -> None:
+    unit = read("deploy/qt-workbench-worker.service")
+    assert "scripts/run_workbench_worker.py" in unit
+    assert "MemoryMax=512M" in unit
+    assert "CPUQuota=150%" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "ReadWritePaths=/opt/qt/data/workbench /opt/qt/data/parquet" in unit
+
+
+def test_workbench_api_is_loopback_only_and_hardened() -> None:
+    unit = read("deploy/qt-workbench-api.service")
+    assert "scripts/run_workbench_api.py" in unit
+    assert "--host 127.0.0.1" in unit
+    assert "MemoryMax=256M" in unit
+    assert "NoNewPrivileges=true" in unit
 
 
 def test_deploy_configures_private_https_and_daily_data_refresh() -> None:

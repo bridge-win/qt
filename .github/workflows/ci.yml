@@ -26,10 +26,15 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build --wheel packages/btc-backtest
           python -m build --wheel .
-          pip install -e packages/btc-backtest
-          pip install -e ".[dev]"
+          pip install -e "packages/btc-backtest[dev]"
+          pip install -e ".[dev,platform-postgres]"
       - name: Lint
         run: ruff check src tests
+      - name: Python 3.10 workbench import smoke
+        if: matrix.python-version == '3.10'
+        run: >-
+          python -c
+          "from qt.workbench.api import WorkbenchSettings, create_workbench_app; from qt.workbench.operations import OperationsService; print('workbench core import ok')"
       - name: BTC backtest package lint
         run: ruff check packages/btc-backtest/src packages/btc-backtest/tests
       - name: Test
@@ -56,6 +61,26 @@ jobs:
           pip install -e packages/btc-backtest
       - name: BTC backtest ten-year live acceptance
         run: pytest packages/btc-backtest/tests/integration/test_ten_year_backtest.py -q -m integration
+
+  native-research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install native research runtime
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel packages/btc-backtest
+          pip install -e packages/btc-backtest
+          pip install -e ".[dev,native-research,r2-publish]"
+      - name: Native Nautilus and strict validation contract
+        run: >-
+          pytest tests/nautilus
+          tests/lab/test_lab_service.py::test_strict_validation_and_compare_use_real_native_executor_payload
+          -q
 
   platform-postgresql:
     runs-on: ubuntu-latest
@@ -85,7 +110,7 @@ jobs:
           python -m build --wheel packages/btc-backtest
           python -m build --wheel .
           pip install -e packages/btc-backtest
-          pip install -e ".[dev]"
+          pip install -e ".[dev,platform-postgres]"
       - name: PostgreSQL integration tests
         env:
           QT_TEST_POSTGRES_URL: postgresql+psycopg://qt_test:qt_test_only@127.0.0.1:5432/qt_test

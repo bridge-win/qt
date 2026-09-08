@@ -11,7 +11,7 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Timeframe = Literal["1h", "1d"]
+Timeframe = Literal["1m", "5m", "15m", "1h", "4h", "1d"]
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
@@ -22,9 +22,21 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _is_aligned(value: datetime, timeframe: Timeframe) -> bool:
-    if value.minute != 0 or value.second != 0 or value.microsecond != 0:
+    if value.second != 0 or value.microsecond != 0:
         return False
-    return timeframe == "1h" or value.hour == 0
+    if timeframe == "1m":
+        return True
+    if timeframe == "5m":
+        return value.minute % 5 == 0
+    if timeframe == "15m":
+        return value.minute % 15 == 0
+    if value.minute != 0:
+        return False
+    if timeframe == "1h":
+        return True
+    if timeframe == "4h":
+        return value.hour % 4 == 0
+    return value.hour == 0
 
 
 class DataRequest(BaseModel):

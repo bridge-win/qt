@@ -944,8 +944,16 @@ def _request(
 
 def _current_interval_end(timeframe: Timeframe) -> datetime:
     now = datetime.now(timezone.utc)
+    if timeframe == "1m":
+        return now.replace(second=0, microsecond=0)
+    if timeframe == "5m":
+        return now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0)
+    if timeframe == "15m":
+        return now.replace(minute=now.minute - now.minute % 15, second=0, microsecond=0)
     if timeframe == "1h":
         return now.replace(minute=0, second=0, microsecond=0)
+    if timeframe == "4h":
+        return now.replace(hour=now.hour - now.hour % 4, minute=0, second=0, microsecond=0)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
@@ -959,8 +967,16 @@ def _subtract_calendar_years(value: datetime, years: int) -> datetime:
 
 
 def _bar_delta(timeframe: Timeframe) -> timedelta:
+    if timeframe == "1m":
+        return timedelta(minutes=1)
+    if timeframe == "5m":
+        return timedelta(minutes=5)
+    if timeframe == "15m":
+        return timedelta(minutes=15)
     if timeframe == "1h":
         return timedelta(hours=1)
+    if timeframe == "4h":
+        return timedelta(hours=4)
     return timedelta(days=1)
 
 
@@ -978,7 +994,7 @@ def _local_interval(
         )
     if frame.index.tz is None:
         raise ProviderError("local Parquet timestamps must be timezone-aware")
-    delta = timedelta(hours=1) if timeframe == "1h" else timedelta(days=1)
+    delta = _bar_delta(timeframe)
     return (
         frame.index.min().to_pydatetime(),
         (frame.index.max() + delta).to_pydatetime(),
@@ -997,8 +1013,8 @@ def _timestamp(value: str, label: str) -> datetime:
 
 
 def _timeframe(value: str) -> Timeframe:
-    if value not in ("1h", "1d"):
-        raise ValueError("timeframe must be 1h or 1d")
+    if value not in ("1m", "5m", "15m", "1h", "4h", "1d"):
+        raise ValueError("timeframe must be 1m, 5m, 15m, 1h, 4h, or 1d")
     return cast(Timeframe, value)
 
 

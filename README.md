@@ -12,6 +12,18 @@ Capriole, LookIntoBitcoin) with peer-reviewed studies (Caporale et al.
 the practitioner consensus on N-of-K factor voting. See
 [`docs/strategy.md`](docs/strategy.md) for citations and full thresholds.
 
+## Native research runtime
+
+The core package and source-compatibility tools support Python 3.10+. Native
+Nautilus research is an optional Python 3.12+ runtime: install with
+`pip install '.[native-research]'` on the Linux compute node. It is excluded
+from the 3.10/3.11 compatibility dependency set.
+
+The v3 workbench stores its metadata in SQLite WAL and does not require
+PostgreSQL. The older platform deployment is isolated behind
+`pip install '.[platform-postgres]'`; it is not installed for the normal
+research/paper runtime.
+
 ## Core idea: 5 factor groups + macro veto
 
 Entry requires:

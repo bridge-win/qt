@@ -57,6 +57,53 @@ def test_data_request_rejects_invalid_daily_interval(
         )
 
 
+@pytest.mark.parametrize(
+    ("timeframe", "start", "end"),
+    [
+        ("1m", datetime(2024, 1, 1, 0, 1, tzinfo=UTC), datetime(2024, 1, 1, 0, 2, tzinfo=UTC)),
+        ("5m", datetime(2024, 1, 1, 0, 5, tzinfo=UTC), datetime(2024, 1, 1, 0, 10, tzinfo=UTC)),
+        ("15m", datetime(2024, 1, 1, 0, 15, tzinfo=UTC), datetime(2024, 1, 1, 0, 30, tzinfo=UTC)),
+        ("4h", datetime(2024, 1, 1, 4, tzinfo=UTC), datetime(2024, 1, 1, 8, tzinfo=UTC)),
+    ],
+)
+def test_data_request_accepts_source_native_intraday_timeframes(
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+) -> None:
+    request = DataRequest(
+        provider="fixture",
+        symbol="BTC/USDT",
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
+
+    assert request.timeframe == timeframe
+
+
+@pytest.mark.parametrize(
+    ("timeframe", "start"),
+    [
+        ("5m", datetime(2024, 1, 1, 0, 1, tzinfo=UTC)),
+        ("15m", datetime(2024, 1, 1, 0, 5, tzinfo=UTC)),
+        ("4h", datetime(2024, 1, 1, 1, tzinfo=UTC)),
+    ],
+)
+def test_data_request_rejects_misaligned_source_native_intraday_timeframes(
+    timeframe: str,
+    start: datetime,
+) -> None:
+    with pytest.raises(ValidationError, match="aligned"):
+        DataRequest(
+            provider="fixture",
+            symbol="BTC/USDT",
+            timeframe=timeframe,
+            start=start,
+            end=start + timedelta(hours=4),
+        )
+
+
 def test_manifest_is_frozen_and_requires_valid_fingerprints() -> None:
     gap = DataGap(
         start=datetime(2024, 1, 2, tzinfo=UTC),

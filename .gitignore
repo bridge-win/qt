@@ -1,6 +1,8 @@
 # Byte-compiled / packaging
 __pycache__/
 *.py[cod]
+*.workbench-index.json
+*.workbench-index.tmp
 *$py.class
 *.egg-info/
 build/
@@ -24,6 +26,7 @@ env/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.playwright-cli/
 
 # Data (kept out of git)
 data/raw/

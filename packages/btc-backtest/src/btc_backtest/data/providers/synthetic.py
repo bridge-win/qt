@@ -26,7 +26,7 @@ class SyntheticProvider:
     metadata = ProviderMetadata(
         id="synthetic",
         real_data=False,
-        timeframes=("1h", "1d"),
+        timeframes=("1m", "5m", "15m", "1h", "4h", "1d"),
         markets=("spot", "futures"),
     )
 
@@ -41,7 +41,14 @@ class SyntheticProvider:
         if request.require_real:
             raise ProviderError("request requires real data")
 
-        frequency = "1h" if request.timeframe == "1h" else "1D"
+        frequency = {
+            "1m": "1min",
+            "5m": "5min",
+            "15m": "15min",
+            "1h": "1h",
+            "4h": "4h",
+            "1d": "1D",
+        }[request.timeframe]
         index = pd.date_range(
             start=request.start,
             end=request.end,

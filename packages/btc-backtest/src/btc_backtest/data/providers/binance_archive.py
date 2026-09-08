@@ -70,13 +70,24 @@ class _ArchiveNotFoundError(ProviderError):
     pass
 
 
+def _timeframe_delta(timeframe: str) -> timedelta:
+    return {
+        "1m": timedelta(minutes=1),
+        "5m": timedelta(minutes=5),
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "1d": timedelta(days=1),
+    }[timeframe]
+
+
 class BinanceArchiveProvider:
     """Download, verify, and normalize Binance's public BTC/USDT archives."""
 
     metadata = ProviderMetadata(
         id="binance_archive",
         real_data=True,
-        timeframes=("1h", "1d"),
+        timeframes=("1m", "5m", "15m", "1h", "4h", "1d"),
         markets=("spot",),
         symbols=("BTC/USDT",),
     )
@@ -146,11 +157,7 @@ class BinanceArchiveProvider:
             )
         normalized, gaps = validate_ohlcv(combined.sort_index(), request)
         fingerprint = frame_fingerprint(normalized)
-        delta = (
-            timedelta(hours=1)
-            if request.timeframe == "1h"
-            else timedelta(days=1)
-        )
+        delta = _timeframe_delta(request.timeframe)
         segments = tuple(
             self._segment_for_chunk(chunk, request, delta)
             for chunk in chunks

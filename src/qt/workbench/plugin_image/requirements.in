@@ -1,0 +1,22 @@
+# All non-local runtime dependencies imported by the Qt/Nautilus plugin image.
+# Local qt and btc-backtest wheels are built in the Dockerfile and installed --no-deps.
+numpy
+pandas
+pyarrow
+scipy
+pydantic
+pydantic-settings
+PyYAML
+httpx
+jinja2
+ccxt
+tenacity
+typer
+rich
+structlog
+duckdb
+python-dateutil
+fastapi
+uvicorn
+websockets<17
+nautilus_trader==2.0.0rc4

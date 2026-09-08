@@ -1,0 +1,29 @@
+# Canonical fragment to be merged into the single root cloudflare/wrangler.toml.
+# Do not deploy this independently and do not duplicate worker.ts auth logic.
+main = "../web/edge/worker.ts"
+compatibility_date = "2026-09-07"
+workers_dev = true
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# All HTML and assets are private research material. Worker-first must remain
+# true on workers.dev, previews, and production so static assets cannot bypass
+# Access JWT verification.
+run_worker_first = true
+
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "qt-research-reports"
+
+[vars]
+# Set non-secret deployment values per preview/production environment.
+ACCESS_JWT_ISSUER = "https://REPLACE_WITH_TEAM.cloudflareaccess.com"
+ACCESS_JWT_AUDIENCE = "REPLACE_WITH_ACCESS_AUDIENCE"
+ORIGIN_URL = "https://REPLACE_WITH_PROTECTED_TUNNEL_ORIGIN"
+MAX_API_BODY_BYTES = "1048576"
+
+# Required secrets, set with Wrangler and never stored in this file:
+# ORIGIN_CLIENT_ID
+# ORIGIN_CLIENT_SECRET

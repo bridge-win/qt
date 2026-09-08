@@ -1,0 +1,31 @@
+[Unit]
+Description=QT research-only workbench API (loopback origin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qt
+Group=qt
+WorkingDirectory=/opt/qt
+EnvironmentFile=-/opt/qt/.env.workbench
+ExecStart=/opt/qt/.venv-native-research/bin/python scripts/run_workbench_api.py \
+  --host 127.0.0.1 \
+  --port 8877 \
+  --parquet-root data/parquet \
+  --state-root data/workbench
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# The authenticated Worker is the public edge. This origin stays loopback-only.
+MemoryMax=256M
+CPUQuota=50%
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/qt/data/workbench /opt/qt/data/parquet
+
+[Install]
+WantedBy=multi-user.target

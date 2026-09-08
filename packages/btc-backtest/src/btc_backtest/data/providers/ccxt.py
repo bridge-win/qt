@@ -29,7 +29,14 @@ from btc_backtest.errors import (
 )
 
 _EXCHANGE_ID_RE = re.compile(r"^[a-z0-9_-]+$")
-_TIMEFRAME_MILLISECONDS = {"1h": 3_600_000, "1d": 86_400_000}
+_TIMEFRAME_MILLISECONDS = {
+    "1m": 60_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "1h": 3_600_000,
+    "4h": 14_400_000,
+    "1d": 86_400_000,
+}
 _ParsedCandle = tuple[int, float, float, float, float, float]
 _FetchOHLCV = Callable[[str, str, int, int], object]
 
@@ -64,13 +71,12 @@ class CCXTProvider:
                 f"CCXT exchange {exchange_id} does not declare OHLCV timeframes"
             )
         supported: list[Timeframe] = []
-        if "1h" in timeframes:
-            supported.append("1h")
-        if "1d" in timeframes:
-            supported.append("1d")
+        for timeframe in _TIMEFRAME_MILLISECONDS:
+            if timeframe in timeframes:
+                supported.append(timeframe)
         if not supported:
             raise ProviderError(
-                f"CCXT exchange {exchange_id} supports neither 1h nor 1d OHLCV"
+                f"CCXT exchange {exchange_id} supports none of the supported QT OHLCV timeframes"
             )
         fetch_method = getattr(active_exchange, "fetch_ohlcv", None)
         if not callable(fetch_method):

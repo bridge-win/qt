@@ -39,6 +39,17 @@ ProgressCallback = Callable[[str, int], None]
 CancellationCheck = Callable[[], bool]
 
 
+def _runner_strategy(candidate: object) -> Strategy:
+    """Unwrap immutable Lab construction metadata for the legacy research runner."""
+
+    if isinstance(candidate, Strategy):
+        return candidate
+    strategy = getattr(candidate, "strategy", None)
+    if isinstance(strategy, Strategy):
+        return strategy
+    raise TypeError("strategy factory did not provide a btc_backtest Strategy")
+
+
 class ResearchExecutor:
     """Run one normalized research specification against the QT event engine."""
 
@@ -71,7 +82,7 @@ class ResearchExecutor:
 
         progress("simulation", 35)
         self._check_cancelled(cancelled)
-        primary = self._run(spec, frame, build_strategy(spec))
+        primary = self._run(spec, frame, _runner_strategy(build_strategy(spec)))
 
         progress("benchmarks", 50)
         self._check_cancelled(cancelled)
@@ -206,7 +217,7 @@ class ResearchExecutor:
                 train_result = self._run(
                     candidate_spec,
                     train,
-                    build_strategy(candidate_spec),
+                    _runner_strategy(build_strategy(candidate_spec)),
                 )
                 train_sharpe = _float_value(_metrics(train_result)["sharpe"])
                 if train_sharpe > best_train_sharpe:
@@ -218,7 +229,7 @@ class ResearchExecutor:
                 self._run(
                     selected_spec,
                     test,
-                    build_strategy(selected_spec),
+                    _runner_strategy(build_strategy(selected_spec)),
                 )
             )
             key = json.dumps(best_params, sort_keys=True)
@@ -259,7 +270,7 @@ class ResearchExecutor:
                 self._run(
                     candidate_spec,
                     pre_final,
-                    build_strategy(candidate_spec),
+                    _runner_strategy(build_strategy(candidate_spec)),
                 )
             )
             sensitivity.append(
@@ -270,7 +281,7 @@ class ResearchExecutor:
         final_result = self._run(
             selected_spec,
             final_frame,
-            build_strategy(selected_spec),
+            _runner_strategy(build_strategy(selected_spec)),
         )
         final_metrics = _metrics(final_result)
         final_returns = _equity_series(final_result).pct_change().dropna()
@@ -299,7 +310,7 @@ class ResearchExecutor:
             stressed = self._run(
                 stressed_spec,
                 final_frame,
-                build_strategy(stressed_spec),
+                _runner_strategy(build_strategy(stressed_spec)),
             )
             cost_stress[f"{multiplier}x"] = _metrics(stressed)
 
@@ -443,8 +454,8 @@ class ResearchExecutor:
         prefix: pd.DataFrame,
         extended: pd.DataFrame,
     ) -> bool:
-        prefix_result = self._run(spec, prefix, build_strategy(spec))
-        extended_result = self._run(spec, extended, build_strategy(spec))
+        prefix_result = self._run(spec, prefix, _runner_strategy(build_strategy(spec)))
+        extended_result = self._run(spec, extended, _runner_strategy(build_strategy(spec)))
         cutoff = prefix.index[-1].to_pydatetime()
         prefix_fills = tuple(
             _fill_signature(fill)
@@ -462,9 +473,9 @@ class ResearchExecutor:
         spec: Mapping[str, object],
         frame: pd.DataFrame,
     ) -> bool:
-        full = self._run(spec, frame, build_strategy(spec))
+        full = self._run(spec, frame, _runner_strategy(build_strategy(spec)))
         shifted_frame = frame.iloc[min(30, len(frame) // 10):]
-        shifted = self._run(spec, shifted_frame, build_strategy(spec))
+        shifted = self._run(spec, shifted_frame, _runner_strategy(build_strategy(spec)))
         full_returns = _equity_series(full).pct_change()
         shifted_returns = _equity_series(shifted).pct_change()
         overlap = full_returns.index.intersection(shifted_returns.index)

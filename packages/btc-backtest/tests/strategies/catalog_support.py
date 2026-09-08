@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import numpy as np
 import pandas as pd
@@ -29,10 +29,10 @@ def catalog_bundle() -> MarketBundle:
         tz="UTC",
     )
     trend = np.linspace(100.0, 150.0, 100)
-    range_market = 150.0 + np.sin(np.linspace(0, 6 * np.pi, 100)) * 8
+    range_market = _oscillation(150.0, 8.0, np.linspace(0, 6 * np.pi, 100))
     crash = np.linspace(range_market[-1], 75.0, 50)
     rebound = np.linspace(75.0, 140.0, 100)
-    final_range = 140.0 + np.sin(np.linspace(0, 4 * np.pi, 50)) * 5
+    final_range = _oscillation(140.0, 5.0, np.linspace(0, 4 * np.pi, 50))
     close = np.concatenate((trend, range_market, crash, rebound, final_range))
     open_values = np.r_[close[0], close[:-1]]
     spread = 1.5 + np.abs(np.sin(np.arange(BAR_COUNT) / 7))
@@ -262,3 +262,30 @@ def _dataset(market: str, frame: pd.DataFrame) -> MarketDataset:
 
 def _fixed(value: Decimal) -> str:
     return format(value.quantize(Decimal("0.00000001")), "f")
+
+
+def _oscillation(
+    midpoint: float,
+    amplitude: float,
+    angles: np.ndarray,
+) -> np.ndarray:
+    return np.fromiter(
+        (
+            midpoint + amplitude * _decimal_sine(float(angle))
+            for angle in angles.flat
+        ),
+        dtype=np.float64,
+        count=angles.size,
+    ).reshape(angles.shape)
+
+
+def _decimal_sine(value: float) -> float:
+    with localcontext() as context:
+        context.prec = 80
+        angle = Decimal(value)
+        term = angle
+        total = angle
+        for index in range(1, 80):
+            term *= -(angle * angle) / Decimal(2 * index * (2 * index + 1))
+            total += term
+        return float(+total)

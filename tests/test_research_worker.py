@@ -48,6 +48,25 @@ def test_worker_persists_progress_and_completed_result(tmp_path: Path) -> None:
     assert observed == [("simulation", 45)]
 
 
+def test_worker_passes_transient_job_id_without_mutating_durable_spec(tmp_path: Path) -> None:
+    repository = ResearchRepository(tmp_path / "research.sqlite3")
+    queued = repository.enqueue(_spec())
+    observed: dict[str, object] = {}
+
+    def execute(
+        spec: dict[str, object],
+        progress: object,
+        cancelled: object,
+    ) -> dict[str, object]:
+        del progress, cancelled
+        observed.update(spec)
+        return {"run_id": "transient-id"}
+
+    assert ResearchWorker(repository, worker_id="worker-1", executor=execute).run_once()
+    assert observed["_job_id"] == queued["job_id"]
+    assert "_job_id" not in repository.get_job(str(queued["job_id"]))["spec"]
+
+
 def test_worker_honors_cancellation_before_execution(tmp_path: Path) -> None:
     repository = ResearchRepository(tmp_path / "research.sqlite3")
     queued = repository.enqueue(_spec())

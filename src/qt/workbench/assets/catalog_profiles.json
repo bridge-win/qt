@@ -1,0 +1,5259 @@
+{
+  "profiles": [
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 9.0,
+          "slow_period": 26.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 9.0,
+          "slow_period": 26.0
+        },
+        "rsi_cross_up": {
+          "lower": 34.0,
+          "period": 12.0
+        },
+        "rsi_overbought": {
+          "period": 12.0,
+          "upper": 66.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 10.0,
+          "slow_period": 28.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 10.0,
+          "slow_period": 28.0
+        },
+        "rsi_cross_up": {
+          "lower": 33.0,
+          "period": 14.0
+        },
+        "rsi_overbought": {
+          "period": 14.0,
+          "upper": 67.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 11.0,
+          "slow_period": 30.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 11.0,
+          "slow_period": 30.0
+        },
+        "rsi_cross_up": {
+          "lower": 32.0,
+          "period": 16.0
+        },
+        "rsi_overbought": {
+          "period": 16.0,
+          "upper": 68.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 12.0,
+          "slow_period": 32.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 12.0,
+          "slow_period": 32.0
+        },
+        "rsi_cross_up": {
+          "lower": 31.0,
+          "period": 18.0
+        },
+        "rsi_overbought": {
+          "period": 18.0,
+          "upper": 69.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 13.0,
+          "slow_period": 34.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 13.0,
+          "slow_period": 34.0
+        },
+        "rsi_cross_up": {
+          "lower": 30.0,
+          "period": 20.0
+        },
+        "rsi_overbought": {
+          "period": 20.0,
+          "upper": 70.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 14.0,
+          "slow_period": 36.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 14.0,
+          "slow_period": 36.0
+        },
+        "rsi_cross_up": {
+          "lower": 29.0,
+          "period": 22.0
+        },
+        "rsi_overbought": {
+          "period": 22.0,
+          "upper": 71.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 15.0,
+          "slow_period": 38.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 15.0,
+          "slow_period": 38.0
+        },
+        "rsi_cross_up": {
+          "lower": 28.0,
+          "period": 24.0
+        },
+        "rsi_overbought": {
+          "period": 24.0,
+          "upper": 72.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 16.0,
+          "slow_period": 40.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 16.0,
+          "slow_period": 40.0
+        },
+        "rsi_cross_up": {
+          "lower": 27.0,
+          "period": 26.0
+        },
+        "rsi_overbought": {
+          "period": 26.0,
+          "upper": 73.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 17.0,
+          "slow_period": 42.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 17.0,
+          "slow_period": 42.0
+        },
+        "rsi_cross_up": {
+          "lower": 26.0,
+          "period": 28.0
+        },
+        "rsi_overbought": {
+          "period": 28.0,
+          "upper": 74.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "rsi_cross_up"
+      ],
+      "exit_signals": [
+        "ema_cross_down",
+        "rsi_overbought"
+      ],
+      "family": "ema-pullback",
+      "id": "ema-pullback-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "ema_cross_down": {
+          "fast_period": 18.0,
+          "slow_period": 44.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 18.0,
+          "slow_period": 44.0
+        },
+        "rsi_cross_up": {
+          "lower": 25.0,
+          "period": 30.0
+        },
+        "rsi_overbought": {
+          "period": 30.0,
+          "upper": 75.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 19.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 19.0
+        },
+        "macd_cross_down": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "volume_spike": {
+          "lookback": 19.0,
+          "multiple": 1.22
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 23.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 23.0
+        },
+        "macd_cross_down": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "volume_spike": {
+          "lookback": 23.0,
+          "multiple": 1.34
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 27.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 27.0
+        },
+        "macd_cross_down": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "volume_spike": {
+          "lookback": 27.0,
+          "multiple": 1.46
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 31.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 31.0
+        },
+        "macd_cross_down": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "volume_spike": {
+          "lookback": 31.0,
+          "multiple": 1.58
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 35.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 35.0
+        },
+        "macd_cross_down": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "volume_spike": {
+          "lookback": 35.0,
+          "multiple": 1.7
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 39.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 39.0
+        },
+        "macd_cross_down": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "volume_spike": {
+          "lookback": 39.0,
+          "multiple": 1.82
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 43.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 43.0
+        },
+        "macd_cross_down": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "volume_spike": {
+          "lookback": 43.0,
+          "multiple": 1.94
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 47.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 47.0
+        },
+        "macd_cross_down": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "volume_spike": {
+          "lookback": 47.0,
+          "multiple": 2.06
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 51.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 51.0
+        },
+        "macd_cross_down": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "volume_spike": {
+          "lookback": 51.0,
+          "multiple": 2.18
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "donchian_breakout_up",
+        "adx_trending",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "donchian_breakout_down",
+        "macd_cross_down"
+      ],
+      "family": "donchian-breakout",
+      "id": "donchian-breakout-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "donchian_breakout_down": {
+          "lookback": 55.0
+        },
+        "donchian_breakout_up": {
+          "lookback": 55.0
+        },
+        "macd_cross_down": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "volume_spike": {
+          "lookback": 55.0,
+          "multiple": 2.3
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 19.0,
+          "stddev": 1.58
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 19.0,
+          "stddev": 1.58
+        },
+        "rsi_overbought": {
+          "period": 12.0,
+          "upper": 66.0
+        },
+        "rsi_oversold": {
+          "lower": 34.0,
+          "period": 12.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 23.0,
+          "stddev": 1.66
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 23.0,
+          "stddev": 1.66
+        },
+        "rsi_overbought": {
+          "period": 14.0,
+          "upper": 67.0
+        },
+        "rsi_oversold": {
+          "lower": 33.0,
+          "period": 14.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 27.0,
+          "stddev": 1.74
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 27.0,
+          "stddev": 1.74
+        },
+        "rsi_overbought": {
+          "period": 16.0,
+          "upper": 68.0
+        },
+        "rsi_oversold": {
+          "lower": 32.0,
+          "period": 16.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 31.0,
+          "stddev": 1.82
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 31.0,
+          "stddev": 1.82
+        },
+        "rsi_overbought": {
+          "period": 18.0,
+          "upper": 69.0
+        },
+        "rsi_oversold": {
+          "lower": 31.0,
+          "period": 18.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 35.0,
+          "stddev": 1.9
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 35.0,
+          "stddev": 1.9
+        },
+        "rsi_overbought": {
+          "period": 20.0,
+          "upper": 70.0
+        },
+        "rsi_oversold": {
+          "lower": 30.0,
+          "period": 20.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 39.0,
+          "stddev": 1.98
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 39.0,
+          "stddev": 1.98
+        },
+        "rsi_overbought": {
+          "period": 22.0,
+          "upper": 71.0
+        },
+        "rsi_oversold": {
+          "lower": 29.0,
+          "period": 22.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 43.0,
+          "stddev": 2.06
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 43.0,
+          "stddev": 2.06
+        },
+        "rsi_overbought": {
+          "period": 24.0,
+          "upper": 72.0
+        },
+        "rsi_oversold": {
+          "lower": 28.0,
+          "period": 24.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 47.0,
+          "stddev": 2.14
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 47.0,
+          "stddev": 2.14
+        },
+        "rsi_overbought": {
+          "period": 26.0,
+          "upper": 73.0
+        },
+        "rsi_oversold": {
+          "lower": 27.0,
+          "period": 26.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 51.0,
+          "stddev": 2.22
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 51.0,
+          "stddev": 2.22
+        },
+        "rsi_overbought": {
+          "period": 28.0,
+          "upper": 74.0
+        },
+        "rsi_oversold": {
+          "lower": 26.0,
+          "period": 28.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "rsi_oversold",
+        "bollinger_lower_reentry",
+        "adx_weak"
+      ],
+      "exit_signals": [
+        "rsi_overbought",
+        "bollinger_upper_reentry"
+      ],
+      "family": "rsi-bollinger",
+      "id": "rsi-bollinger-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "adx_weak": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "bollinger_lower_reentry": {
+          "lookback": 55.0,
+          "stddev": 2.3
+        },
+        "bollinger_upper_reentry": {
+          "lookback": 55.0,
+          "stddev": 2.3
+        },
+        "rsi_overbought": {
+          "period": 30.0,
+          "upper": 75.0
+        },
+        "rsi_oversold": {
+          "lower": 25.0,
+          "period": 30.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 12.0
+        },
+        "macd_bearish": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "macd_bullish": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "macd_cross_up": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "roc_negative": {
+          "period": 12.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 14.0
+        },
+        "macd_bearish": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "macd_bullish": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "macd_cross_up": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "roc_negative": {
+          "period": 14.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 16.0
+        },
+        "macd_bearish": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "macd_bullish": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "macd_cross_up": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "roc_negative": {
+          "period": 16.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 18.0
+        },
+        "macd_bearish": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "macd_bullish": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "macd_cross_up": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "roc_negative": {
+          "period": 18.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 20.0
+        },
+        "macd_bearish": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "macd_bullish": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "macd_cross_up": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "roc_negative": {
+          "period": 20.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 22.0
+        },
+        "macd_bearish": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "macd_bullish": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "macd_cross_up": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "roc_negative": {
+          "period": 22.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 24.0
+        },
+        "macd_bearish": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "macd_bullish": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "macd_cross_up": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "roc_negative": {
+          "period": 24.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 26.0
+        },
+        "macd_bearish": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "macd_bullish": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "macd_cross_up": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "roc_negative": {
+          "period": 26.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 28.0
+        },
+        "macd_bearish": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "macd_bullish": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "macd_cross_up": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "roc_negative": {
+          "period": 28.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "macd_bullish",
+        "macd_cross_up",
+        "close_above_ema"
+      ],
+      "exit_signals": [
+        "macd_bearish",
+        "roc_negative"
+      ],
+      "family": "macd-momentum",
+      "id": "macd-momentum-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "close_above_ema": {
+          "period": 30.0
+        },
+        "macd_bearish": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "macd_bullish": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "macd_cross_up": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "roc_negative": {
+          "period": 30.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.007,
+          "period": 12.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.114,
+          "period": 12.0
+        },
+        "bb_width_contracting": {
+          "lookback": 19.0
+        },
+        "squeeze_release_down": {
+          "lookback": 19.0
+        },
+        "squeeze_release_up": {
+          "lookback": 19.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.01,
+          "period": 14.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.108,
+          "period": 14.0
+        },
+        "bb_width_contracting": {
+          "lookback": 23.0
+        },
+        "squeeze_release_down": {
+          "lookback": 23.0
+        },
+        "squeeze_release_up": {
+          "lookback": 23.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.013,
+          "period": 16.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.102,
+          "period": 16.0
+        },
+        "bb_width_contracting": {
+          "lookback": 27.0
+        },
+        "squeeze_release_down": {
+          "lookback": 27.0
+        },
+        "squeeze_release_up": {
+          "lookback": 27.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.016,
+          "period": 18.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.096,
+          "period": 18.0
+        },
+        "bb_width_contracting": {
+          "lookback": 31.0
+        },
+        "squeeze_release_down": {
+          "lookback": 31.0
+        },
+        "squeeze_release_up": {
+          "lookback": 31.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.019,
+          "period": 20.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.09,
+          "period": 20.0
+        },
+        "bb_width_contracting": {
+          "lookback": 35.0
+        },
+        "squeeze_release_down": {
+          "lookback": 35.0
+        },
+        "squeeze_release_up": {
+          "lookback": 35.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.022,
+          "period": 22.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.084,
+          "period": 22.0
+        },
+        "bb_width_contracting": {
+          "lookback": 39.0
+        },
+        "squeeze_release_down": {
+          "lookback": 39.0
+        },
+        "squeeze_release_up": {
+          "lookback": 39.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.025,
+          "period": 24.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.078,
+          "period": 24.0
+        },
+        "bb_width_contracting": {
+          "lookback": 43.0
+        },
+        "squeeze_release_down": {
+          "lookback": 43.0
+        },
+        "squeeze_release_up": {
+          "lookback": 43.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.028,
+          "period": 26.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.072,
+          "period": 26.0
+        },
+        "bb_width_contracting": {
+          "lookback": 47.0
+        },
+        "squeeze_release_down": {
+          "lookback": 47.0
+        },
+        "squeeze_release_up": {
+          "lookback": 47.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.031,
+          "period": 28.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.066,
+          "period": 28.0
+        },
+        "bb_width_contracting": {
+          "lookback": 51.0
+        },
+        "squeeze_release_down": {
+          "lookback": 51.0
+        },
+        "squeeze_release_up": {
+          "lookback": 51.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "bb_width_contracting",
+        "squeeze_release_up",
+        "atr_pct_above"
+      ],
+      "exit_signals": [
+        "squeeze_release_down",
+        "atr_pct_below"
+      ],
+      "family": "atr-squeeze",
+      "id": "atr-squeeze-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "atr_pct_above": {
+          "min_value": 0.034,
+          "period": 30.0
+        },
+        "atr_pct_below": {
+          "max_value": 0.06,
+          "period": 30.0
+        },
+        "bb_width_contracting": {
+          "lookback": 55.0
+        },
+        "squeeze_release_down": {
+          "lookback": 55.0
+        },
+        "squeeze_release_up": {
+          "lookback": 55.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 19.0
+        },
+        "volume_dry_up": {
+          "lookback": 19.0,
+          "multiple": 1.22
+        },
+        "volume_spike": {
+          "lookback": 19.0,
+          "multiple": 1.22
+        },
+        "vwap_above": {
+          "period": 12.0
+        },
+        "vwap_below": {
+          "period": 12.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 23.0
+        },
+        "volume_dry_up": {
+          "lookback": 23.0,
+          "multiple": 1.34
+        },
+        "volume_spike": {
+          "lookback": 23.0,
+          "multiple": 1.34
+        },
+        "vwap_above": {
+          "period": 14.0
+        },
+        "vwap_below": {
+          "period": 14.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 27.0
+        },
+        "volume_dry_up": {
+          "lookback": 27.0,
+          "multiple": 1.46
+        },
+        "volume_spike": {
+          "lookback": 27.0,
+          "multiple": 1.46
+        },
+        "vwap_above": {
+          "period": 16.0
+        },
+        "vwap_below": {
+          "period": 16.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 31.0
+        },
+        "volume_dry_up": {
+          "lookback": 31.0,
+          "multiple": 1.58
+        },
+        "volume_spike": {
+          "lookback": 31.0,
+          "multiple": 1.58
+        },
+        "vwap_above": {
+          "period": 18.0
+        },
+        "vwap_below": {
+          "period": 18.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 35.0
+        },
+        "volume_dry_up": {
+          "lookback": 35.0,
+          "multiple": 1.7
+        },
+        "volume_spike": {
+          "lookback": 35.0,
+          "multiple": 1.7
+        },
+        "vwap_above": {
+          "period": 20.0
+        },
+        "vwap_below": {
+          "period": 20.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 39.0
+        },
+        "volume_dry_up": {
+          "lookback": 39.0,
+          "multiple": 1.82
+        },
+        "volume_spike": {
+          "lookback": 39.0,
+          "multiple": 1.82
+        },
+        "vwap_above": {
+          "period": 22.0
+        },
+        "vwap_below": {
+          "period": 22.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 43.0
+        },
+        "volume_dry_up": {
+          "lookback": 43.0,
+          "multiple": 1.94
+        },
+        "volume_spike": {
+          "lookback": 43.0,
+          "multiple": 1.94
+        },
+        "vwap_above": {
+          "period": 24.0
+        },
+        "vwap_below": {
+          "period": 24.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 47.0
+        },
+        "volume_dry_up": {
+          "lookback": 47.0,
+          "multiple": 2.06
+        },
+        "volume_spike": {
+          "lookback": 47.0,
+          "multiple": 2.06
+        },
+        "vwap_above": {
+          "period": 26.0
+        },
+        "vwap_below": {
+          "period": 26.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 51.0
+        },
+        "volume_dry_up": {
+          "lookback": 51.0,
+          "multiple": 2.18
+        },
+        "volume_spike": {
+          "lookback": 51.0,
+          "multiple": 2.18
+        },
+        "vwap_above": {
+          "period": 28.0
+        },
+        "vwap_below": {
+          "period": 28.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "volume_spike",
+        "vwap_above",
+        "obv_rising"
+      ],
+      "exit_signals": [
+        "vwap_below",
+        "volume_dry_up"
+      ],
+      "family": "volume-vwap",
+      "id": "volume-vwap-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "obv_rising": {
+          "lookback": 55.0
+        },
+        "volume_dry_up": {
+          "lookback": 55.0,
+          "multiple": 2.3
+        },
+        "volume_spike": {
+          "lookback": 55.0,
+          "multiple": 2.3
+        },
+        "vwap_above": {
+          "period": 30.0
+        },
+        "vwap_below": {
+          "period": 30.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 34.0,
+          "period": 12.0
+        },
+        "drawdown_fear": {
+          "lookback": 19.0,
+          "min_value": 0.007
+        },
+        "drawdown_recovery": {
+          "lookback": 19.0,
+          "max_value": 0.114
+        },
+        "rsi_overbought": {
+          "period": 12.0,
+          "upper": 66.0
+        },
+        "volume_spike": {
+          "lookback": 19.0,
+          "multiple": 1.22
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 33.0,
+          "period": 14.0
+        },
+        "drawdown_fear": {
+          "lookback": 23.0,
+          "min_value": 0.01
+        },
+        "drawdown_recovery": {
+          "lookback": 23.0,
+          "max_value": 0.108
+        },
+        "rsi_overbought": {
+          "period": 14.0,
+          "upper": 67.0
+        },
+        "volume_spike": {
+          "lookback": 23.0,
+          "multiple": 1.34
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 32.0,
+          "period": 16.0
+        },
+        "drawdown_fear": {
+          "lookback": 27.0,
+          "min_value": 0.013
+        },
+        "drawdown_recovery": {
+          "lookback": 27.0,
+          "max_value": 0.102
+        },
+        "rsi_overbought": {
+          "period": 16.0,
+          "upper": 68.0
+        },
+        "volume_spike": {
+          "lookback": 27.0,
+          "multiple": 1.46
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 31.0,
+          "period": 18.0
+        },
+        "drawdown_fear": {
+          "lookback": 31.0,
+          "min_value": 0.016
+        },
+        "drawdown_recovery": {
+          "lookback": 31.0,
+          "max_value": 0.096
+        },
+        "rsi_overbought": {
+          "period": 18.0,
+          "upper": 69.0
+        },
+        "volume_spike": {
+          "lookback": 31.0,
+          "multiple": 1.58
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 30.0,
+          "period": 20.0
+        },
+        "drawdown_fear": {
+          "lookback": 35.0,
+          "min_value": 0.019
+        },
+        "drawdown_recovery": {
+          "lookback": 35.0,
+          "max_value": 0.09
+        },
+        "rsi_overbought": {
+          "period": 20.0,
+          "upper": 70.0
+        },
+        "volume_spike": {
+          "lookback": 35.0,
+          "multiple": 1.7
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 29.0,
+          "period": 22.0
+        },
+        "drawdown_fear": {
+          "lookback": 39.0,
+          "min_value": 0.022
+        },
+        "drawdown_recovery": {
+          "lookback": 39.0,
+          "max_value": 0.084
+        },
+        "rsi_overbought": {
+          "period": 22.0,
+          "upper": 71.0
+        },
+        "volume_spike": {
+          "lookback": 39.0,
+          "multiple": 1.82
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 28.0,
+          "period": 24.0
+        },
+        "drawdown_fear": {
+          "lookback": 43.0,
+          "min_value": 0.025
+        },
+        "drawdown_recovery": {
+          "lookback": 43.0,
+          "max_value": 0.078
+        },
+        "rsi_overbought": {
+          "period": 24.0,
+          "upper": 72.0
+        },
+        "volume_spike": {
+          "lookback": 43.0,
+          "multiple": 1.94
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 27.0,
+          "period": 26.0
+        },
+        "drawdown_fear": {
+          "lookback": 47.0,
+          "min_value": 0.028
+        },
+        "drawdown_recovery": {
+          "lookback": 47.0,
+          "max_value": 0.072
+        },
+        "rsi_overbought": {
+          "period": 26.0,
+          "upper": 73.0
+        },
+        "volume_spike": {
+          "lookback": 47.0,
+          "multiple": 2.06
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 26.0,
+          "period": 28.0
+        },
+        "drawdown_fear": {
+          "lookback": 51.0,
+          "min_value": 0.031
+        },
+        "drawdown_recovery": {
+          "lookback": 51.0,
+          "max_value": 0.066
+        },
+        "rsi_overbought": {
+          "period": 28.0,
+          "upper": 74.0
+        },
+        "volume_spike": {
+          "lookback": 51.0,
+          "multiple": 2.18
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "drawdown_fear",
+        "volume_spike",
+        "cci_oversold_recovery"
+      ],
+      "exit_signals": [
+        "drawdown_recovery",
+        "rsi_overbought"
+      ],
+      "family": "fear-reversal",
+      "id": "fear-reversal-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "cci_oversold_recovery": {
+          "lower": 25.0,
+          "period": 30.0
+        },
+        "drawdown_fear": {
+          "lookback": 55.0,
+          "min_value": 0.034
+        },
+        "drawdown_recovery": {
+          "lookback": 55.0,
+          "max_value": 0.06
+        },
+        "rsi_overbought": {
+          "period": 30.0,
+          "upper": 75.0
+        },
+        "volume_spike": {
+          "lookback": 55.0,
+          "multiple": 2.3
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 12.0
+        },
+        "close_below_ema": {
+          "period": 12.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 9.0,
+          "slow_period": 26.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 14.0
+        },
+        "close_below_ema": {
+          "period": 14.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 10.0,
+          "slow_period": 28.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 16.0
+        },
+        "close_below_ema": {
+          "period": 16.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 11.0,
+          "slow_period": 30.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 18.0
+        },
+        "close_below_ema": {
+          "period": 18.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 12.0,
+          "slow_period": 32.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 20.0
+        },
+        "close_below_ema": {
+          "period": 20.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 13.0,
+          "slow_period": 34.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 22.0
+        },
+        "close_below_ema": {
+          "period": 22.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 14.0,
+          "slow_period": 36.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 24.0
+        },
+        "close_below_ema": {
+          "period": 24.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 15.0,
+          "slow_period": 38.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 26.0
+        },
+        "close_below_ema": {
+          "period": 26.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 16.0,
+          "slow_period": 40.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 28.0
+        },
+        "close_below_ema": {
+          "period": 28.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 17.0,
+          "slow_period": 42.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "adx_trending",
+        "close_above_ema",
+        "ema_fast_above_slow"
+      ],
+      "exit_signals": [
+        "adx_weak",
+        "close_below_ema"
+      ],
+      "family": "trend-regime",
+      "id": "trend-regime-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "adx_trending": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "adx_weak": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "close_above_ema": {
+          "period": 30.0
+        },
+        "close_below_ema": {
+          "period": 30.0
+        },
+        "ema_fast_above_slow": {
+          "fast_period": 18.0,
+          "slow_period": 44.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 12.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 1.58,
+          "period": 12.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 1.58,
+          "period": 12.0
+        },
+        "roc_positive": {
+          "period": 12.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 14.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 1.76,
+          "period": 14.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 1.76,
+          "period": 14.0
+        },
+        "roc_positive": {
+          "period": 14.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 16.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 1.94,
+          "period": 16.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 1.94,
+          "period": 16.0
+        },
+        "roc_positive": {
+          "period": 16.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 18.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 2.12,
+          "period": 18.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 2.12,
+          "period": 18.0
+        },
+        "roc_positive": {
+          "period": 18.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 20.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 2.3,
+          "period": 20.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 2.3,
+          "period": 20.0
+        },
+        "roc_positive": {
+          "period": 20.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 22.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 2.48,
+          "period": 22.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 2.48,
+          "period": 22.0
+        },
+        "roc_positive": {
+          "period": 22.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 24.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 2.66,
+          "period": 24.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 2.66,
+          "period": 24.0
+        },
+        "roc_positive": {
+          "period": 24.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 26.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 2.84,
+          "period": 26.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 2.84,
+          "period": 26.0
+        },
+        "roc_positive": {
+          "period": 26.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 28.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 3.02,
+          "period": 28.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 3.02,
+          "period": 28.0
+        },
+        "roc_positive": {
+          "period": 28.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "keltner_breakout_up",
+        "roc_positive",
+        "cmf_positive"
+      ],
+      "exit_signals": [
+        "keltner_breakout_down",
+        "cmf_negative"
+      ],
+      "family": "keltner-breakout",
+      "id": "keltner-breakout-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "cmf_negative": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "cmf_positive": {
+          "period": 30.0,
+          "threshold": 0.0
+        },
+        "keltner_breakout_down": {
+          "atr_multiple": 3.2,
+          "period": 30.0
+        },
+        "keltner_breakout_up": {
+          "atr_multiple": 3.2,
+          "period": 30.0
+        },
+        "roc_positive": {
+          "period": 30.0,
+          "threshold": 0.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v01",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.6,
+        "risk_per_trade": 0.0025
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 9.0,
+          "slow_period": 26.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 9.0,
+          "slow_period": 26.0
+        },
+        "macd_bullish": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "macd_cross_down": {
+          "fast_period": 9.0,
+          "signal_period": 9.0,
+          "slow_period": 26.0
+        },
+        "volume_spike": {
+          "lookback": 19.0,
+          "multiple": 1.22
+        },
+        "vwap_below": {
+          "period": 12.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 1
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v02",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 1.82,
+        "risk_per_trade": 0.0032
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 10.0,
+          "slow_period": 28.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 10.0,
+          "slow_period": 28.0
+        },
+        "macd_bullish": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "macd_cross_down": {
+          "fast_period": 10.0,
+          "signal_period": 9.0,
+          "slow_period": 28.0
+        },
+        "volume_spike": {
+          "lookback": 23.0,
+          "multiple": 1.34
+        },
+        "vwap_below": {
+          "period": 14.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 2
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v03",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.04,
+        "risk_per_trade": 0.0039
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 11.0,
+          "slow_period": 30.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 11.0,
+          "slow_period": 30.0
+        },
+        "macd_bullish": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "macd_cross_down": {
+          "fast_period": 11.0,
+          "signal_period": 9.0,
+          "slow_period": 30.0
+        },
+        "volume_spike": {
+          "lookback": 27.0,
+          "multiple": 1.46
+        },
+        "vwap_below": {
+          "period": 16.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 3
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v04",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.26,
+        "risk_per_trade": 0.0046
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 12.0,
+          "slow_period": 32.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 12.0,
+          "slow_period": 32.0
+        },
+        "macd_bullish": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "macd_cross_down": {
+          "fast_period": 12.0,
+          "signal_period": 9.0,
+          "slow_period": 32.0
+        },
+        "volume_spike": {
+          "lookback": 31.0,
+          "multiple": 1.58
+        },
+        "vwap_below": {
+          "period": 18.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 4
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v05",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.48,
+        "risk_per_trade": 0.0053
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 13.0,
+          "slow_period": 34.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 13.0,
+          "slow_period": 34.0
+        },
+        "macd_bullish": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "macd_cross_down": {
+          "fast_period": 13.0,
+          "signal_period": 9.0,
+          "slow_period": 34.0
+        },
+        "volume_spike": {
+          "lookback": 35.0,
+          "multiple": 1.7
+        },
+        "vwap_below": {
+          "period": 20.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 5
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v06",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.7,
+        "risk_per_trade": 0.006
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 14.0,
+          "slow_period": 36.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 14.0,
+          "slow_period": 36.0
+        },
+        "macd_bullish": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "macd_cross_down": {
+          "fast_period": 14.0,
+          "signal_period": 9.0,
+          "slow_period": 36.0
+        },
+        "volume_spike": {
+          "lookback": 39.0,
+          "multiple": 1.82
+        },
+        "vwap_below": {
+          "period": 22.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 6
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v07",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 2.92,
+        "risk_per_trade": 0.0067
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 15.0,
+          "slow_period": 38.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 15.0,
+          "slow_period": 38.0
+        },
+        "macd_bullish": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "macd_cross_down": {
+          "fast_period": 15.0,
+          "signal_period": 9.0,
+          "slow_period": 38.0
+        },
+        "volume_spike": {
+          "lookback": 43.0,
+          "multiple": 1.94
+        },
+        "vwap_below": {
+          "period": 24.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 7
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v08",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.14,
+        "risk_per_trade": 0.0074
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 16.0,
+          "slow_period": 40.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 16.0,
+          "slow_period": 40.0
+        },
+        "macd_bullish": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "macd_cross_down": {
+          "fast_period": 16.0,
+          "signal_period": 9.0,
+          "slow_period": 40.0
+        },
+        "volume_spike": {
+          "lookback": 47.0,
+          "multiple": 2.06
+        },
+        "vwap_below": {
+          "period": 26.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 8
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v09",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.36,
+        "risk_per_trade": 0.0081
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 17.0,
+          "slow_period": 42.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 17.0,
+          "slow_period": 42.0
+        },
+        "macd_bullish": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "macd_cross_down": {
+          "fast_period": 17.0,
+          "signal_period": 9.0,
+          "slow_period": 42.0
+        },
+        "volume_spike": {
+          "lookback": 51.0,
+          "multiple": 2.18
+        },
+        "vwap_below": {
+          "period": 28.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 9
+    },
+    {
+      "entry_signals": [
+        "ema_fast_above_slow",
+        "macd_bullish",
+        "volume_spike"
+      ],
+      "exit_signals": [
+        "ema_fast_below_slow",
+        "macd_cross_down",
+        "vwap_below"
+      ],
+      "family": "multi-factor",
+      "id": "multi-factor-v10",
+      "pair": "BTC/USDT",
+      "risk": {
+        "atr_multiple": 3.58,
+        "risk_per_trade": 0.0088
+      },
+      "signal_params": {
+        "ema_fast_above_slow": {
+          "fast_period": 18.0,
+          "slow_period": 44.0
+        },
+        "ema_fast_below_slow": {
+          "fast_period": 18.0,
+          "slow_period": 44.0
+        },
+        "macd_bullish": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "macd_cross_down": {
+          "fast_period": 18.0,
+          "signal_period": 9.0,
+          "slow_period": 44.0
+        },
+        "volume_spike": {
+          "lookback": 55.0,
+          "multiple": 2.3
+        },
+        "vwap_below": {
+          "period": 30.0
+        }
+      },
+      "timeframe": "4h",
+      "version": 10
+    }
+  ],
+  "schema_version": 1,
+  "sha256": "4568dab36620c692fb75f92f8a9aa31dfc197d349210b68007e036ddf8d6f474",
+  "signals": [
+    {
+      "category": "trend",
+      "direction": "both",
+      "evaluator": "close_above_ema",
+      "id": "close_above_ema",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        }
+      ],
+      "required_indicators": [
+        "ema"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "both",
+      "evaluator": "close_below_ema",
+      "id": "close_below_ema",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        }
+      ],
+      "required_indicators": [
+        "ema"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "both",
+      "evaluator": "ema_fast_above_slow",
+      "id": "ema_fast_above_slow",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        }
+      ],
+      "required_indicators": [
+        "ema_fast",
+        "ema_slow"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "both",
+      "evaluator": "ema_fast_below_slow",
+      "id": "ema_fast_below_slow",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        }
+      ],
+      "required_indicators": [
+        "ema_fast",
+        "ema_slow"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "entry",
+      "evaluator": "ema_cross_up",
+      "id": "ema_cross_up",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        }
+      ],
+      "required_indicators": [
+        "ema_fast",
+        "ema_slow"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "exit",
+      "evaluator": "ema_cross_down",
+      "id": "ema_cross_down",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        }
+      ],
+      "required_indicators": [
+        "ema_fast",
+        "ema_slow"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "entry",
+      "evaluator": "adx_trending",
+      "id": "adx_trending",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "adx"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "exit",
+      "evaluator": "adx_weak",
+      "id": "adx_weak",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "adx"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "entry",
+      "evaluator": "supertrend_bullish",
+      "id": "supertrend_bullish",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0.5,
+          "name": "atr_multiple"
+        }
+      ],
+      "required_indicators": [
+        "supertrend"
+      ]
+    },
+    {
+      "category": "trend",
+      "direction": "exit",
+      "evaluator": "supertrend_bearish",
+      "id": "supertrend_bearish",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0.5,
+          "name": "atr_multiple"
+        }
+      ],
+      "required_indicators": [
+        "supertrend"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "entry",
+      "evaluator": "rsi_oversold",
+      "id": "rsi_oversold",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 30,
+          "maximum": 99,
+          "minimum": 0,
+          "name": "lower"
+        }
+      ],
+      "required_indicators": [
+        "rsi"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "exit",
+      "evaluator": "rsi_overbought",
+      "id": "rsi_overbought",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 70,
+          "maximum": 100,
+          "minimum": 1,
+          "name": "upper"
+        }
+      ],
+      "required_indicators": [
+        "rsi"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "entry",
+      "evaluator": "rsi_cross_up",
+      "id": "rsi_cross_up",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 30,
+          "maximum": 99,
+          "minimum": 0,
+          "name": "lower"
+        }
+      ],
+      "required_indicators": [
+        "rsi"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "exit",
+      "evaluator": "rsi_cross_down",
+      "id": "rsi_cross_down",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 70,
+          "maximum": 100,
+          "minimum": 1,
+          "name": "upper"
+        }
+      ],
+      "required_indicators": [
+        "rsi"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "entry",
+      "evaluator": "bollinger_lower_reentry",
+      "id": "bollinger_lower_reentry",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 0.5,
+          "name": "stddev"
+        }
+      ],
+      "required_indicators": [
+        "bb_lower"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "exit",
+      "evaluator": "bollinger_upper_reentry",
+      "id": "bollinger_upper_reentry",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 0.5,
+          "name": "stddev"
+        }
+      ],
+      "required_indicators": [
+        "bb_upper"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "entry",
+      "evaluator": "zscore_low",
+      "id": "zscore_low",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "zscore"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "exit",
+      "evaluator": "zscore_high",
+      "id": "zscore_high",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "zscore"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "entry",
+      "evaluator": "stoch_oversold_cross",
+      "id": "stoch_oversold_cross",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 30,
+          "maximum": 99,
+          "minimum": 0,
+          "name": "lower"
+        }
+      ],
+      "required_indicators": [
+        "stoch_k",
+        "stoch_d"
+      ]
+    },
+    {
+      "category": "mean_reversion",
+      "direction": "exit",
+      "evaluator": "stoch_overbought_cross",
+      "id": "stoch_overbought_cross",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 70,
+          "maximum": 100,
+          "minimum": 1,
+          "name": "upper"
+        }
+      ],
+      "required_indicators": [
+        "stoch_k",
+        "stoch_d"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "entry",
+      "evaluator": "macd_bullish",
+      "id": "macd_bullish",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        },
+        {
+          "default": 9,
+          "maximum": 60,
+          "minimum": 3,
+          "name": "signal_period"
+        }
+      ],
+      "required_indicators": [
+        "macd"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "exit",
+      "evaluator": "macd_bearish",
+      "id": "macd_bearish",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        },
+        {
+          "default": 9,
+          "maximum": 60,
+          "minimum": 3,
+          "name": "signal_period"
+        }
+      ],
+      "required_indicators": [
+        "macd"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "entry",
+      "evaluator": "macd_cross_up",
+      "id": "macd_cross_up",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        },
+        {
+          "default": 9,
+          "maximum": 60,
+          "minimum": 3,
+          "name": "signal_period"
+        }
+      ],
+      "required_indicators": [
+        "macd"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "exit",
+      "evaluator": "macd_cross_down",
+      "id": "macd_cross_down",
+      "parameters": [
+        {
+          "default": 12,
+          "maximum": 120,
+          "minimum": 3,
+          "name": "fast_period"
+        },
+        {
+          "default": 26,
+          "maximum": 260,
+          "minimum": 5,
+          "name": "slow_period"
+        },
+        {
+          "default": 9,
+          "maximum": 60,
+          "minimum": 3,
+          "name": "signal_period"
+        }
+      ],
+      "required_indicators": [
+        "macd"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "entry",
+      "evaluator": "roc_positive",
+      "id": "roc_positive",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "roc"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "exit",
+      "evaluator": "roc_negative",
+      "id": "roc_negative",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "roc"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "entry",
+      "evaluator": "cci_oversold_recovery",
+      "id": "cci_oversold_recovery",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 30,
+          "maximum": 99,
+          "minimum": 0,
+          "name": "lower"
+        }
+      ],
+      "required_indicators": [
+        "cci"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "exit",
+      "evaluator": "cci_overbought_reversal",
+      "id": "cci_overbought_reversal",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 70,
+          "maximum": 100,
+          "minimum": 1,
+          "name": "upper"
+        }
+      ],
+      "required_indicators": [
+        "cci"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "entry",
+      "evaluator": "mfi_oversold",
+      "id": "mfi_oversold",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 30,
+          "maximum": 99,
+          "minimum": 0,
+          "name": "lower"
+        }
+      ],
+      "required_indicators": [
+        "mfi"
+      ]
+    },
+    {
+      "category": "momentum",
+      "direction": "exit",
+      "evaluator": "mfi_overbought",
+      "id": "mfi_overbought",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 70,
+          "maximum": 100,
+          "minimum": 1,
+          "name": "upper"
+        }
+      ],
+      "required_indicators": [
+        "mfi"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "entry",
+      "evaluator": "atr_pct_above",
+      "id": "atr_pct_above",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0.01,
+          "maximum": 1,
+          "minimum": 0,
+          "name": "min_value"
+        }
+      ],
+      "required_indicators": [
+        "atr_pct"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "exit",
+      "evaluator": "atr_pct_below",
+      "id": "atr_pct_below",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0.12,
+          "maximum": 1,
+          "minimum": 0,
+          "name": "max_value"
+        }
+      ],
+      "required_indicators": [
+        "atr_pct"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "entry",
+      "evaluator": "bb_width_expanding",
+      "id": "bb_width_expanding",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "bb_width"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "exit",
+      "evaluator": "bb_width_contracting",
+      "id": "bb_width_contracting",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "bb_width"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "entry",
+      "evaluator": "keltner_breakout_up",
+      "id": "keltner_breakout_up",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0.5,
+          "name": "atr_multiple"
+        }
+      ],
+      "required_indicators": [
+        "keltner_upper"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "exit",
+      "evaluator": "keltner_breakout_down",
+      "id": "keltner_breakout_down",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0.5,
+          "name": "atr_multiple"
+        }
+      ],
+      "required_indicators": [
+        "keltner_lower"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "entry",
+      "evaluator": "donchian_breakout_up",
+      "id": "donchian_breakout_up",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "donchian_upper"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "exit",
+      "evaluator": "donchian_breakout_down",
+      "id": "donchian_breakout_down",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "donchian_lower"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "entry",
+      "evaluator": "squeeze_release_up",
+      "id": "squeeze_release_up",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "bb_width",
+        "keltner_upper"
+      ]
+    },
+    {
+      "category": "volatility_range",
+      "direction": "exit",
+      "evaluator": "squeeze_release_down",
+      "id": "squeeze_release_down",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "bb_width",
+        "keltner_lower"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "entry",
+      "evaluator": "volume_spike",
+      "id": "volume_spike",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 0.1,
+          "name": "multiple"
+        }
+      ],
+      "required_indicators": [
+        "volume_ratio"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "exit",
+      "evaluator": "volume_dry_up",
+      "id": "volume_dry_up",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 0.1,
+          "name": "multiple"
+        }
+      ],
+      "required_indicators": [
+        "volume_ratio"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "entry",
+      "evaluator": "obv_rising",
+      "id": "obv_rising",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "obv"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "exit",
+      "evaluator": "obv_falling",
+      "id": "obv_falling",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        }
+      ],
+      "required_indicators": [
+        "obv"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "entry",
+      "evaluator": "cmf_positive",
+      "id": "cmf_positive",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "cmf"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "exit",
+      "evaluator": "cmf_negative",
+      "id": "cmf_negative",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        },
+        {
+          "default": 0,
+          "maximum": 100,
+          "minimum": -100,
+          "name": "threshold"
+        }
+      ],
+      "required_indicators": [
+        "cmf"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "entry",
+      "evaluator": "vwap_above",
+      "id": "vwap_above",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        }
+      ],
+      "required_indicators": [
+        "vwap"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "exit",
+      "evaluator": "vwap_below",
+      "id": "vwap_below",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "period"
+        }
+      ],
+      "required_indicators": [
+        "vwap"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "entry",
+      "evaluator": "drawdown_fear",
+      "id": "drawdown_fear",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 0.01,
+          "maximum": 1,
+          "minimum": 0,
+          "name": "min_value"
+        }
+      ],
+      "required_indicators": [
+        "fear_drawdown"
+      ]
+    },
+    {
+      "category": "volume_price",
+      "direction": "exit",
+      "evaluator": "drawdown_recovery",
+      "id": "drawdown_recovery",
+      "parameters": [
+        {
+          "default": 20,
+          "maximum": 240,
+          "minimum": 3,
+          "name": "lookback"
+        },
+        {
+          "default": 0.12,
+          "maximum": 1,
+          "minimum": 0,
+          "name": "max_value"
+        }
+      ],
+      "required_indicators": [
+        "fear_drawdown"
+      ]
+    }
+  ]
+}
+

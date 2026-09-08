@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 from btc_backtest.strategies.base import Strategy
 from btc_backtest.strategies.ensemble import EnsembleComponent, WeightedEnsemble
@@ -13,6 +13,13 @@ from btc_backtest.strategies.target_weight import TargetWeightStrategy
 
 from qt.research.datasets import DatasetCatalog
 from qt.research.strategies import RuleRecipeStrategy
+
+if TYPE_CHECKING:
+    from qt.workbench.strategy_factory import (
+        BuiltLabStrategy,
+        DedicatedSourceConstructor,
+        VersionResolver,
+    )
 
 JsonDict: TypeAlias = dict[str, object]
 
@@ -41,6 +48,7 @@ def normalize_job_request(
     normalized: JsonDict = {
         "dataset_id": dataset_id,
         "ohlcv_key": dataset["key"],
+        "dataset_fingerprint": dataset["fingerprint"],
         "mode": mode,
         "validation_profile": profile,
         "assumptions": assumptions,
@@ -113,8 +121,36 @@ def normalize_job_request(
     return normalized
 
 
-def build_strategy(spec: Mapping[str, object]) -> Strategy:
+def build_strategy(
+    spec: Mapping[str, object],
+    *,
+    version_resolver: VersionResolver | None = None,
+    source_constructor: DedicatedSourceConstructor | None = None,
+    primary_timeframe: str | None = None,
+) -> Strategy | BuiltLabStrategy:
+    """Build a strategy only from the caller's immutable execution contract.
+
+    Lab composites must receive the exact version resolver used when the graph
+    was fixed at enqueue time. Source-family identities similarly require an
+    explicit native constructor. Keeping both dependencies at this boundary
+    prevents the old rule-only fallback from silently changing source meaning.
+    """
+
     mode = str(spec.get("mode", "template"))
+    if mode == "lab_strategy_version":
+        from qt.workbench.strategy_factory import build_lab_strategy
+
+        raw_version = _mapping(spec.get("lab_strategy_version"), "lab_strategy_version")
+        return build_lab_strategy(
+            raw_version,
+            version_resolver=version_resolver,
+            source_constructor=source_constructor,
+            parameter_overrides=_object_mapping(spec.get("parameter_overrides")),
+            primary_timeframe=(
+                primary_timeframe
+                or _timeframe(spec.get("primary_timeframe"), "primary_timeframe")
+            ),
+        )
     if mode == "custom_rules":
         rules = _mapping(spec.get("rules"), "rules")
         return RuleRecipeStrategy(rules)
@@ -233,3 +269,9 @@ def _integer(value: object, default: int, field: str) -> int:
         return int(str(value))
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field} must be an integer") from error
+
+
+def _timeframe(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} is required for immutable Lab execution")
+    return value.strip()

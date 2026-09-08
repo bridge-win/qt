@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
+import pandas as pd
 import pytest
+from btc_backtest.engine.models import PortfolioSnapshot
+from btc_backtest.strategies.base import StrategyContext
 from btc_backtest.strategies.ensemble import WeightedEnsemble
 
 from qt.backtest.strategy_backtest import synthetic_btc_ohlcv
@@ -126,3 +130,86 @@ def test_ensemble_rejects_non_target_weight_strategy(tmp_path: Path) -> None:
             },
             _catalog(tmp_path),
         )
+
+
+def test_lab_strategy_build_uses_immutable_child_graph_and_primary_timeframe() -> None:
+    """A queued Lab graph must not become a current-timeframe rule at execution."""
+
+    child = {
+        "version_id": "child-rules-v1",
+        "content": {
+            "mode": "rules",
+            "parameters": [],
+            "entry_rule": {
+                "kind": "comparison",
+                "left": {
+                    "indicator": "sma",
+                    "timeframe": "4h",
+                    "parameters": {"window": 2},
+                },
+                "comparator": ">",
+                "right": 2.5,
+            },
+            "exit_rule": {
+                "kind": "comparison",
+                "left": {"indicator": "close", "parameters": {}},
+                "comparator": "<",
+                "right": -1,
+            },
+        },
+    }
+    root = {
+        "version_id": "root-regime-v1",
+        "content": {
+            "mode": "regime_switch",
+            "parameters": [],
+            "regimes": [
+                {
+                    "name": "enabled",
+                    "when": {
+                        "kind": "comparison",
+                        "left": {"indicator": "close", "parameters": {}},
+                        "comparator": ">",
+                        "right": 0,
+                    },
+                    "strategy_version_id": "child-rules-v1",
+                }
+            ],
+        },
+    }
+    versions = {"child-rules-v1": child}
+    built = build_strategy(
+        {"mode": "lab_strategy_version", "lab_strategy_version": root},
+        version_resolver=versions.__getitem__,
+        primary_timeframe="1h",
+    )
+    strategy = built.strategy
+    index = pd.date_range("2024-01-01", periods=5, freq="h", tz="UTC")
+    close = pd.Series([1.0, 1.5, 2.0, 2.5, 5.0], index=index)
+    bars = pd.DataFrame(
+        {
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 1.0,
+        },
+        index=index,
+    )
+    timestamp = index[-1].to_pydatetime()
+    context = StrategyContext(
+        timestamp=timestamp,
+        bars=bars,
+        portfolio=PortfolioSnapshot(
+            timestamp=timestamp,
+            cash=Decimal("100"),
+            equity=Decimal("100"),
+            realized_pnl=Decimal("0"),
+            unrealized_pnl=Decimal("0"),
+            positions=(),
+        ),
+    )
+
+    assert strategy.target_weight(context) == Decimal("1")
+    explanation = strategy.explain_decision(context)
+    assert explanation["regime"]["selected"] == "enabled"

@@ -25,6 +25,44 @@ That single command:
 To upgrade later, run the same one-liner again — it `git pull`s and
 `pip install -e .`s in place.
 
+## Optional native research workbench worker
+
+The existing dashboard and paper services remain the default deployment. The
+unified v3 workbench is opt-in because it requires Python 3.12, Nautilus/TA-Lib,
+and strict 256 MiB API / 512 MiB worker ceilings on the small compute node. It
+starts a loopback-only `qt-workbench-api` and one worker for bounded research,
+import, sync, validation, and optimization jobs from SQLite; it cannot enable
+live trading or submit orders.
+
+After verifying capacity and a Python 3.12 executable on the compute node,
+deploy it explicitly:
+
+```bash
+QT_ENABLE_WORKBENCH=true QT_NATIVE_PYTHON=python3.12 deploy/ssh-deploy.sh
+```
+
+Its state is under `/opt/qt/data/workbench`; inspect it with
+`systemctl status qt-workbench-api qt-workbench-worker`. Do not enable it for
+multi-year minute/tick studies on the current 2-vCPU node.
+
+The API is an authenticated edge origin, not a public listener. Set the
+following only in `/opt/qt/.env.workbench` (mode 600, owned by `qt`) after the
+Cloudflare Worker has matching secrets:
+
+```env
+QT_WORKBENCH_ORIGIN_CLIENT_ID=generated-worker-origin-id
+QT_WORKBENCH_ORIGIN_CLIENT_SECRET=generated-worker-origin-secret
+# Optional: enables private immutable R2 report publication from the worker.
+QT_R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+QT_R2_REPORTS_BUCKET=qt-reports
+QT_R2_ACCESS_KEY_ID=...
+QT_R2_SECRET_ACCESS_KEY=...
+```
+
+Do not put these values in git, browser configuration, or the dashboard `.env`.
+Without all four `QT_R2_*` values, completed local reports remain explicitly
+unpublished; the API never guesses a download URL.
+
 Override defaults via env vars before piping to bash, e.g.:
 
 ```bash

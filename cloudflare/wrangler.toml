@@ -1,0 +1,30 @@
+name = "qt-research-workbench"
+main = "../web/edge/worker.ts"
+compatibility_date = "2026-09-07"
+workers_dev = true
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Static assets must pass through the Worker on previews, workers.dev, and
+# production. Otherwise an unauthenticated request could bypass Access JWT
+# verification by fetching a static SPA file directly.
+run_worker_first = true
+
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "qt-research-reports"
+
+[vars]
+MAX_API_BODY_BYTES = "1048576"
+
+# Configure these non-secret values in the target Cloudflare environment; do
+# not substitute look-alike values or an unauthenticated public origin here:
+# ACCESS_JWT_ISSUER
+# ACCESS_JWT_AUDIENCE
+# ORIGIN_URL
+#
+# Configure these secrets only with `wrangler secret put`, never in Git:
+# ORIGIN_CLIENT_ID
+# ORIGIN_CLIENT_SECRET
