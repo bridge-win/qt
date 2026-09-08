@@ -79,6 +79,19 @@ describe("QT edge worker", () => {
     expect(response.status).toBe(200);
   });
 
+  it("accepts signed Cloudflare Access tokens from the token issuer while rejecting arbitrary issuer hosts", async () => {
+    const cloudflareIssuer = "https://dry-disk-7ba3.cloudflareaccess.com/";
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const address = String(input);
+      if (address.startsWith("https://dry-disk-7ba3.cloudflareaccess.com")) return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: "edge-test", alg: "RS256" }] }), { headers: { "content-type": "application/json" } });
+      return new Response("unexpected origin", { status: 500 });
+    }));
+    const accepted = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: cloudflareIssuer }) } }), env);
+    expect(accepted.status).toBe(200);
+    const rejected = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: "https://attacker.example" }) } }), env);
+    expect(rejected.status).toBe(401);
+  });
+
   it("preserves API 404 JSON instead of returning SPA HTML", async () => {
     const token = await accessToken();
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

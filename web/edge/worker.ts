@@ -52,6 +52,15 @@ function normalizedIssuer(value: string): string {
   return issuer;
 }
 
+function trustedAccessIssuer(configuredIssuer: string, tokenIssuer: string): string {
+  const configured = normalizedIssuer(configuredIssuer);
+  const token = normalizedIssuer(tokenIssuer);
+  if (token === configured) return configured;
+  const hostname = new URL(token).hostname;
+  if (hostname === "cloudflareaccess.com" || hostname.endsWith(".cloudflareaccess.com")) return token;
+  throw new Error("Access JWT issuer does not match this deployment");
+}
+
 async function certificateKeys(issuer: string, refresh = false): Promise<Jwk[]> {
   const normalized = normalizedIssuer(issuer);
   const cached = jwks.get(normalized);
@@ -72,8 +81,7 @@ async function verifyAccessJwt(token: string, env: Env): Promise<AccessClaims> {
   const header = parsePart<{ alg?: string; kid?: string }>(parts[0]);
   const claims = parsePart<AccessClaims>(parts[1]);
   if (header.alg !== "RS256" || !header.kid) throw new Error("Unsupported Access JWT signing algorithm");
-  const issuer = normalizedIssuer(env.ACCESS_JWT_ISSUER);
-  if (normalizedIssuer(claims.iss) !== issuer) throw new Error("Access JWT issuer does not match this deployment");
+  const issuer = trustedAccessIssuer(env.ACCESS_JWT_ISSUER, claims.iss);
   if (!Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) throw new Error("Access JWT has expired");
   if (claims.nbf !== undefined && (!Number.isFinite(claims.nbf) || claims.nbf > Math.floor(Date.now() / 1000))) throw new Error("Access JWT is not active yet");
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
