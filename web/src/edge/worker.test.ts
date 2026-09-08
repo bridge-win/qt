@@ -68,6 +68,17 @@ describe("QT edge worker", () => {
     expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith(env.ACCESS_JWT_ISSUER)).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("accepts the same Access issuer with trailing slash differences", async () => {
+    const slashEnv = { ...env, ACCESS_JWT_ISSUER: `${env.ACCESS_JWT_ISSUER}/` };
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const address = String(input);
+      if (address.startsWith(env.ACCESS_JWT_ISSUER)) return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: "edge-test", alg: "RS256" }] }), { headers: { "content-type": "application/json" } });
+      return new Response("unexpected origin", { status: 500 });
+    }));
+    const response = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken() } }), slashEnv);
+    expect(response.status).toBe(200);
+  });
+
   it("preserves API 404 JSON instead of returning SPA HTML", async () => {
     const token = await accessToken();
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

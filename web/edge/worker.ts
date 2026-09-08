@@ -46,16 +46,23 @@ function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+function normalizedIssuer(value: string): string {
+  const issuer = value.trim().replace(/\/+$/, "");
+  if (!issuer.startsWith("https://")) throw new Error("Access JWT issuer must use HTTPS");
+  return issuer;
+}
+
 async function certificateKeys(issuer: string, refresh = false): Promise<Jwk[]> {
-  const cached = jwks.get(issuer);
+  const normalized = normalizedIssuer(issuer);
+  const cached = jwks.get(normalized);
   if (!refresh && cached && cached.expiresAt > Date.now()) return cached.keys;
-  const response = await fetch(`${issuer.replace(/\/$/, "")}/cdn-cgi/access/certs`, { headers: { accept: "application/json" } });
+  const response = await fetch(`${normalized}/cdn-cgi/access/certs`, { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error("Access certificate endpoint unavailable");
   const payload = await response.json() as { keys?: unknown };
   if (!Array.isArray(payload.keys)) throw new Error("Access certificate response is invalid");
   const keys = payload.keys.filter((key): key is Jwk => Boolean(key) && typeof key === "object" && (key as Jwk).kty === "RSA" && (key as Jwk).alg === "RS256");
   if (keys.length === 0) throw new Error("No compatible Access signing key");
-  jwks.set(issuer, { keys, expiresAt: Date.now() + 5 * 60_000 });
+  jwks.set(normalized, { keys, expiresAt: Date.now() + 5 * 60_000 });
   return keys;
 }
 
@@ -65,14 +72,15 @@ async function verifyAccessJwt(token: string, env: Env): Promise<AccessClaims> {
   const header = parsePart<{ alg?: string; kid?: string }>(parts[0]);
   const claims = parsePart<AccessClaims>(parts[1]);
   if (header.alg !== "RS256" || !header.kid) throw new Error("Unsupported Access JWT signing algorithm");
-  if (claims.iss !== env.ACCESS_JWT_ISSUER) throw new Error("Access JWT issuer does not match this deployment");
+  const issuer = normalizedIssuer(env.ACCESS_JWT_ISSUER);
+  if (normalizedIssuer(claims.iss) !== issuer) throw new Error("Access JWT issuer does not match this deployment");
   if (!Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) throw new Error("Access JWT has expired");
   if (claims.nbf !== undefined && (!Number.isFinite(claims.nbf) || claims.nbf > Math.floor(Date.now() / 1000))) throw new Error("Access JWT is not active yet");
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(env.ACCESS_JWT_AUDIENCE)) throw new Error("Access JWT audience does not match this deployment");
   if (!claims.sub || typeof claims.sub !== "string") throw new Error("Access JWT subject is missing");
-  let key = (await certificateKeys(env.ACCESS_JWT_ISSUER)).find((candidate) => candidate.kid === header.kid);
-  if (!key) key = (await certificateKeys(env.ACCESS_JWT_ISSUER, true)).find((candidate) => candidate.kid === header.kid);
+  let key = (await certificateKeys(issuer)).find((candidate) => candidate.kid === header.kid);
+  if (!key) key = (await certificateKeys(issuer, true)).find((candidate) => candidate.kid === header.kid);
   if (!key) throw new Error("Access JWT signing key is unknown");
   const publicKey = await crypto.subtle.importKey("jwk", key, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
   const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, arrayBuffer(base64UrlBytes(parts[2])), arrayBuffer(new TextEncoder().encode(`${parts[0]}.${parts[1]}`)));
