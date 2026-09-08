@@ -192,11 +192,17 @@ function secureAssetResponse(response: Response): Response {
 
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const access = await requireAccess(request, env);
-    if (access instanceof Response) return access;
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/")) return proxyApi(request, env, access.claims, access.token);
-    if (url.pathname.startsWith("/artifacts/")) return privateArtifact(request, env, url.pathname);
+    if (url.pathname.startsWith("/api/")) {
+      const access = await requireAccess(request, env);
+      if (access instanceof Response) return access;
+      return proxyApi(request, env, access.claims, access.token);
+    }
+    if (url.pathname.startsWith("/artifacts/")) {
+      const access = await requireAccess(request, env);
+      if (access instanceof Response) return access;
+      return privateArtifact(request, env, url.pathname);
+    }
     if (request.method !== "GET" && request.method !== "HEAD") return textResponse(405, "Static assets are read-only.");
     return secureAssetResponse(await env.ASSETS.fetch(request));
   },

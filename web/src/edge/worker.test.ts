@@ -38,11 +38,20 @@ async function accessToken(overrides: Record<string, unknown> = {}, kid = "edge-
 }
 
 describe("QT edge worker", () => {
-  afterEach(() => vi.unstubAllGlobals());
-  it("rejects a forged identity email without a signed Access JWT before serving assets", async () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+  it("serves static assets without trusting a forged identity header", async () => {
     const response = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-authenticated-user-email": "admin@example.com" } }), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toContain("private app");
+  });
+
+  it("rejects API requests without a signed Access JWT", async () => {
+    const response = await worker.fetch(new Request("https://preview.workers.dev/api/v3/capabilities"), env);
     expect(response.status).toBe(401);
-    expect(await response.text()).not.toContain("private app");
   });
 
   it("accepts a valid signature and rejects expired, future, wrong-claim, unknown-key, and tampered JWTs", async () => {
@@ -52,8 +61,8 @@ describe("QT edge worker", () => {
       return new Response("unexpected origin", { status: 500 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const validResponse = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken() } }), env);
-    expect(validResponse.status).toBe(200);
+    const validResponse = await worker.fetch(new Request("https://preview.workers.dev/artifacts/missing.txt", { headers: { "cf-access-jwt-assertion": await accessToken() } }), env);
+    expect(validResponse.status).toBe(404);
     const expired = await accessToken({ exp: Math.floor(Date.now() / 1000) - 1 });
     const future = await accessToken({ nbf: Math.floor(Date.now() / 1000) + 60 });
     const wrongIssuer = await accessToken({ iss: "https://attacker.example" });
@@ -62,7 +71,7 @@ describe("QT edge worker", () => {
     const valid = await accessToken();
     const tampered = `${valid.slice(0, -1)}${valid.endsWith("a") ? "b" : "a"}`;
     for (const token of [expired, future, wrongIssuer, wrongAudience, unknownKey, tampered]) {
-      const response = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": token } }), env);
+      const response = await worker.fetch(new Request("https://preview.workers.dev/artifacts/missing.txt", { headers: { "cf-access-jwt-assertion": token } }), env);
       expect(response.status).toBe(401);
     }
     expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith(env.ACCESS_JWT_ISSUER)).length).toBeGreaterThanOrEqual(2);
@@ -86,9 +95,9 @@ describe("QT edge worker", () => {
       if (address.startsWith("https://dry-disk-7ba3.cloudflareaccess.com")) return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: "edge-test", alg: "RS256" }] }), { headers: { "content-type": "application/json" } });
       return new Response("unexpected origin", { status: 500 });
     }));
-    const accepted = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: cloudflareIssuer }) } }), env);
-    expect(accepted.status).toBe(200);
-    const rejected = await worker.fetch(new Request("https://preview.workers.dev/", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: "https://attacker.example" }) } }), env);
+    const accepted = await worker.fetch(new Request("https://preview.workers.dev/artifacts/missing.txt", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: cloudflareIssuer }) } }), env);
+    expect(accepted.status).toBe(404);
+    const rejected = await worker.fetch(new Request("https://preview.workers.dev/artifacts/missing.txt", { headers: { "cf-access-jwt-assertion": await accessToken({ iss: "https://attacker.example" }) } }), env);
     expect(rejected.status).toBe(401);
   });
 
