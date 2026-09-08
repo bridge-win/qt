@@ -79,4 +79,53 @@ Cloudflare 托管网页、鉴权和访问入口，Python/Nautilus 的重回测�
 5. 配置私有桶 `qt-research-reports`；计算节点的 `QT_R2_REPORTS_BUCKET` 必须使用同一桶名。没有 R2 凭据时结果只保留本地，不能假造下载链接。
 6. 验证未登录拒绝访问、登录后页面及 API、提交/完成/复现、报告下载和重启恢复，再记录正式访问地址。
 
-当前没有完成 Cloudflare 上线验收，旧设备授权已过期。新一轮授权、容量核验及部署属于后续独立操作。详细脚本参考 `deploy/README.md`，核心范围与未完成事项参考本轮 TODO spec。
+## TC deployment verification (2026-09-08)
+
+The web build, FastAPI, SQLite state, Parquet datasets, native research worker,
+and generated reports are hosted on TC under `/opt/qt`. Cloudflare remains
+the authenticated public entry point and forwards API requests to TC HTTPS.
+No process on the developer's Mac is required for this path.
+
+- Public entry: <https://qt-research-workbench.danielkong1993.workers.dev/>.
+- TC static web/origin: <https://101.32.243.66.sslip.io/>. Its API intentionally
+  rejects requests without the Worker origin credentials; use the public
+  entry for interactive research.
+- Python 3.12.14 is installed under `/opt/qt/python`; API and worker use
+  `/opt/qt/.venv-native-research`. Nautilus is 2.0.0rc4, Optuna 4.5.0,
+  and TA-Lib 0.7.1.
+- `qt-workbench-api` and `qt-workbench-worker` use the repository systemd
+  units. Caddy serves `/opt/qt/web/dist` and proxies `/api/*` to port 8877.
+- State and reports: `/opt/qt/data/workbench`; historical data:
+  `/opt/qt/data/parquet`. The existing OKX BTC/USDT hourly dataset contains
+  43,800 rows, ending 2026-06-04; it is historical, not a current feed.
+- The legacy `btc-qt-qt-record-1` container was stopped to free about 280 MiB
+  on this 2 GiB server. Its data and container remain intact and it can be
+  restored with `docker start btc-qt-qt-record-1`. Reassess capacity before
+  running it alongside native research. It is not part of v3 task execution.
+
+Acceptance: TC native engine/lab/queue suite: 68 passed, 1 performance test
+deselected. Worker/report regression suite: 22 passed locally. An API-submitted
+weekly-DCA backtest over January 2026 completed, and reproduction returned
+identical metrics. Job IDs: `a2681fca1952461a9855b51e33c5995b` and
+`a3fe4c810e8a43c2a192bc7dc99a439b`. These verify execution and reproducibility,
+not profitability or every migrated strategy. HTTPS returned 200 on TC and
+302 to authentication on Cloudflare; a fresh logged-in browser acceptance
+was not completed in this run.
+
+Repeat the API check on TC (creates labeled research records):
+
+```bash
+cd /opt/qt
+.venv-native-research/bin/python scripts/verify_tc_workbench.py
+systemctl status qt-workbench-api qt-workbench-worker
+journalctl -u qt-workbench-worker -n 50 --no-pager
+```
+
+Remaining deployment boundary: the pinned custom-plugin image
+`qt-plugin-runtime:py312-nautilus-2.0.0rc4` was built successfully, but the
+`qt` service user has not been granted Docker access. Automatic approval
+rejected adding it to the Docker group because that grants broad host
+control. Custom Python plugins are therefore not accepted as operational;
+built-in strategies and rule-based native backtests do not require Docker.
+R2 publication remains optional; reports persist on TC, and unconfigured R2
+must not be presented as a working browser download. No live trading is enabled.

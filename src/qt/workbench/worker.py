@@ -36,6 +36,10 @@ class WorkbenchWorker:
         state_root: Path,
         worker_id: str,
     ) -> None:
+        # Service units accept relative roots; report publication requires
+        # canonical absolute artifact paths, including when R2 is disabled.
+        parquet_root = parquet_root.resolve()
+        state_root = state_root.resolve()
         database = state_root / "research.sqlite3"
         self.research_repository = ResearchRepository(database, queue_limit=20)
         self.dataset_catalog = DatasetCatalog(parquet_root)

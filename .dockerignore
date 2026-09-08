@@ -3,6 +3,10 @@
 .claude
 .superpowers
 .venv
+.venv-*
+python
+web/node_modules
+web/dist
 .env
 .env.*
 .DS_Store
