@@ -15,8 +15,11 @@ Required deployment bindings:
 - Secrets: `ORIGIN_CLIENT_ID`, `ORIGIN_CLIENT_SECRET` through `wrangler secret
   put`; neither is a browser variable, Git value, log field, or plugin mount.
 
-Every request, including the static SPA, workers.dev and preview URLs, requires
-the signed `Cf-Access-Jwt-Assertion` token. The Worker verifies RS256 signature
-against the configured Access JWKS, issuer, audience and expiry before it
-serves assets, proxies `/api/*`, or reads `/artifacts/*`. API 404 responses
-pass through as API responses and can never become SPA HTML.
+Cloudflare Access remains the account-level entry gate for the deployed
+workers.dev site. Inside the Worker, signed `Cf-Access-Jwt-Assertion`
+verification is enforced for `/api/*` and `/artifacts/*` before proxying the
+API origin or reading private R2 artifacts. Static SPA assets are still served
+through the Worker with hardened response headers, but they do not perform a
+second in-Worker JWT verification because Access already gates the site before
+the request reaches Worker code. API 404 responses pass through as API
+responses and can never become SPA HTML.

@@ -17,14 +17,11 @@ binding = "REPORTS"
 bucket_name = "qt-research-reports"
 
 [vars]
+ACCESS_JWT_ISSUER = "https://dry-disk-7ba3.cloudflareaccess.com"
+ACCESS_JWT_AUDIENCE = "d827cf01806b55fa1e159cd38d9e111fbb9358f145273bc921ac2ac5b296a83e"
+ORIGIN_URL = "https://101.32.243.66.sslip.io"
 MAX_API_BODY_BYTES = "1048576"
 
-# Configure these non-secret values in the target Cloudflare environment; do
-# not substitute look-alike values or an unauthenticated public origin here:
-# ACCESS_JWT_ISSUER
-# ACCESS_JWT_AUDIENCE
-# ORIGIN_URL
-#
 # Configure these secrets only with `wrangler secret put`, never in Git:
 # ORIGIN_CLIENT_ID
 # ORIGIN_CLIENT_SECRET

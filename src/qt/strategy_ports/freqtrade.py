@@ -9,7 +9,7 @@ the native engine through small explicit domain models.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from math import isfinite
@@ -234,7 +234,7 @@ class FreqtradeTradeState:
     remaining_quantity: float
     opened_at: datetime
     total_fees: float = 0.0
-    filled_quantities: Mapping[str, float] = MappingProxyType({})
+    filled_quantities: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         if not isfinite(self.entry_price) or self.entry_price <= 0:
