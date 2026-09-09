@@ -18,9 +18,11 @@ from qt.monitoring.reporting import format_backtest_report
 def _series(
     store: ParquetStore,
     ds: str,
-    key: str,
+    key: str | tuple[str, ...],
     col: str | None = None,
 ) -> pd.Series | pd.DataFrame | None:
+    if isinstance(key, tuple):
+        return store.read_column(ds, key, col or "")
     d = store.read(ds, key)
     if d.empty:
         return None
@@ -56,8 +58,8 @@ def main() -> None:
         long_short_ratio=_series(store, "derivatives", "binance_BTCUSDT_lsr_1h",
                                  "long_short_ratio"),
         sopr=_series(store, "onchain", "glassnode_sopr_adj", "sopr_adj"),
-        mvrv_z=_series(store, "onchain", "glassnode_mvrv_z", "mvrv_z"),
-        nupl=_series(store, "onchain", "glassnode_nupl", "nupl"),
+        mvrv_z=_series(store, "onchain", ("glassnode_mvrv_z", "coinmetrics_derived"), "mvrv_z"),
+        nupl=_series(store, "onchain", ("glassnode_nupl", "coinmetrics_derived"), "nupl"),
         puell=_series(store, "onchain", "glassnode_puell_multiple", "puell_multiple"),
         reserve_risk=_series(store, "onchain", "glassnode_reserve_risk", "reserve_risk"),
         exchange_netflow=_series(store, "onchain", "glassnode_exchange_netflow",
@@ -66,8 +68,8 @@ def main() -> None:
         social_sentiment=_series(store, "sentiment",
                                  "santiment_sentiment_weighted_total_btc",
                                  "sentiment_weighted_total_btc"),
-        vix=_series(store, "macro", "fred_vix", "vix"),
-        dxy=_series(store, "macro", "fred_dxy", "dxy"),
+        vix=_series(store, "macro", ("yahoo_vix", "fred_vix"), "vix"),
+        dxy=_series(store, "macro", ("yahoo_dxy", "fred_dxy"), "dxy"),
     )
     format_backtest_report(result, Console())
     artifact = write_backtest_artifacts(

@@ -24,7 +24,8 @@ from qt.data.derivatives import (
     fetch_open_interest_history,
 )
 from qt.data.market import fetch_ohlcv
-from qt.data.onchain import fetch_coinmetrics
+from qt.data.macro import fetch_macro_veto_inputs
+from qt.data.onchain import fetch_coinmetrics_mvrv_z
 from qt.data.sentiment import fetch_fear_greed
 from qt.execution.base import Order
 from qt.execution.paper import PaperBroker
@@ -75,7 +76,9 @@ def main() -> None:
         oi = fetch_open_interest_history(symbol=market_symbol)
         lsr = fetch_long_short_ratio(symbol=market_symbol)
         fg = fetch_fear_greed(limit=0)
-        mvrv = fetch_coinmetrics("mvrv", since=since)
+        onchain = fetch_coinmetrics_mvrv_z(since=since)
+        macro = fetch_macro_veto_inputs(fred_api_key=settings.fred_api_key)
+        vix, dxy = macro.get("vix"), macro.get("dxy")
 
         score = sig_engine.evaluate(
             ohlcv=ohlcv,
@@ -83,7 +86,10 @@ def main() -> None:
             oi=oi["oi_usd"] if not oi.empty else None,
             long_short_ratio=lsr["long_short_ratio"] if not lsr.empty else None,
             fear_greed=fg["fear_greed"] if not fg.empty else None,
-            mvrv_z=mvrv["mvrv"] if not mvrv.empty else None,  # mvrv proxy if Z unavailable
+            mvrv_z=onchain["mvrv_z"] if not onchain.empty else None,
+            nupl=onchain["nupl"] if not onchain.empty else None,
+            vix=vix["vix"] if vix is not None and not vix.empty else None,
+            dxy=dxy["dxy"] if dxy is not None and not dxy.empty else None,
         )
         sigs = sig_engine.to_signals(score)
         latest_ts = ohlcv.index[-1]

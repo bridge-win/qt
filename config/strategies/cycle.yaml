@@ -1,0 +1,15 @@
+# Strategy G — Four-year cycle regime (super-long horizon)
+#
+# Daily data from Bitstamp (10y+ free). Publishes a 0–100 cycle position
+# and a target BTC allocation; buy alert ≤15 / Pi Cycle Bottom, sell alert
+# ≥85 / Pi Cycle Top. Shorter-horizon strategies should size *inside* this.
+enabled: true
+interval_seconds: 21600
+description: "Cycle position from MVRV-Z, NUPL, Mayer, 200W multiple, Pi Cycle, halving clock."
+min_alert_severity: warning
+params:
+  symbol: "BTC/USD"
+  exchange: "bitstamp"
+  history_days: 2920
+  accumulate_max: 15
+  distribute_min: 85

@@ -9,7 +9,9 @@ from __future__ import annotations
 from qt.strategies.base import Strategy
 from qt.strategies.capitulation import Capitulation
 from qt.strategies.carry import BasisCarry
+from qt.strategies.cycle import CycleRegime
 from qt.strategies.dca import SmartDCA
+from qt.strategies.overheat import Overheat
 from qt.strategies.trend import WeeklyTrend
 from qt.strategies.wick_catcher import WickCatcher
 
@@ -19,6 +21,8 @@ REGISTRY: dict[str, type[Strategy]] = {
     WeeklyTrend.name: WeeklyTrend,
     BasisCarry.name: BasisCarry,
     WickCatcher.name: WickCatcher,
+    Overheat.name: Overheat,
+    CycleRegime.name: CycleRegime,
 }
 
 

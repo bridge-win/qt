@@ -25,7 +25,14 @@ from qt.data.derivatives import (
 )
 from qt.data.macro import fetch_fred
 from qt.data.market import fetch_ohlcv
-from qt.data.onchain import fetch_coinmetrics, fetch_glassnode
+from qt.data.coinglass import fetch_aggregated_liquidations, fetch_etf_flows
+from qt.data.macro import fetch_yahoo_daily
+from qt.data.onchain import (
+    fetch_coinmetrics,
+    fetch_coinmetrics_mvrv_z,
+    fetch_glassnode,
+    fetch_stablecoin_supply,
+)
 from qt.data.sentiment import fetch_fear_greed, fetch_santiment_social
 from qt.data.store import ParquetStore
 
@@ -74,6 +81,25 @@ def main() -> None:
         store.upsert("onchain", f"coinmetrics_{metric}", df)
         console.print(f"  cm {metric}: {len(df)} rows")
 
+    # Derived on-chain (free): real MVRV-Z + NUPL from caps — replaces the
+    # raw-ratio proxy that could never trip the Z-score threshold.
+    derived = fetch_coinmetrics_mvrv_z(since=since)
+    store.upsert("onchain", "coinmetrics_derived", derived)
+    console.print(f"  cm derived mvrv_z/nupl: {len(derived)} rows")
+    stables = fetch_stablecoin_supply()
+    store.upsert("onchain", "defillama_stablecoins", stables)
+    console.print(f"  defillama stablecoins: {len(stables)} rows")
+
+    # Coinglass (key required): aggregated liquidations + spot ETF flows
+    if settings.coinglass_api_key:
+        console.rule("Coinglass")
+        liq = fetch_aggregated_liquidations(settings.coinglass_api_key, since=since)
+        store.upsert("derivatives", "coinglass_BTC_liq_1h", liq)
+        console.print(f"  liquidations: {len(liq)} rows")
+        etf = fetch_etf_flows(settings.coinglass_api_key)
+        store.upsert("flows", "coinglass_etf_btc", etf)
+        console.print(f"  etf flows: {len(etf)} rows")
+
     # On-chain paid (graceful no-op without key)
     if settings.glassnode_api_key:
         console.rule("On-chain (Glassnode)")
@@ -94,7 +120,13 @@ def main() -> None:
             store.upsert("sentiment", f"santiment_{metric}", df)
             console.print(f"  san {metric}: {len(df)} rows")
 
-    # Macro
+    # Macro (keyless): Yahoo VIX + true DXY (ICE). FRED's DTWEXBGS is a
+    # broad trade-weighted index, not DXY — kept only as fallback.
+    console.rule("Macro (Yahoo)")
+    for m in ("vix", "dxy"):
+        df = fetch_yahoo_daily(m)
+        store.upsert("macro", f"yahoo_{m}", df)
+        console.print(f"  yahoo {m}: {len(df)} rows")
     if settings.fred_api_key:
         console.rule("Macro (FRED)")
         for metric in ["us10y", "fed_funds", "m2", "cpi", "dxy", "vix"]:

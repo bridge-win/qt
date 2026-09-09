@@ -40,7 +40,7 @@ from qt.strategies.runner import _make_broker
 
 
 def test_registry_has_all_four() -> None:
-    assert set(REGISTRY) == {"dca", "capitulation", "trend", "carry", "wick"}
+    assert set(REGISTRY) == {"dca", "capitulation", "trend", "carry", "wick", "overheat", "cycle"}
 
 
 def test_load_strategy_configs_reads_yaml(tmp_path: Path) -> None:

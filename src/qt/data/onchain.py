@@ -159,3 +159,89 @@ def fetch_mempool_fees() -> dict[str, float]:
     if not isinstance(data, dict):
         return {}
     return {str(k): float(v) for k, v in data.items() if isinstance(v, int | float)}
+
+
+# --- Derived on-chain series from free Coin Metrics data ----------------
+
+def fetch_coinmetrics_caps(
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> pd.DataFrame:
+    """Daily market cap + realized cap from Coin Metrics community (free).
+
+    Returns columns ``market_cap_usd``, ``realized_cap_usd``. Pulls a
+    minimum of 3 years so the 2-year rolling std used by MVRV-Z is warm.
+    """
+
+    if until is None:
+        until = datetime.now(tz=timezone.utc)
+    if since is None:
+        since = until - timedelta(days=365 * 5)
+    since = min(since, until - timedelta(days=365 * 3))
+    mc = fetch_coinmetrics("market_cap_usd", since=since, until=until)
+    rc = fetch_coinmetrics("realized_cap_usd", since=since, until=until)
+    if mc.empty or rc.empty:
+        return pd.DataFrame(columns=["market_cap_usd", "realized_cap_usd"])
+    return mc.join(rc, how="inner").dropna()
+
+
+def fetch_coinmetrics_mvrv_z(
+    since: datetime | None = None,
+    until: datetime | None = None,
+    window: int = 365 * 2,
+) -> pd.DataFrame:
+    """MVRV Z-Score computed from free Coin Metrics caps.
+
+    Replaces the previous (incorrect) use of the raw MVRV ratio as a
+    stand-in for the Z-score. Also returns ``nupl`` = (MC-RC)/MC and
+    the raw ``mvrv`` ratio for convenience. Rows before the warm-up
+    window are dropped.
+    """
+
+    from qt.indicators.onchain import mvrv_z_from_caps, nupl_from_caps
+
+    caps = fetch_coinmetrics_caps(since=since, until=until)
+    if caps.empty:
+        return pd.DataFrame(columns=["mvrv_z", "nupl", "mvrv"])
+    out = pd.DataFrame(index=caps.index)
+    out["mvrv_z"] = mvrv_z_from_caps(caps["market_cap_usd"], caps["realized_cap_usd"], window=window)
+    out["nupl"] = nupl_from_caps(caps["market_cap_usd"], caps["realized_cap_usd"])
+    out["mvrv"] = caps["market_cap_usd"] / caps["realized_cap_usd"]
+    out = out.dropna(subset=["mvrv_z"])
+    if since is not None:
+        out = out[out.index >= pd.Timestamp(since)]
+    return out
+
+
+# --- DefiLlama stablecoins (free, no key) ---------------------------------
+
+DEFILLAMA_STABLES = "https://stablecoins.llama.fi/stablecoincharts/all"
+
+
+def fetch_stablecoin_supply() -> pd.DataFrame:
+    """Total stablecoin circulating supply (USD-pegged), daily, from DefiLlama.
+
+    Used for the Stablecoin Supply Ratio (SSR = BTC market cap / stablecoin
+    cap): a low SSR means plenty of dry powder relative to BTC.
+    Returns column ``stablecoin_cap_usd``.
+    """
+
+    try:
+        data = http_get_json(DEFILLAMA_STABLES, params={"stablecoin": ""})
+    except Exception as e:
+        log.warning("defillama_stables_failed", error=str(e))
+        return pd.DataFrame(columns=["stablecoin_cap_usd"])
+    rows = []
+    for item in data or []:
+        try:
+            ts = int(item["date"])
+            total = item.get("totalCirculatingUSD") or {}
+            usd = float(total.get("peggedUSD", 0.0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        rows.append({"ts": ts, "stablecoin_cap_usd": usd})
+    if not rows:
+        return pd.DataFrame(columns=["stablecoin_cap_usd"])
+    df = pd.DataFrame(rows)
+    df["ts"] = pd.to_datetime(df["ts"], unit="s", utc=True)
+    return coerce_utc_index(df)

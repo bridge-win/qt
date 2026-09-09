@@ -170,7 +170,9 @@ def backtest_cmd(
         console.print(f"[red]no OHLCV at key={ohlcv_key}[/]; run `qt data fetch-ohlcv` first")
         raise typer.Exit(2)
     # Soft-load auxiliary inputs (any missing series degrades the score gracefully)
-    def _read(ds: str, key: str, col: str | None = None) -> pd.Series | pd.DataFrame | None:
+    def _read(ds: str, key: str | tuple[str, ...], col: str | None = None) -> pd.Series | pd.DataFrame | None:
+        if isinstance(key, tuple):
+            return store.read_column(ds, key, col or "")
         d = store.read(ds, key)
         if d.empty:
             return None
@@ -189,17 +191,17 @@ def backtest_cmd(
         oi=_read("derivatives", "binance_BTCUSDT_oi_1h", "oi_usd"),
         long_short_ratio=_read("derivatives", "binance_BTCUSDT_lsr_1h", "long_short_ratio"),
         fear_greed=_read("sentiment", "fear_greed", "fear_greed"),
-        mvrv_z=_read("onchain", "glassnode_mvrv_z", "mvrv_z"),
+        mvrv_z=_read("onchain", ("glassnode_mvrv_z", "coinmetrics_derived"), "mvrv_z"),
         sopr=_read("onchain", "glassnode_sopr_adj", "sopr_adj"),
-        nupl=_read("onchain", "glassnode_nupl", "nupl"),
+        nupl=_read("onchain", ("glassnode_nupl", "coinmetrics_derived"), "nupl"),
         puell=_read("onchain", "glassnode_puell_multiple", "puell_multiple"),
         reserve_risk=_read("onchain", "glassnode_reserve_risk", "reserve_risk"),
         exchange_netflow=_read("onchain", "glassnode_exchange_netflow", "exchange_netflow"),
         social_sentiment=_read(
             "sentiment", "santiment_sentiment_weighted_total_btc", "sentiment_weighted_total_btc"
         ),
-        vix=_read("macro", "fred_vix", "vix"),
-        dxy=_read("macro", "fred_dxy", "dxy"),
+        vix=_read("macro", ("yahoo_vix", "fred_vix"), "vix"),
+        dxy=_read("macro", ("yahoo_dxy", "fred_dxy"), "dxy"),
     )
     format_backtest_report(result, console)
     artifact = write_backtest_artifacts(
@@ -269,7 +271,9 @@ def strategy_run_cmd(
         raise typer.Exit(2)
     store = ParquetStore(settings.data.parquet_dir)
 
-    def _read(ds: str, key: str, col: str | None = None) -> pd.Series | None:
+    def _read(ds: str, key: str | tuple[str, ...], col: str | None = None) -> pd.Series | None:
+        if isinstance(key, tuple):
+            return store.read_column(ds, key, col or "")
         d = store.read(ds, key)
         if d.empty:
             return None
@@ -287,8 +291,8 @@ def strategy_run_cmd(
             initial_cash=initial_cash,
             funding=funding,
             fear_greed=None if synthetic else _read("sentiment", "fear_greed", "fear_greed"),
-            mvrv_z=None if synthetic else _read("onchain", "glassnode_mvrv_z", "mvrv_z"),
-            nupl=None if synthetic else _read("onchain", "glassnode_nupl", "nupl"),
+            mvrv_z=None if synthetic else _read("onchain", ("glassnode_mvrv_z", "coinmetrics_derived"), "mvrv_z"),
+            nupl=None if synthetic else _read("onchain", ("glassnode_nupl", "coinmetrics_derived"), "nupl"),
             allow_synthetic=not real_only,
         )
     except ValueError as exc:

@@ -38,13 +38,15 @@ import pandas as pd
 from pydantic import BaseModel
 
 from qt.core.config import Settings
+from qt.data.coinglass import fetch_aggregated_liquidations
 from qt.data.derivatives import (
     fetch_funding_rate_history,
     fetch_long_short_ratio,
     fetch_open_interest_history,
 )
+from qt.data.macro import fetch_macro_veto_inputs
 from qt.data.market import fetch_ohlcv
-from qt.data.onchain import fetch_coinmetrics
+from qt.data.onchain import fetch_coinmetrics_mvrv_z
 from qt.data.sentiment import fetch_fear_greed
 from qt.indicators.composite import compute_extreme_score
 from qt.strategies.base import EvaluationResult, Opportunity, Strategy, StrategyConfig
@@ -79,10 +81,22 @@ class Capitulation(Strategy):
         oi = fetch_open_interest_history(symbol=self.params.symbol.replace("/", ""))
         lsr = fetch_long_short_ratio(symbol=self.params.symbol.replace("/", ""))
         fg = fetch_fear_greed(limit=0)
-        mvrv = fetch_coinmetrics("mvrv", since=since)
+        # FIX 2026-09: previously the raw MVRV *ratio* was passed as MVRV-Z
+        # (threshold < 0.5 never fires on a ratio that bottoms at ~0.7),
+        # so the on-chain group was dead in live mode. Compute the real
+        # Z-score + NUPL from free Coin Metrics caps instead.
+        onchain = fetch_coinmetrics_mvrv_z(since=since)
+        # Macro veto was never fetched in live mode → macro_ok was always True.
+        macro = fetch_macro_veto_inputs(fred_api_key=settings.fred_api_key)
+        # Liquidations: Coinglass when a key exists, else the locally
+        # recorded Binance forceOrder stream (scripts/record_liquidations_ws.py).
+        liq = fetch_aggregated_liquidations(settings.coinglass_api_key, since=since)
+        if liq.empty:
+            liq = _local_liquidations(settings, since)
         return {
             "ohlcv": ohlcv, "funding": funding, "oi": oi, "lsr": lsr,
-            "fear_greed": fg, "mvrv": mvrv,
+            "fear_greed": fg, "onchain": onchain,
+            "vix": macro.get("vix"), "dxy": macro.get("dxy"), "liq": liq,
         }
 
     def evaluate(self, data: dict[str, Any]) -> EvaluationResult:
@@ -103,7 +117,12 @@ class Capitulation(Strategy):
             oi=_col(data.get("oi", pd.DataFrame()), "oi_usd"),
             long_short_ratio=_col(data.get("lsr", pd.DataFrame()), "long_short_ratio"),
             fear_greed=_col(data.get("fear_greed", pd.DataFrame()), "fear_greed"),
-            mvrv_z=_col(data.get("mvrv", pd.DataFrame()), "mvrv"),
+            mvrv_z=_col(data.get("onchain", pd.DataFrame()), "mvrv_z"),
+            nupl=_col(data.get("onchain", pd.DataFrame()), "nupl"),
+            vix=_col(data.get("vix", pd.DataFrame()), "vix"),
+            dxy=_col(data.get("dxy", pd.DataFrame()), "dxy"),
+            long_liq_usd=_col(data.get("liq", pd.DataFrame()), "long_liq_usd"),
+            short_liq_usd=_col(data.get("liq", pd.DataFrame()), "short_liq_usd"),
             cfg=None,
         )
         latest = es.score.index[-1]
@@ -155,6 +174,21 @@ class Capitulation(Strategy):
             },
         )
         return EvaluationResult(ts=now, opportunity=opp, metrics=metrics)
+
+
+def _local_liquidations(settings: Settings, since: datetime) -> pd.DataFrame:
+    """Read hourly liquidation bars recorded by the local WebSocket recorder."""
+
+    try:
+        from qt.data.store import ParquetStore
+
+        store = ParquetStore(settings.data.parquet_dir)
+        df = store.read("derivatives", "binance_BTCUSDT_liq_1h")
+    except Exception:
+        return pd.DataFrame(columns=["long_liq_usd", "short_liq_usd"])
+    if df.empty:
+        return df
+    return df[df.index >= pd.Timestamp(since)]
 
 
 __all__ = ["Capitulation", "CapitulationParams"]

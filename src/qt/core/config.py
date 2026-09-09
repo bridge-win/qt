@@ -55,7 +55,19 @@ class ThresholdConfig(BaseModel):
 
     # Sentiment
     fear_greed_max: int = 20
+    fear_greed_sustained_days: int = 3
     social_z_max: float = -2.0
+
+    # Symmetric / overheat side (used by compute_overheat_score)
+    atr_disp_extreme: float = 3.0        # |close-SMA20| / ATR14
+    rsi_overbought: float = 80.0
+    runup_30d_min: float = 0.40
+    funding_rate_8h_hot: float = 0.0005  # +0.05%/8h sustained
+    oi_surge_24h_min: float = 0.15
+    mvrv_z_hot: float = 7.0
+    nupl_hot: float = 0.75
+    fear_greed_hot: int = 80
+    overheat_score_min: float = 0.60
 
     # Macro filters (avoid buying into these regimes)
     vix_max: float = 40.0

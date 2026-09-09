@@ -40,6 +40,8 @@ class SignalEngine:
         social_sentiment: pd.Series | None = None,
         vix: pd.Series | None = None,
         dxy: pd.Series | None = None,
+        long_liq_usd: pd.Series | None = None,
+        short_liq_usd: pd.Series | None = None,
     ) -> ExtremeScore:
         return compute_extreme_score(
             ohlcv=ohlcv,
@@ -56,6 +58,8 @@ class SignalEngine:
             social_sentiment=social_sentiment,
             vix=vix,
             dxy=dxy,
+            long_liq_usd=long_liq_usd,
+            short_liq_usd=short_liq_usd,
             cfg=self.thresholds,
         )
 

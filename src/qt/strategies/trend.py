@@ -36,6 +36,8 @@ from pydantic import BaseModel
 
 from qt.core.config import Settings
 from qt.data.market import fetch_ohlcv
+from qt.data.onchain import fetch_coinmetrics
+from qt.indicators.onchain import hash_ribbon_recovery, mayer_multiple
 from qt.strategies.base import EvaluationResult, Opportunity, Strategy, StrategyConfig
 
 
@@ -45,7 +47,9 @@ class TrendParams(BaseModel):
     symbol: str = "BTC/USDT"
     exchange: str = "binance"
     timeframe: str = "1h"
-    history_days: int = 365
+    history_days: int = 730          # 20w SMA needs ≥ 22 weeks; 2y gives Mayer/ribbon warm-up
+    use_hash_ribbons: bool = True    # Capriole Hash Ribbons as monthly confirmation
+    ribbon_lookback_days: int = 45
 
 
 class WeeklyTrend(Strategy):
@@ -62,7 +66,10 @@ class WeeklyTrend(Strategy):
             self.params.exchange, self.params.symbol, self.params.timeframe,
             since=since,
         )
-        return {"ohlcv": ohlcv}
+        hashrate = pd.DataFrame()
+        if self.params.use_hash_ribbons:
+            hashrate = fetch_coinmetrics("hashrate", since=since - timedelta(days=90))
+        return {"ohlcv": ohlcv, "hashrate": hashrate}
 
     def evaluate(self, data: dict[str, Any]) -> EvaluationResult:
         now = datetime.now(tz=timezone.utc)
@@ -96,15 +103,24 @@ class WeeklyTrend(Strategy):
         cross_down = prev_close >= prev_ma and last_close < last_ma
         in_uptrend = last_close > last_ma
 
-        # Hourly vol-shock filter
+        # Vol-shock filter, timeframe-aware (was hard-coded to hourly bars)
+        from qt.indicators.composite import bars_per_day
+
+        bpd = bars_per_day(ohlcv.index)
         ret_h = ohlcv["close"].pct_change()
-        rv_short = float(
-            (ret_h.tail(24).std() * np.sqrt(24 * 365)) if len(ret_h) >= 24 else np.nan
-        )
-        rv_long = float(
-            (ret_h.tail(24 * 30).std() * np.sqrt(24 * 365)) if len(ret_h) >= 24 * 30 else np.nan
-        )
+        n_short, n_long = max(bpd, 2), max(bpd * 30, 10)
+        rv_short = float(ret_h.tail(n_short).std() * np.sqrt(bpd * 365)) if len(ret_h) >= n_short else np.nan
+        rv_long = float(ret_h.tail(n_long).std() * np.sqrt(bpd * 365)) if len(ret_h) >= n_long else np.nan
         vol_shock = rv_short / rv_long if rv_long and not np.isnan(rv_long) else 0.0
+
+        # Monthly-horizon confirmations: Mayer Multiple + Hash Ribbons
+        daily_close = ohlcv["close"].resample("1D").last().dropna()
+        mayer = float(mayer_multiple(daily_close).iloc[-1]) if len(daily_close) >= 200 else float("nan")
+        hashrate: pd.DataFrame = data.get("hashrate", pd.DataFrame())
+        ribbon_buy_recent = False
+        if isinstance(hashrate, pd.DataFrame) and not hashrate.empty and "hashrate" in hashrate:
+            rec = hash_ribbon_recovery(hashrate["hashrate"].dropna())
+            ribbon_buy_recent = bool(rec.tail(self.params.ribbon_lookback_days).any())
 
         metrics: dict[str, object] = {
             "weekly_close": last_close,
@@ -115,11 +131,18 @@ class WeeklyTrend(Strategy):
             "vol_shock_max": self.params.vol_shock_ratio,
             "cross_up": cross_up,
             "cross_down": cross_down,
+            "mayer_multiple": None if np.isnan(mayer) else round(mayer, 3),
+            "hash_ribbon_buy_recent": ribbon_buy_recent,
         }
 
         if cross_up and vol_shock <= self.params.vol_shock_ratio:
+            conf = 0.85
+            if ribbon_buy_recent:
+                conf = 0.95  # miner capitulation just ended — historically the strongest trend entries
+            if not np.isnan(mayer) and mayer > 2.4:
+                conf = 0.6   # late-cycle cross-up: still valid but size smaller
             opp = Opportunity(
-                ts=now, action="open", confidence=0.85,
+                ts=now, action="open", confidence=conf,
                 reason=f"Weekly close crossed above SMA({self.params.ma_weeks}w)",
                 details={**metrics, "symbol": self.params.symbol},
             )

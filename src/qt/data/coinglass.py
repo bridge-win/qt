@@ -105,3 +105,35 @@ def fetch_aggregated_funding(
     df["ts"] = pd.to_datetime(df["time"], unit="ms", utc=True)
     df["funding_agg"] = pd.to_numeric(df.get("value"), errors="coerce")
     return coerce_utc_index(df[["ts", "funding_agg"]])
+
+
+def fetch_etf_flows(api_key: str) -> pd.DataFrame:
+    """Daily US spot-BTC ETF net flow (USD) from Coinglass v4.
+
+    Endpoint: ``/etf/bitcoin/flow-history``. Returns ``etf_net_flow_usd``
+    and, when present, ``etf_price_usd``. Empty without a key.
+    """
+
+    if not api_key:
+        log.info("coinglass_no_key", endpoint="etf_flows")
+        return pd.DataFrame(columns=["etf_net_flow_usd"])
+    try:
+        data = http_get_json(f"{COINGLASS}/etf/bitcoin/flow-history", headers=_hdr(api_key))
+    except Exception as e:
+        log.warning("coinglass_etf_failed", error=str(e))
+        return pd.DataFrame(columns=["etf_net_flow_usd"])
+    rows = data.get("data") or []
+    if not rows:
+        return pd.DataFrame(columns=["etf_net_flow_usd"])
+    df = pd.DataFrame(rows)
+    ts_col = "timestamp" if "timestamp" in df.columns else "time"
+    df["ts"] = pd.to_datetime(df[ts_col], unit="ms", utc=True)
+    flow_col = next((c for c in ("flow_usd", "change_usd", "net_flow_usd") if c in df.columns), None)
+    if flow_col is None:
+        return pd.DataFrame(columns=["etf_net_flow_usd"])
+    df["etf_net_flow_usd"] = pd.to_numeric(df[flow_col], errors="coerce")
+    cols = ["ts", "etf_net_flow_usd"]
+    if "price_usd" in df.columns:
+        df["etf_price_usd"] = pd.to_numeric(df["price_usd"], errors="coerce")
+        cols.append("etf_price_usd")
+    return coerce_utc_index(df[cols])

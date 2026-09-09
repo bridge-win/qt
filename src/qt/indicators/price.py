@@ -96,3 +96,17 @@ def volume_capitulation(
     volume_z = (volume - volume_mu) / volume_sd
     bar_return = close.pct_change()
     return ((volume_z >= min_volume_z) & (bar_return <= -min_drop)).rename("volume_capitulation")
+
+
+def atr_displacement(close: pd.Series, high: pd.Series, low: pd.Series,
+                     ma_period: int = 20, atr_period: int = 14) -> pd.Series:
+    """Distance of close from SMA(ma_period) measured in ATR units.
+
+    Symmetric overshoot gauge: ≤ -3 = capitulation-grade undershoot,
+    ≥ +3 = blow-off-grade overshoot. More regime-stable than RSI because
+    the denominator adapts to current volatility.
+    """
+
+    ma = close.rolling(ma_period).mean()
+    a = atr(high, low, close, atr_period).replace(0, np.nan)
+    return ((close - ma) / a).astype("float64").rename("atr_disp")

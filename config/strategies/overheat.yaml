@@ -1,0 +1,16 @@
+# Strategy F — Overheat / distribution detector (sell-side mirror of capitulation)
+#
+# Never shorts. Emits a `sell` (trim / stop-DCA) opportunity when ≥3 of
+# {price, derivatives, on-chain, sentiment} say the market is over-extended.
+# When the on-chain group is among them, treat it as cycle-top class.
+enabled: true
+interval_seconds: 3600
+description: "Symmetric overheat detector: RSI/BB/ATR-displacement, funding/OI, MVRV-Z/NUPL/Pi-Top, F&G."
+min_alert_severity: warning
+params:
+  score_min: 0.60
+  min_groups_firing: 3
+  symbol: "BTC/USDT"
+  exchange: "binance"
+  timeframe: "1h"
+  history_days: 400

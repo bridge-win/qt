@@ -78,3 +78,19 @@ quiet non-confirming feed from accidentally inflating the score.
 The signal engine (`qt.signal.engine.SignalEngine`) converts this into
 sparse `Signal` objects with explainable factor lists for audit and live
 operations.
+
+## Added 2026-09
+
+| Indicator | Module | Threshold | Notes |
+|---|---|---|---|
+| ATR displacement | `price.atr_displacement` | <= -3 / >= +3 | (close - SMA20) / ATR14, symmetric overshoot gauge |
+| Liquidation cascade | `derivatives.liquidation_cascade` | long-liq Z >= 3 and long share >= 70 % | Z-score only - feeds are sampled |
+| OI surge 24h | `derivatives.oi_surge_24h` | >= +15 % | overheat side |
+| Funding sustained positive | `derivatives.funding_sustained_positive` | >= +0.05 %/8h x 3 | overheat side |
+| MVRV-Z (free) | `data.onchain.fetch_coinmetrics_mvrv_z` | < 0 buy / > 7 sell | computed from Coin Metrics caps, 2y std |
+| NUPL (free) | `onchain.nupl_from_caps` | < 0 buy / > 0.75 sell | (MC-RC)/MC |
+| Pi Cycle Top | `onchain.pi_cycle_top` | 111D SMA x 2x350D SMA | event, 7-day active window |
+| Mayer Multiple | `onchain.mayer_multiple` | < 0.8 / > 2.4 | trend confirmation |
+| 200W multiple | `onchain.sma_200w_multiple` | ~1.0 = cycle floor | cycle layer |
+| F&G greed | `sentiment.fear_greed_greed_extreme` | >= 80 x 3d | overheat side |
+| Cycle position | `cycle.cycle_position` | <=15 accumulate, >=85 distribute | weighted 0-100 composite |

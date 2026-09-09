@@ -12,4 +12,6 @@ params:
   symbol: "BTC/USDT"
   exchange: "binance"
   timeframe: "1h"
-  history_days: 365
+  history_days: 730
+  use_hash_ribbons: true
+  ribbon_lookback_days: 45

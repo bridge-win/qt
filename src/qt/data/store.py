@@ -40,6 +40,21 @@ class ParquetStore:
         df.to_parquet(p, compression="zstd")
         return p
 
+    def read_column(self, dataset: str, keys: list[str] | tuple[str, ...], column: str) -> pd.Series | None:
+        """Return ``column`` from the first key that exists and is non-empty.
+
+        Used to prefer paid sources (Glassnode) when present and fall back
+        to free derived ones (Coin Metrics-computed MVRV-Z, Yahoo VIX).
+        """
+
+        for key in keys:
+            df = self.read(dataset, key)
+            if not df.empty and column in df.columns:
+                col = df[column].dropna()
+                if not col.empty:
+                    return col
+        return None
+
     def upsert(self, dataset: str, key: str, df: pd.DataFrame) -> Path:
         existing = self.read(dataset, key)
         if existing.empty:
