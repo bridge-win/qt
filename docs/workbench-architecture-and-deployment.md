@@ -81,6 +81,10 @@ Cloudflare 托管网页、鉴权和访问入口，Python/Nautilus 的重回测�
 
 ## Direct TC production entry (2026-09-10)
 
+Automatic updates from `main` are configured in `.github/workflows/deploy-tc.yml`;
+see [TC automatic deployment](tc-auto-deployment.md) for checks, secrets,
+runtime dependency requirements, and recovery.
+
 The active direct entry is <https://qt.eatfear.com/>. DNSPod already had an
 enabled `qt` A record pointing to `101.32.243.66` (TTL 600); it was verified
 in the Tencent Cloud console without changing other DNS records.
