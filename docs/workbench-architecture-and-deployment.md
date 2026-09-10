@@ -86,7 +86,12 @@ and generated reports are hosted on TC under `/opt/qt`. Cloudflare remains
 the authenticated public entry point and forwards API requests to TC HTTPS.
 No process on the developer's Mac is required for this path.
 
-- Public entry: <https://qt-research-workbench.danielkong1993.workers.dev/>.
+- Public entry: <https://qt.xvis.cc/> (Workers custom domain on the Cloudflare-hosted
+  `xvis.cc` zone; `workers_dev = false`). The SPA and `/api/v3/*` share this
+  hostname, so no CORS configuration exists or is needed on the FastAPI side.
+  Switching the entry hostname = new Access application for that hostname +
+  its AUD tag in `ACCESS_JWT_AUDIENCE` + `wrangler deploy`; nothing on the
+  origin server changes.
 - TC static web/origin: <https://101.32.243.66.sslip.io/>. Its API intentionally
   rejects requests without the Worker origin credentials; use the public
   entry for interactive research.

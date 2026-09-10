@@ -1,7 +1,13 @@
 name = "qt-research-workbench"
 main = "../web/edge/worker.ts"
 compatibility_date = "2026-09-07"
-workers_dev = true
+
+# Public entry is the custom domain only. workers.dev is disabled so there is
+# a single hostname and a single Cloudflare Access application to reason about.
+workers_dev = false
+routes = [
+  { pattern = "qt.xvis.cc", custom_domain = true },
+]
 
 [assets]
 directory = "../web/dist"
@@ -18,7 +24,13 @@ bucket_name = "qt-research-reports"
 
 [vars]
 ACCESS_JWT_ISSUER = "https://dry-disk-7ba3.cloudflareaccess.com"
-ACCESS_JWT_AUDIENCE = "d827cf01806b55fa1e159cd38d9e111fbb9358f145273bc921ac2ac5b296a83e"
+# AUD tag of the Access application whose domain is qt.xvis.cc
+# (Zero Trust -> Access -> Applications -> <app> -> Overview -> Application Audience).
+# The Worker rejects tokens whose audience does not match, so the old
+# workers.dev application's AUD will NOT work here.
+ACCESS_JWT_AUDIENCE = "REPLACE_WITH_QT_XVIS_CC_ACCESS_AUD"
+# Browser and API share this hostname (the SPA calls relative /api/v3/...);
+# the origin below is never exposed to users.
 ORIGIN_URL = "https://101.32.243.66.sslip.io"
 MAX_API_BODY_BYTES = "1048576"
 
