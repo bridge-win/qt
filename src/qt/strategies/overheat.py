@@ -30,6 +30,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
+from qt.core import provenance as prov
 from qt.core.config import Settings
 from qt.data.coinglass import fetch_aggregated_liquidations
 from qt.data.derivatives import fetch_funding_rate_history, fetch_open_interest_history
@@ -38,6 +39,22 @@ from qt.data.onchain import fetch_coinmetrics_mvrv_z
 from qt.data.sentiment import fetch_fear_greed
 from qt.indicators.composite import compute_overheat_score
 from qt.strategies.base import EvaluationResult, Opportunity, Strategy, StrategyConfig
+
+FACTOR_PROVENANCE: dict[str, str] = {'hot_rsi': 'rsi.overbought', 'hot_bb': 'bb.std', 'hot_atr_disp': 'atr_disp.extreme', 'hot_runup_30d': 'runup.30d_min', 'hot_funding_z': 'funding.8h_hot', 'hot_funding_pos': 'funding.8h_hot', 'hot_oi_surge': 'oi.surge_24h_min', 'hot_short_liq': 'liq.long_z', 'hot_mvrv_z': 'mvrv_z.top_literature', 'hot_nupl': 'nupl.euphoria', 'hot_pi_top': 'pi_cycle.top', 'hot_fng': 'fear_greed.hot'}
+
+
+def factor_sources(factors: list[str]) -> dict[str, dict]:
+    """Provenance for every factor that fired: threshold value, method, source URL."""
+
+    out = {}
+    for f in factors:
+        key = FACTOR_PROVENANCE.get(f)
+        for prefix, k in FACTOR_PROVENANCE.items():
+            if key is None and f.startswith(prefix):
+                key = k
+        if key and key in prov.REGISTRY:
+            out[f] = prov.annotate(prov.get(key).value, key)
+    return out
 
 
 class OverheatParams(BaseModel):
@@ -94,7 +111,8 @@ class Overheat(Strategy):
         factors_now = [c for c in es.factor_flags.columns if bool(es.factor_flags[c].iloc[-1])]
         metrics = {
             "score": round(score, 3), "groups_firing": groups_firing, "group_flags": firing,
-            "factors_firing": factors_now, "score_min": self.params.score_min,
+            "factors_firing": factors_now,
+            "factor_provenance": factor_sources(factors_now), "score_min": self.params.score_min,
             "min_groups_firing": self.params.min_groups_firing,
             "price": float(ohlcv["close"].iloc[-1]),
             "latest_bar": pd.Timestamp(es.score.index[-1]).isoformat(),

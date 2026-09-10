@@ -62,6 +62,7 @@ class CycleRegime(Strategy):
             ohlcv["close"],
             mvrv_z=oc["mvrv_z"] if not oc.empty else None,
             nupl=oc["nupl"] if not oc.empty else None,
+            price_source=self.params.exchange,
         )
         pos = float(cp.position.iloc[-1])
         band = str(cp.band.iloc[-1])
@@ -76,6 +77,8 @@ class CycleRegime(Strategy):
             "components": comps, "pi_cycle_top_7d": pi_top, "pi_cycle_bottom_7d": pi_bot,
             "price": float(ohlcv["close"].iloc[-1]),
             "latest_bar": pd.Timestamp(ohlcv.index[-1]).isoformat(),
+            "bands": {k: b.as_dict() for k, b in cp.bands.items()},
+            "provenance": cp.provenance,
         }
         action: str | None = None
         if pos <= self.params.accumulate_max or pi_bot:

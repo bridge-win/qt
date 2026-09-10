@@ -140,6 +140,21 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
     )
     app.include_router(build_operations_router(operations_service), prefix="/api/v3")
 
+    @app.get("/api/v3/provenance")
+    def provenance_report(method: str | None = None) -> dict[str, object]:
+        """Every threshold / band / constant with source, method and derivation.
+
+        Front-ends must render a value together with ``method`` and
+        ``sources`` (rule: no bare numbers)."""
+
+        from qt.core import provenance as prov
+
+        return {
+            "params": prov.report(method),  # type: ignore[arg-type]
+            "sources": {k: v.__dict__ for k, v in prov.SOURCES.items()},
+            "unmapped_threshold_fields": prov.audit_threshold_config(),
+        }
+
     @app.get("/api/v3/capabilities")
     def capabilities() -> dict[str, object]:
         return {

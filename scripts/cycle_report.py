@@ -50,15 +50,31 @@ def main() -> None:
     band = cp.band.iloc[-1]
     alloc = float(cp.target_alloc.iloc[-1])
 
-    t = Table(title=f"BTC cycle position — {pd.Timestamp(ohlcv.index[-1]).date()}")
-    t.add_column("gauge")
-    t.add_column("0..1", justify="right")
+    src = cp.provenance
+    t = Table(title=f"BTC cycle position - {pd.Timestamp(ohlcv.index[-1]).date()}")
+    for c in ("gauge", "raw", "0..1", "bottom edge", "top edge", "edge method", "data source"):
+        t.add_column(c, overflow="fold")
     for k, v in cp.components.iloc[-1].items():
-        t.add_row(k, "n/a" if pd.isna(v) else f"{v:.2f}")
+        b = cp.bands.get(k)
+        raw = f"{cp.components_raw[k].iloc[-1]:.3f}" if k in cp.components_raw else ""
+        if b is None:
+            t.add_row(k, raw, "n/a" if pd.isna(v) else f"{v:.2f}", "", "",
+                      f"halving clock, top phase {src['halving_top_phase']['value']} ({src['halving_top_phase']['method']})",
+                      "block timestamps + arXiv 2607.26188")
+            continue
+        origin = (src["onchain"]["source"] if k in ("mvrv_z", "nupl") and src.get("onchain")
+                  else src["price"]["source"])
+        n = b.fit.get("n")
+        method = b.hi_method + (f" [n={n}, resid sd {b.fit.get('resid_std')}]" if n else "")
+        t.add_row(k, raw, "n/a" if pd.isna(v) else f"{v:.2f}", f"{b.lo:.2f}", f"{b.hi:.2f}", method, origin)
     t.add_row("[bold]position[/]", f"[bold]{pos:.0f}/100[/]")
     t.add_row("band", str(band))
     t.add_row("target BTC alloc", f"{alloc:.0%}")
     console.print(t)
+    console.print("[dim]observed cycle extrema (halving-clock window max/min on price):[/]")
+    for e in src["cycle_extrema"]:
+        console.print(f"  {e['kind']:6s} cycle {e['cycle']}  {e['date']}  ${e['price']:,.0f}  ({e['days_after_halving']} d after halving)")
+    console.print("[dim]weights:[/] " + str(src["weights"]["value"]) + f"  ({src['weights']['method']}: {src['weights']['derivation']})")
 
     sheet = {
         "accumulate": ("DCA 2x base, capitulation strategy full size", "trend: buy every cross-up", "hold"),

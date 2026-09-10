@@ -37,6 +37,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
+from qt.core import provenance as prov
 from qt.core.config import Settings
 from qt.data.coinglass import fetch_aggregated_liquidations
 from qt.data.derivatives import (
@@ -50,6 +51,22 @@ from qt.data.onchain import fetch_coinmetrics_mvrv_z
 from qt.data.sentiment import fetch_fear_greed
 from qt.indicators.composite import compute_extreme_score
 from qt.strategies.base import EvaluationResult, Opportunity, Strategy, StrategyConfig
+
+FACTOR_PROVENANCE: dict[str, str] = {'price_rsi': 'rsi.oversold', 'price_bb': 'bb.std', 'price_wick': 'wick.body_ratio_min', 'price_dd': 'drawdown.30d_min', 'price_volume_cap': 'volume.z_min', 'price_atr_disp': 'atr_disp.extreme', 'vol_spike': 'rv.ratio_min', 'deriv_funding': 'funding.8h_max', 'deriv_oi_drop': 'oi.drop_24h_min', 'deriv_lsr_crowded_short': 'lsr.percentile_max', 'deriv_liq_cascade': 'liq.long_z', 'onchain_mvrv_z': 'mvrv_z.bottom_literature', 'onchain_nupl': 'nupl.capitulation', 'onchain_sopr': 'asopr.max', 'onchain_pi_bottom': 'pi_cycle.bottom', 'snt_fng': 'fear_greed.max', 'macro_vix': 'vix.max', 'macro_dxy': 'dxy.z_max'}
+
+
+def factor_sources(factors: list[str]) -> dict[str, dict]:
+    """Provenance for every factor that fired: threshold value, method, source URL."""
+
+    out = {}
+    for f in factors:
+        key = FACTOR_PROVENANCE.get(f)
+        for prefix, k in FACTOR_PROVENANCE.items():
+            if key is None and f.startswith(prefix):
+                key = k
+        if key and key in prov.REGISTRY:
+            out[f] = prov.annotate(prov.get(key).value, key)
+    return out
 
 
 class CapitulationParams(BaseModel):
@@ -143,6 +160,7 @@ class Capitulation(Strategy):
             "macro_ok": macro_ok,
             "group_flags": firing,
             "factors_firing": factors_now,
+            "factor_provenance": factor_sources(factors_now),
             "score_min": self.params.score_min,
             "min_groups_firing": self.params.min_groups_firing,
             "price": float(ohlcv["close"].iloc[-1]),

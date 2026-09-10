@@ -374,6 +374,36 @@ def report_benchmark_cmd(
     console.print(f"[{color}]{cmp.verdict}[/]")
 
 
+@app.command("provenance")
+def provenance_cmd(
+    method: str = typer.Option("", help="filter: observed|computed|literature|fitted|assumed"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """List every numeric constant with its source and derivation method."""
+
+    from rich.table import Table
+
+    from qt.core import provenance as prov
+
+    rows = prov.report(method or None)  # type: ignore[arg-type]
+    missing = prov.audit_threshold_config()
+    if as_json:
+        console.print_json(data={"params": rows, "unmapped_threshold_fields": missing}, default=str)
+        return
+    t = Table(title="Parameter provenance", show_lines=False)
+    for c in ("key", "value", "method", "sources"):
+        t.add_column(c, overflow="fold")
+    for r in rows:
+        t.add_row(r["key"], str(r["value"]), r["method"], r["sources"])
+    console.print(t)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["method"]] = counts.get(r["method"], 0) + 1
+    console.print(f"by method: {counts}")
+    if missing:
+        console.print(f"[red]ThresholdConfig fields without provenance: {missing}[/]")
+
+
 @app.command("info")
 def info_cmd(ctx: typer.Context) -> None:
     """Show effective configuration (with secrets redacted)."""
