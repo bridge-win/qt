@@ -1,0 +1,42 @@
+# Render environment placeholders on TC; never commit the rendered credentials.
+qt.eatfear.com {
+    encode zstd gzip
+    root * /opt/qt/web/dist
+    basic_auth {
+        qt {$QT_DIRECT_PASSWORD_HASH}
+    }
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy same-origin
+        Cache-Control "private, no-store"
+    }
+    route {
+        reverse_proxy /api/* 127.0.0.1:8877 {
+            header_up -Authorization
+            header_up -Cookie
+            header_up -Cf-Access-Jwt-Assertion
+            header_up -Cf-Access-Authenticated-User-Email
+            header_up -Cf-Access-Authenticated-User-Id
+            header_up -X-Qt-User
+            header_up -X-Qt-Access-Email
+            header_up Cf-Access-Client-Id {$QT_WORKBENCH_ORIGIN_CLIENT_ID}
+            header_up Cf-Access-Client-Secret {$QT_WORKBENCH_ORIGIN_CLIENT_SECRET}
+            header_up X-Qt-Access-Subject "direct:qt"
+        }
+        respond /artifacts/* 404
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+# Preserve the existing Cloudflare origin and its backend credential checks.
+101.32.243.66.sslip.io {
+    encode zstd gzip
+    root * /opt/qt/web/dist
+    route {
+        reverse_proxy /api/* 127.0.0.1:8877
+        try_files {path} /index.html
+        file_server
+    }
+}

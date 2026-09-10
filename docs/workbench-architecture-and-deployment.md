@@ -79,7 +79,60 @@ Cloudflare 托管网页、鉴权和访问入口，Python/Nautilus 的重回测�
 5. 配置私有桶 `qt-research-reports`；计算节点的 `QT_R2_REPORTS_BUCKET` 必须使用同一桶名。没有 R2 凭据时结果只保留本地，不能假造下载链接。
 6. 验证未登录拒绝访问、登录后页面及 API、提交/完成/复现、报告下载和重启恢复，再记录正式访问地址。
 
-## TC deployment verification (2026-09-08)
+## Direct TC production entry (2026-09-10)
+
+The active direct entry is <https://qt.eatfear.com/>. DNSPod already had an
+enabled `qt` A record pointing to `101.32.243.66` (TTL 600); it was verified
+in the Tencent Cloud console without changing other DNS records.
+
+The `qt-caddy` container uses host networking and serves `/opt/qt/web/dist`.
+It now routes `/api/*` to `127.0.0.1:8877`, replacing the obsolete port 8080
+upstream. Frontend requests remain same-origin; leave `VITE_QT_API_BASE` unset.
+The API and native worker remain systemd services with their existing state,
+resource limits, and origin credential checks.
+
+`deploy/tc-direct.Caddyfile` is the credential-free template. The active
+`/opt/qt/deploy/tc.Caddyfile` is rendered on TC, root-owned and mode 600.
+It protects the entire direct site with HTTPS Basic Auth, replaces client
+identity headers with the single authenticated `direct:qt` identity, and
+injects the existing origin credentials only after authentication. It also
+preserves the `101.32.243.66.sslip.io` Cloudflare origin. This is a single-user
+entry, not a multi-user permission system. Unpublished `/artifacts/*` paths
+return 404; R2 publication was not enabled by this deployment.
+
+The login username is `qt`. The generated password is kept only in the
+root-readable `/root/qt-eatfear-access.json` on TC. Retrieve it over the
+existing SSH connection; never copy that file or the rendered Caddyfile
+into Git. The one-time render/reload helper is retained at
+`/root/qt-configure-direct.py`; inspect it before reuse, especially its backup
+path. It retains the login, reads `/opt/qt/.env.workbench`, validates the
+candidate with Caddy, and restores the previous configuration if reload fails.
+Keep the existing Caddyfile inode when updating it because Docker bind-mounts
+that file. Restarting the container uses the persisted rendered configuration.
+
+Application source deployed: `4f69173`. Frontend production build passed;
+8 edge tests and 39 focused Python tests passed. Live HTTPS checks confirmed
+anonymous page/API 401, authenticated page/deep-link/API 200, API misses as
+JSON 404, and unauthenticated direct-origin API 401. A weekly-DCA backtest
+submitted through the new public hostname completed as
+`2381330f44634c6dbcd8f13f77d891da`; reproduction
+`ac30099db6ef45f08b7ef2a4239676b1` returned identical metrics. The worker was
+online and live trading remained disabled. Chrome displayed the native login
+prompt; interactive page rendering after user login remains unverified.
+
+Before deployment, the queue had no running jobs. Source/config and consistent
+SQLite snapshots were saved under `/root/qt-deploy-backups/20260910-eatfear/`.
+For code rollback, stop the API/worker, restore `code-before.tar.gz` into
+`/opt/qt`, reload Caddy, then restart both services. Do not restore the SQLite
+snapshots for an ordinary code rollback: they predate subsequent user jobs.
+The old Caddyfile points the direct domain at inactive port 8080, so restoring
+it also restores that old direct-entry failure.
+
+The Cloudflare configuration for `qt.xvis.cc` is a separate deployment path;
+it still contains an Access audience placeholder and was not deployed here.
+Do not deploy it until the real Access application audience is configured.
+
+## TC deployment verification (2026-09-08, historical)
 
 The web build, FastAPI, SQLite state, Parquet datasets, native research worker,
 and generated reports are hosted on TC under `/opt/qt`. Cloudflare remains
