@@ -1,5 +1,13 @@
 # QT — BTC Quantitative Trading Platform
 
+## Codex monitoring and sandbox trading
+
+The isolated [Codex BTC agent](docs/codex-btc-agent.md) provides continuous
+monitoring, daily extreme-event rules, bounded Codex entry review, durable
+order reconciliation, and Docker deployment in paper or Binance Spot Testnet
+mode. See the [research](docs/codex-btc-research.md) for the strategy hypotheses
+and evidence limits. It has no real-money execution mode.
+
 QT is a low-frequency, long-only BTC trading system that buys **only**
 during extreme capitulation events (black-swan crashes, liquidation
 cascades, long-wick insertions) where **multiple independent factor

@@ -1,0 +1,62 @@
+name: qt-btc-agent
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-agent
+      target: runtime
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    volumes: [btc-agent-state:/state]
+    environment:
+      BTC_AGENT_MODE: ${BTC_AGENT_MODE:-paper}
+      BTC_AGENT_STATE_DIR: /state
+      BTC_AGENT_POLL_SECONDS: ${BTC_AGENT_POLL_SECONDS:-300}
+      BTC_AGENT_MAX_ORDER_QUOTE: ${BTC_AGENT_MAX_ORDER_QUOTE:-25}
+      BTC_AGENT_MAX_DAILY_BUY_QUOTE: ${BTC_AGENT_MAX_DAILY_BUY_QUOTE:-25}
+      BTC_AGENT_MAX_POSITION_QUOTE: ${BTC_AGENT_MAX_POSITION_QUOTE:-100}
+      BTC_AGENT_REVIEWER_URL: http://reviewer:8090/review
+      BINANCE_TESTNET_API_KEY: ${BINANCE_TESTNET_API_KEY:-}
+      BINANCE_TESTNET_API_SECRET: ${BINANCE_TESTNET_API_SECRET:-}
+    healthcheck:
+      test: [CMD, python, -m, qt.btc_agent, health]
+      interval: 60s
+      timeout: 10s
+      start_period: 150s
+      retries: 3
+    stop_grace_period: 150s
+    mem_limit: 384m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  reviewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-agent
+      target: reviewer
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    environment:
+      CODEX_API_KEY: ${CODEX_API_KEY:-}
+      BTC_AGENT_CODEX_MODEL: ${BTC_AGENT_CODEX_MODEL:-}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+volumes:
+  btc-agent-state:

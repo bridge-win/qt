@@ -1,0 +1,27 @@
+FROM node:22-bookworm-slim AS codex
+ARG CODEX_VERSION=0.162.1
+RUN npm install --global --registry=https://registry.npmjs.org @openai/codex@${CODEX_VERSION}
+
+FROM python:3.13-slim-bookworm AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/src
+WORKDIR /app
+COPY requirements-btc-agent.txt ./
+RUN pip install --no-cache-dir -r requirements-btc-agent.txt \
+    && useradd --uid 10001 --create-home agent \
+    && mkdir /state && chown agent:agent /state
+COPY src/qt/__init__.py ./src/qt/__init__.py
+COPY src/qt/core ./src/qt/core
+COPY src/qt/indicators ./src/qt/indicators
+COPY src/qt/btc_agent ./src/qt/btc_agent
+USER agent
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python", "-m", "qt.btc_agent"]
+CMD ["run"]
+
+FROM runtime AS reviewer
+COPY --from=codex /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
+USER root
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+USER agent
+CMD ["reviewer"]
