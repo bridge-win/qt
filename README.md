@@ -8,6 +8,11 @@ order reconciliation, and Docker deployment in paper or Binance Spot Testnet
 mode. See the [research](docs/codex-btc-research.md) for the strategy hypotheses
 and evidence limits. It has no real-money execution mode.
 
+The [personal quant agent research report](docs/personal-quant-agent-research.md)
+compares Codex/Claude frameworks and proposes the knowledge, data, learning,
+execution and deployment architecture for the next stage. It distinguishes
+existing capabilities from proposed additions.
+
 QT is a low-frequency, long-only BTC trading system that buys **only**
 during extreme capitulation events (black-swan crashes, liquidation
 cascades, long-wick insertions) where **multiple independent factor
