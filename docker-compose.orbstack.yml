@@ -1,0 +1,130 @@
+name: qt-orbstack
+
+x-runtime: &runtime
+  restart: unless-stopped
+  init: true
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=128m,mode=1777"]
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  web:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.workbench-web
+    ports: ["127.0.0.1:${QT_ORBSTACK_PORT:-8877}:8080"]
+    environment:
+      QT_ORBSTACK_PORT: ${QT_ORBSTACK_PORT:-8877}
+      QT_ORBSTACK_USERNAME: ${QT_ORBSTACK_USERNAME:?Run the private local setup first}
+      QT_ORBSTACK_PASSWORD_HASH: ${QT_ORBSTACK_PASSWORD_HASH:?A local login hash is required}
+      QT_WORKBENCH_ORIGIN_CLIENT_ID: ${QT_WORKBENCH_ORIGIN_CLIENT_ID:?Origin credentials are required}
+      QT_WORKBENCH_ORIGIN_CLIENT_SECRET: ${QT_WORKBENCH_ORIGIN_CLIENT_SECRET:?Origin credentials are required}
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /config:size=4m,uid=10001,gid=10001,mode=0700
+      - /data:size=4m,uid=10001,gid=10001,mode=0700
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+
+  api:
+    <<: *runtime
+    image: qt-workbench:local
+    build:
+      context: .
+      dockerfile: Dockerfile.workbench
+    command:
+      - python
+      - scripts/run_workbench_api.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8877"
+      - --parquet-root
+      - /parquet
+      - --state-root
+      - /state
+      - --btc-monitor-state-dir
+      - /monitor/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}
+    environment:
+      QT_WORKBENCH_ORIGIN_CLIENT_ID: ${QT_WORKBENCH_ORIGIN_CLIENT_ID:?Origin credentials are required}
+      QT_WORKBENCH_ORIGIN_CLIENT_SECRET: ${QT_WORKBENCH_ORIGIN_CLIENT_SECRET:?Origin credentials are required}
+    volumes:
+      - workbench-state:/state
+      - workbench-parquet:/parquet
+      - monitor-state:/monitor:ro
+    healthcheck:
+      test: [CMD, python, deploy/workbench_health.py, api]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+
+  research-worker:
+    <<: *runtime
+    image: qt-workbench:local
+    build:
+      context: .
+      dockerfile: Dockerfile.workbench
+    command: [python, scripts/run_workbench_worker.py, --parquet-root, /parquet, --state-root, /state, --worker-id, qt-orbstack-worker]
+    volumes:
+      - workbench-state:/state
+      - workbench-parquet:/parquet
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, deploy/workbench_health.py, worker]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 256
+
+  monitor:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-monitor
+      target: runtime
+    command: [run, --state-dir, "/state/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}"]
+    environment:
+      QT_BTC_MONITOR_VENUE: ${QT_BTC_MONITOR_VENUE:-binance}
+      QT_BTC_MONITOR_ENVIRONMENT: ${QT_BTC_MONITOR_ENVIRONMENT:-production}
+      QT_BTC_MONITOR_STATE_DIR: /state/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}
+      QT_TELEGRAM_BOT_TOKEN: ${QT_TELEGRAM_BOT_TOKEN:-}
+      QT_TELEGRAM_CHAT_ID: ${QT_TELEGRAM_CHAT_ID:-}
+    volumes: [monitor-state:/state]
+    healthcheck:
+      test: [CMD, python, -m, qt.btc_monitor, health, --state-dir, "/state/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    stop_grace_period: 20s
+    mem_limit: 384m
+    cpus: 1.0
+    pids_limit: 64
+
+volumes:
+  workbench-state:
+  workbench-parquet:
+  monitor-state:

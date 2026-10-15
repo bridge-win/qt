@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.7
+
+# No platform override: OrbStack builds native ARM64 or AMD64 images.
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS wheelhouse
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /download
+COPY requirements-orbstack.lock ./
+RUN python -m pip download --require-hashes --only-binary=:all: \
+    --dest /wheelhouse --requirement requirements-orbstack.lock
+
+FROM wheelhouse AS builder
+RUN --network=none python -m pip install --no-index --find-links=/wheelhouse setuptools==82.0.1 wheel==0.47.0
+WORKDIR /build
+COPY packages/btc-backtest ./packages/btc-backtest
+RUN --network=none python -m pip wheel --no-build-isolation --no-deps --no-index \
+    --wheel-dir=/wheelhouse ./packages/btc-backtest
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN --network=none python -m pip wheel --no-build-isolation --no-deps --no-index \
+    --wheel-dir=/wheelhouse .
+
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+RUN useradd --uid 10001 --create-home qt \
+    && mkdir /state /parquet /monitor && chown qt:qt /state /parquet /monitor
+COPY --from=builder /wheelhouse /wheelhouse
+COPY requirements-orbstack.lock /tmp/requirements-orbstack.lock
+RUN --network=none python -m pip install --no-index --no-compile --require-hashes \
+    --find-links=/wheelhouse --requirement /tmp/requirements-orbstack.lock \
+    && python -m pip install --no-index --no-deps --find-links=/wheelhouse btc-backtest==0.1.0 qt==0.1.0 \
+    && python -m pip check \
+    && python -c "import nautilus_trader, talib, optuna, qt.workbench.api" \
+    && rm -rf /wheelhouse /tmp/requirements-orbstack.lock
+WORKDIR /app
+COPY scripts/run_workbench_api.py scripts/run_workbench_worker.py ./scripts/
+COPY deploy/workbench_health.py ./deploy/workbench_health.py
+USER 10001:10001
+STOPSIGNAL SIGTERM
+CMD ["python", "scripts/run_workbench_api.py", "--host", "0.0.0.0", "--port", "8877", "--parquet-root", "/parquet", "--state-root", "/state"]

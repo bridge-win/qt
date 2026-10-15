@@ -1,5 +1,12 @@
 # QT — BTC Quantitative Trading Platform
 
+## OrbStack Docker deployment
+
+Run the existing authenticated management UI/API, research worker and public BTC
+monitor locally on Apple Silicon or Intel Macs. See the [OrbStack guide](docs/orbstack.md)
+for private local setup, startup, health checks and Telegram recipient discovery.
+The default bundle never starts an order-execution service.
+
 ## Read-only BTC spot monitor
 
 The [BTC monitor operator guide](docs/btc-monitor.md) documents an isolated
@@ -443,3 +450,5 @@ pytest -q
 ruff check .
 mypy src tests scripts
 ```
+
+Multi-venue monitoring, isolated Binance/OKX test execution, and separate Polymarket public outcome books: [operator guide](docs/multi-venue.md).

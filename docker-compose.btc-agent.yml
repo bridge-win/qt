@@ -14,6 +14,7 @@ services:
     volumes: [btc-agent-state:/state]
     environment:
       BTC_AGENT_MODE: ${BTC_AGENT_MODE:-paper}
+      BTC_AGENT_TEST_ENVIRONMENT: ${BTC_AGENT_TEST_ENVIRONMENT:-binance_spot_testnet}
       BTC_AGENT_STATE_DIR: /state
       BTC_AGENT_POLL_SECONDS: ${BTC_AGENT_POLL_SECONDS:-300}
       BTC_AGENT_MAX_ORDER_QUOTE: ${BTC_AGENT_MAX_ORDER_QUOTE:-25}
@@ -22,6 +23,9 @@ services:
       BTC_AGENT_REVIEWER_URL: http://reviewer:8090/review
       BINANCE_TESTNET_API_KEY: ${BINANCE_TESTNET_API_KEY:-}
       BINANCE_TESTNET_API_SECRET: ${BINANCE_TESTNET_API_SECRET:-}
+      OKX_DEMO_API_KEY: ${OKX_DEMO_API_KEY:-}
+      OKX_DEMO_API_SECRET: ${OKX_DEMO_API_SECRET:-}
+      OKX_DEMO_PASSPHRASE: ${OKX_DEMO_PASSPHRASE:-}
     healthcheck:
       test: [CMD, python, -m, qt.btc_agent, health]
       interval: 60s

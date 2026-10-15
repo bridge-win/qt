@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .venues import Environment, Venue, spot_source
 
 
 class Model(BaseModel):
@@ -29,17 +31,33 @@ class MarketEvent(Model):
 
 
 class Source(Model):
-    exchange: Literal["binance"] = "binance"
+    exchange: Venue = "binance"
+    environment: Environment = "production"
     product: Literal["spot"] = "spot"
-    symbol: Literal["BTCUSDT"] = "BTCUSDT"
+    symbol: Literal["BTCUSDT", "BTC-USDT"] = "BTCUSDT"
     display_symbol: Literal["BTC/USDT"] = "BTC/USDT"
     price_type: Literal["trade"] = "trade"
-    rest_url: Literal["https://data-api.binance.vision/api/v3"] = (
+    rest_url: str = (
         "https://data-api.binance.vision/api/v3"
     )
-    websocket_url: Literal[
-        "wss://data-stream.binance.vision:443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@kline_1m"
-    ] = "wss://data-stream.binance.vision:443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@kline_1m"
+    websocket_url: str = "wss://data-stream.binance.vision:443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@kline_1m"
+
+    @model_validator(mode="after")
+    def official_identity(self) -> Source:
+        source = spot_source(self.exchange, self.environment)
+        if (self.symbol, self.rest_url, self.websocket_url) != (
+            source.symbol, source.rest_url, source.websocket_url,
+        ):
+            raise ValueError("source identity does not match the selected official spot source")
+        return self
+
+    @classmethod
+    def for_config(cls, config: Any) -> Source:
+        source = spot_source(config.venue, config.environment)
+        return cls(
+            exchange=source.exchange, environment=source.environment, symbol=source.symbol,
+            rest_url=source.rest_url, websocket_url=source.websocket_url,
+        )
 
 
 class Gate(Model):
@@ -75,6 +93,7 @@ class DecisionRecord(Model):
     expires_at: float
     state: Literal["INSUFFICIENT_DATA", "DATA_UNHEALTHY", "UNSUITABLE", "CANDIDATE"]
     reasons: list[str]
+    source: Source = Field(default_factory=Source)
     gates: list[Gate] = Field(default_factory=list)
     evidence: dict[str, Any] = Field(default_factory=dict)
     range_lower: float | None = None
@@ -132,3 +151,11 @@ class MonitorSnapshot(Model):
     recent_events: list[AnomalyDecision] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     live_execution_enabled: Literal[False] = False
+
+    @model_validator(mode="after")
+    def consistent_source(self) -> MonitorSnapshot:
+        if self.assessment.source != self.source or any(
+            item.source != self.source for item in self.recent_events
+        ):
+            raise ValueError("snapshot mixes source identities")
+        return self

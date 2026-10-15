@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Empty, Space, Table, Tag, Typography } from "antd";
 import { apiErrorText, request } from "../api";
 import { PageTitle } from "../workbench";
+import { PolymarketSnapshotCard } from "./PolymarketSnapshotCard";
 
 const { Paragraph, Text } = Typography;
 
@@ -33,7 +34,7 @@ export type BtcMonitorProjection = {
   snapshot_age_seconds: number | null; snapshot_max_age_seconds: number;
   snapshot: null | {
     schema_version: number; config_version: string; boot_id: string; published_at: number;
-    source: { exchange: string; product: string; symbol: string; display_symbol: string; price_type: string };
+    source: { exchange: string; environment?: "production" | "testnet" | "demo"; product: string; symbol: string; display_symbol: string; price_type: string };
     health: {
       alive: boolean; data_ready: boolean; assessment_ready: boolean; status: string; reasons: string[];
       channels: Record<string, Channel>; coverage_seconds: number; errors: Record<string, number>;
@@ -99,10 +100,15 @@ export function BtcMonitorPage(): ReactElement {
   const decision = snapshot?.assessment;
   const channelRows = Object.entries(snapshot?.health.channels ?? {}).map(([name, channel]) => ({ name, ...channel }));
   const notificationConfigured = snapshot?.context.notifications_configured ?? snapshot?.context.notification_status?.configured ?? false;
+  const venue = snapshot?.source.exchange === "binance" ? "Binance" : snapshot?.source.exchange === "okx" ? "OKX" : snapshot?.source.exchange;
+  // Snapshots written before environment identity was introduced are production.
+  const environment = snapshot?.source.environment ?? "production";
+  const environmentLabel = environment === "demo" ? "模拟盘 DEMO" : environment === "testnet" ? "测试网 TESTNET" : "生产环境 production";
   return <>
-    <PageTitle eyebrow="Binance 现货 · 公共行情 · 只读" title="BTC 实时监测">
+    <PageTitle eyebrow={`${venue ? `${venue} · ${environmentLabel}` : "BTC"} 现货 · 公共行情 · 只读`} title="BTC 实时监测">
       <Paragraph>观察秒级插针与网格市场适用性。仅用于监测与研究；不提交实盘订单，不计算下单数量，不授权交易。</Paragraph>
     </PageTitle>
+    {snapshot && environment !== "production" && <Alert className="research-notice" type="warning" showIcon message={`${venue} ${environmentLabel} · 非生产行情`} description="当前 BTC 现货监测来自测试或模拟环境；价格与评估仅适用于所标示环境。" />}
     {pollingFailed && <Alert type="error" showIcon message="监测读取失败，候选已隐藏" description={apiErrorText(query.error ?? query.failureReason)} />}
     {query.isLoading && <Card loading aria-label="正在读取监测状态" />}
     {!query.isLoading && !snapshot && <Card><Empty description="监测尚未启动或快照不可用" /><Text type="secondary">{data?.read_reasons.join(" · ")}</Text></Card>}
@@ -111,6 +117,7 @@ export function BtcMonitorPage(): ReactElement {
       <Card title="行情身份与健康" className="top-gap">
         <Descriptions bordered size="small" column={{ xs: 1, md: 2 }}>
           <Descriptions.Item label="市场">{snapshot.source.exchange} · {snapshot.source.product} · {snapshot.source.display_symbol} ({snapshot.source.symbol})</Descriptions.Item>
+          <Descriptions.Item label="行情环境"><Tag color={environment === "production" ? "blue" : "orange"}>{environmentLabel}</Tag></Descriptions.Item>
           <Descriptions.Item label="价格类型">{snapshot.source.price_type}（现货成交价）</Descriptions.Item>
           <Descriptions.Item label="最新价格">{number(snapshot.micro.price, " USDT")}</Descriptions.Item>
           <Descriptions.Item label="买卖价差">{number(snapshot.micro.spread_bps, " bps")}</Descriptions.Item>
@@ -163,6 +170,7 @@ export function BtcMonitorPage(): ReactElement {
         ]} />
       </Card>
     </>}
+    <PolymarketSnapshotCard />
   </>;
 }
 

@@ -1,8 +1,10 @@
 # BTC 现货只读监控：部署与运维
 
+多平台配置、测试执行与独立 Polymarket 只读适配见 [多平台说明](multi-venue.md)。
+
 ## 边界与架构
 
-本组件只采集 Binance **SPOT BTC/USDT** 公共行情，识别短时异常、评估网格市场条件，并提供可过期的研究候选。`live_execution_enabled` 固定为 `false`；没有订单、账户查询、资金、持仓、交易密钥或实盘开关。不会调用现有 `qt.btc_agent` 的执行服务，也不共享它的数据库或执行锁。
+本组件采集 Binance 或 OKX **SPOT BTC/USDT** 公共行情（含明确区分的测试环境），识别短时异常、评估网格市场条件，并提供可过期的研究候选。`live_execution_enabled` 固定为 `false`；没有订单、账户查询、资金、持仓、交易密钥或实盘开关。不会调用现有 `qt.btc_agent` 的执行服务，也不共享它的数据库或执行锁。
 
 部署只有一个独立采集 worker：
 

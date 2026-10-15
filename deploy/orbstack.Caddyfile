@@ -1,0 +1,52 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+http://:8080 {
+	# Health discloses no application data and never reaches the origin.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		route {
+			# Local-only workflow. Never use this plain-HTTP endpoint over a LAN.
+			@foreign_origin {
+				header Origin *
+				not {
+					header_regexp Origin ^http://(127\.0\.0\.1|localhost):{$QT_ORBSTACK_PORT}$
+				}
+			}
+			respond @foreign_origin "Untrusted origin" 403
+			basic_auth {
+				{env.QT_ORBSTACK_USERNAME} {env.QT_ORBSTACK_PASSWORD_HASH}
+			}
+			header {
+				X-Content-Type-Options nosniff
+				X-Frame-Options DENY
+				Referrer-Policy same-origin
+			}
+			@api path /api/*
+			handle @api {
+				reverse_proxy api:8877 {
+					# Set, never append, the existing origin-auth headers. Browser
+					# credentials/trusted-subject claims must not pass through.
+					header_up -Authorization
+					header_up CF-Access-Client-Id {env.QT_WORKBENCH_ORIGIN_CLIENT_ID}
+					header_up CF-Access-Client-Secret {env.QT_WORKBENCH_ORIGIN_CLIENT_SECRET}
+					header_up X-QT-Access-Subject "local:{http.auth.user.id}"
+				}
+			}
+			# Raw artifact/state paths and origin docs are not proxied or served.
+			@private path /artifacts/* /docs /docs/* /redoc /openapi.json
+			respond @private "Not available on this endpoint" 404
+			handle {
+				root * /srv
+				try_files {path} /index.html
+				file_server
+			}
+		}
+	}
+}

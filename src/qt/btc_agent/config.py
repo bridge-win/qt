@@ -11,6 +11,7 @@ class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BTC_AGENT_", allow_inf_nan=False)
 
     mode: Literal["paper", "testnet"] = "paper"
+    test_environment: Literal["binance_spot_testnet", "okx_demo"] = "binance_spot_testnet"
     state_dir: Path = Path("data/runtime/btc-agent")
     poll_seconds: int = Field(default=300, ge=10, le=3600)
     max_order_quote: float = Field(default=25, ge=10, le=1000)
@@ -30,8 +31,15 @@ class AgentConfig(BaseSettings):
     reviewer_timeout_seconds: int = Field(default=120, ge=10, le=300)
 
     @property
+    def state_namespace(self) -> str:
+        # Preserve the existing Binance ledger; never mix different venues' intents.
+        if self.test_environment == "okx_demo":
+            return f"{self.mode}-okx-demo"
+        return self.mode
+
+    @property
     def database(self) -> Path:
-        return self.state_dir / f"{self.mode}.sqlite3"
+        return self.state_dir / f"{self.state_namespace}.sqlite3"
 
     @property
     def kill_file(self) -> Path:

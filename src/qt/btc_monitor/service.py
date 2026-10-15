@@ -142,6 +142,7 @@ class MonitorService:
         await asyncio.wait_for(self.store.start(), timeout=self.config.shutdown_seconds)
         tasks: list[asyncio.Task[None]] = []
         stopping: asyncio.Task[bool] | None = None
+        identity_validated = False
         try:
             self.last_assess_mono = self.last_consume_mono = time.monotonic()
             self._start_watchdog(asyncio.get_running_loop())
@@ -149,9 +150,10 @@ class MonitorService:
                 self.store.load_checkpoint(), timeout=self.config.shutdown_seconds
             )
             if checkpoint is not None:
-                self.engine.restore(
-                    MonitorSnapshot.model_validate(checkpoint), time.time(), time.monotonic()
-                )
+                previous = MonitorSnapshot.model_validate(checkpoint)
+                if previous.source != self.engine.source:
+                    raise RuntimeError("state_source_mismatch_use_separate_directory")
+                self.engine.restore(previous, time.time(), time.monotonic())
             else:
                 path = self.config.state_dir / "latest.json"
                 if path.exists() and path.stat().st_size <= 1024 * 1024:
@@ -159,9 +161,12 @@ class MonitorService:
                         previous = MonitorSnapshot.model_validate_json(
                             await asyncio.to_thread(path.read_bytes)
                         )
+                        if previous.source != self.engine.source:
+                            raise RuntimeError("state_source_mismatch_use_separate_directory")
                         self.engine.restore(previous, time.time(), time.monotonic())
                     except (OSError, ValueError):
                         self.engine.error("checkpoint_unavailable")
+            identity_validated = True
             tasks = [
                 asyncio.create_task(self._consume(), name="monitor-consumer"),
                 asyncio.create_task(self._publish(), name="monitor-publisher"),
@@ -209,21 +214,22 @@ class MonitorService:
                     raise RuntimeError("task_shutdown_timeout")
                 await asyncio.gather(*cancelled, return_exceptions=True)
             try:
-                self.engine.reset(self.fatal_reason or "worker_stopped", time.time())
-                final = self.engine.snapshot(
-                    time.time(),
-                    time.monotonic(),
-                    notifications_configured=self.notification_configured,
-                )
-                final.health.alive = False
-                final.health.status = "stopped"
-                final.health.reasons.append(self.fatal_reason or "worker_stopped")
-                await asyncio.wait_for(
-                    self.store.persist(
-                        final.model_dump(mode="json"), self.engine.drain_notifications()
-                    ),
-                    timeout=self.config.shutdown_seconds / 2,
-                )
+                if identity_validated:
+                    self.engine.reset(self.fatal_reason or "worker_stopped", time.time())
+                    final = self.engine.snapshot(
+                        time.time(),
+                        time.monotonic(),
+                        notifications_configured=self.notification_configured,
+                    )
+                    final.health.alive = False
+                    final.health.status = "stopped"
+                    final.health.reasons.append(self.fatal_reason or "worker_stopped")
+                    await asyncio.wait_for(
+                        self.store.persist(
+                            final.model_dump(mode="json"), self.engine.drain_notifications()
+                        ),
+                        timeout=self.config.shutdown_seconds / 2,
+                    )
             finally:
                 try:
                     await self.store.stop(timeout=self.config.shutdown_seconds / 2)

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BtcMonitorPage, type BtcMonitorProjection, type ReceivedBtcMonitorProjection } from "./BtcMonitorPage";
 
@@ -42,6 +42,7 @@ describe("BTC read-only monitor", () => {
     renderProjection(fixture());
     expect(screen.getByText("市场条件候选（仅研究）")).toBeInTheDocument();
     expect(screen.getByText(/binance · spot · BTC\/USDT/)).toBeInTheDocument();
+    expect(screen.getByText("Binance · 生产环境 production 现货 · 公共行情 · 只读")).toBeInTheDocument();
     expect(screen.getByText("trade（现货成交价）")).toBeInTheDocument();
     expect(screen.getByText("balanced（均衡启发式，未实证校准）")).toBeInTheDocument();
     expect(screen.getByText("0.01 USDT（假设，交易所约束未核验）")).toBeInTheDocument();
@@ -51,6 +52,45 @@ describe("BTC read-only monitor", () => {
     expect(screen.getByText(/40.00 bps \/ 13.00 bps/)).toBeInTheDocument();
     expect(screen.getByText("源无时间戳（使用接收时间）")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /下单|启动交易|启用 live/ })).not.toBeInTheDocument();
+  });
+
+  it("labels OKX demo prominently while keeping BTC spot trade prices", () => {
+    const data = fixture();
+    data.snapshot!.source = { exchange: "okx", environment: "demo", product: "spot", symbol: "BTC-USDT", display_symbol: "BTC/USDT", price_type: "trade" };
+    renderProjection(data);
+    expect(screen.getByText("OKX · 模拟盘 DEMO 现货 · 公共行情 · 只读")).toBeInTheDocument();
+    expect(screen.getByText("OKX 模拟盘 DEMO · 非生产行情")).toBeInTheDocument();
+    expect(screen.getByText(/okx · spot · BTC\/USDT \(BTC-USDT\)/)).toBeInTheDocument();
+    expect(screen.getByText("trade（现货成交价）")).toBeInTheDocument();
+    expect(screen.getByText("60000.00 USDT")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /下单|启动交易|启用 live/ })).not.toBeInTheDocument();
+  });
+
+  it("labels Binance testnet as non-production", () => {
+    const data = fixture();
+    data.snapshot!.source.environment = "testnet";
+    renderProjection(data);
+    expect(screen.getByText("Binance 测试网 TESTNET · 非生产行情")).toBeInTheDocument();
+  });
+
+  it("keeps public prediction quotes separate from BTC spot prices and grid evidence", async () => {
+    const data = fixture();
+    const now = Date.now() / 1000;
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(path.includes("prediction-markets") ? {
+      exchange: "polymarket", environment: "production-public", product: "prediction", slug: "example-market",
+      question: "Independent prediction question?", condition_id: "condition-1", version: "v2", read_at: now,
+      active: true, ready: true, reasons: [], live_execution_enabled: false,
+      outcomes: [{ name: "Yes", token_id: "token-1", bid: 0.35, ask: 0.37, midpoint: 0.36, timestamp: now, ready: true, reasons: [] }],
+    } : data), { headers: { "content-type": "application/json" } })));
+    renderProjection(data);
+    expect(screen.queryByText("35.00%")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Polymarket 市场 slug"), { target: { value: "example-market" } });
+    fireEvent.click(screen.getByRole("button", { name: "读取公共概率快照" }));
+    expect(await screen.findByText("35.00%")).toBeInTheDocument();
+    expect(screen.getByText("60000.00 USDT")).toBeInTheDocument();
+    expect(screen.getByText("市场条件候选（仅研究）")).toBeInTheDocument();
+    expect(screen.getByText("test-decision · r1")).toBeInTheDocument();
+    expect(screen.queryByText("0.35 USDT")).not.toBeInTheDocument();
   });
 
   it("renders object-valued motion evidence and robust-range thresholds in full", () => {

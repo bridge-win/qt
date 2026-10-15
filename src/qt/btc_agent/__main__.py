@@ -13,10 +13,31 @@ from dataclasses import asdict
 from qt.btc_agent import market
 from qt.btc_agent.broker import BinanceTestnetBroker
 from qt.btc_agent.config import AgentConfig
+from qt.btc_agent.okx_demo import OKXDemoBroker
 from qt.btc_agent.paper import PaperBroker
 from qt.btc_agent.reviewer import review_signal, serve
 from qt.btc_agent.service import Service
 from qt.btc_agent.store import Store
+
+
+def _credentials(cfg: AgentConfig) -> tuple[str, str, str]:
+    if cfg.test_environment == "okx_demo":
+        return (
+            os.getenv("OKX_DEMO_API_KEY", ""), os.getenv("OKX_DEMO_API_SECRET", ""),
+            os.getenv("OKX_DEMO_PASSPHRASE", ""),
+        )
+    return (
+        os.getenv("BINANCE_TESTNET_API_KEY", ""),
+        os.getenv("BINANCE_TESTNET_API_SECRET", ""), "",
+    )
+
+
+def _test_broker(
+    cfg: AgentConfig, key: str, secret: str, passphrase: str,
+) -> BinanceTestnetBroker | OKXDemoBroker:
+    if cfg.test_environment == "okx_demo":
+        return OKXDemoBroker(key, secret, passphrase)
+    return BinanceTestnetBroker(key, secret)
 
 
 def main() -> int:
@@ -41,11 +62,13 @@ def main() -> int:
         serve()
         return 0
     cfg = AgentConfig()
+    candle_loader = market.okx_candles if cfg.test_environment == "okx_demo" else market.candles
+    quote_loader = market.okx_quote if cfg.test_environment == "okx_demo" else market.quote
     if args.command == "backtest":
         from qt.btc_agent.backtest import run_backtest
 
         closed = [
-            c for c in market.candles() if c.open_time + 86_400_000 <= int(time.time() * 1000)
+            c for c in candle_loader() if c.open_time + 86_400_000 <= int(time.time() * 1000)
         ]
         print(json.dumps(run_backtest(closed), indent=2))
         return 0
@@ -56,7 +79,7 @@ def main() -> int:
         return 0
     if args.command in {"status", "health"}:
         if not cfg.database.exists():
-            print(json.dumps({"status": "not_started", "mode": cfg.mode}))
+            print(json.dumps({"status": "not_started", "mode": cfg.mode, "test_environment": cfg.test_environment}))
             return 1
         store = Store(cfg.database)
         heartbeat = store.get("heartbeat")
@@ -65,6 +88,7 @@ def main() -> int:
                 json.dumps(
                     {
                         "mode": cfg.mode,
+                        "test_environment": cfg.test_environment,
                         "heartbeat": heartbeat,
                         "position": asdict(store.position()),
                         "dust_btc": store.get("dust_btc"),
@@ -84,30 +108,31 @@ def main() -> int:
             and heartbeat.get("status") not in {"blocked", "halted"}
             else 1
         )
-    key, secret = (
-        os.getenv("BINANCE_TESTNET_API_KEY", ""),
-        os.getenv("BINANCE_TESTNET_API_SECRET", ""),
-    )
+    key, secret, passphrase = _credentials(cfg)
+    authenticated = bool(key and secret and (passphrase or cfg.test_environment != "okx_demo"))
     if args.command == "probe-testnet":
-        broker = BinanceTestnetBroker(key, secret)
+        broker = _test_broker(cfg, key, secret, passphrase)
         print(
             json.dumps(
                 {
+                    "test_environment": cfg.test_environment,
                     "testnet_quote": asdict(broker.quote()),
-                    "authenticated": bool(key and secret),
-                    "balances": broker.balances() if key and secret else None,
+                    "authenticated": authenticated,
+                    "balances": broker.balances() if authenticated else None,
                 }
             )
         )
         return 0
     if args.command == "testnet-round-trip" and cfg.mode != "testnet":
         raise ValueError("testnet-round-trip requires BTC_AGENT_MODE=testnet")
-    if cfg.mode == "testnet" and not (key and secret):
+    if cfg.mode == "testnet" and not authenticated:
+        if cfg.test_environment == "okx_demo":
+            raise ValueError("Dedicated OKX_DEMO_API_KEY, OKX_DEMO_API_SECRET and OKX_DEMO_PASSPHRASE are required")
         raise ValueError(
             "Dedicated BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET are required"
         )
     # OS lock releases on process death; only one worker may own this database.
-    with (cfg.state_dir / f"{cfg.mode}.lock").open("a") as lock:
+    with (cfg.state_dir / f"{cfg.state_namespace}.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -115,7 +140,8 @@ def main() -> int:
         store = Store(cfg.database)
         try:
             if cfg.mode == "testnet":
-                fingerprint = hashlib.sha256(key.encode()).hexdigest()
+                identity = f"okx_demo:{key}" if cfg.test_environment == "okx_demo" else key
+                fingerprint = hashlib.sha256(identity.encode()).hexdigest()
                 existing = store.get("account_fingerprint")
                 if existing and existing != fingerprint:
                     raise ValueError("testnet account changed; use a separate state directory")
@@ -128,15 +154,15 @@ def main() -> int:
                 print("Halt removed.")
                 return 0
             execution = (
-                BinanceTestnetBroker(key, secret)
+                _test_broker(cfg, key, secret, passphrase)
                 if cfg.mode == "testnet"
-                else PaperBroker(store, market.quote)
+                else PaperBroker(store, quote_loader)
             )
             worker = Service(
                 cfg,
                 store,
                 execution,
-                market.candles,
+                candle_loader,
                 lambda s: review_signal(s, cfg.reviewer_url, cfg.reviewer_timeout_seconds),
             )
             if args.command == "testnet-round-trip":

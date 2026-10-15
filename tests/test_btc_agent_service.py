@@ -168,7 +168,7 @@ def test_unknown_submit_survives_restart_without_duplicate(
     broker = TimeoutBroker(env.broker, accepted=accepted)
     env.worker.broker = broker
     result = env.worker.cycle()
-    assert result == {"status": "blocked", "reason": "TimeoutError"}
+    assert result == {"test_environment": "binance_spot_testnet", "status": "blocked", "reason": "TimeoutError"}
     assert len(env.store.pending()) == 1
     assert broker.calls == 1
 
@@ -418,7 +418,7 @@ def test_failed_dust_metadata_keeps_residual_owned_and_blocks(
     _leave_exit_residual(env)
     residual = env.store.position()
     monkeypatch.setattr(env.broker, "is_dust", _unavailable)
-    assert env.worker.cycle() == {"status": "blocked", "reason": "RuntimeError"}
+    assert env.worker.cycle() == {"test_environment": "binance_spot_testnet", "status": "blocked", "reason": "RuntimeError"}
     assert env.store.position() == residual
     assert env.worker.dust_qty() == 0
     assert env.store.get("dust_cost") is None
@@ -490,7 +490,7 @@ def test_large_price_move_during_review_blocks_entry_in_both_directions(
         return Review(approve=True, reason="Approved the original candidate snapshot")
 
     env.worker.review = review
-    assert env.worker.cycle() == {"status": "blocked", "reason": "ValueError"}
+    assert env.worker.cycle() == {"test_environment": "binance_spot_testnet", "status": "blocked", "reason": "ValueError"}
     assert reviewed_prices == [initial_price]
     assert env.store.pending() == []
     assert env.store.db.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0

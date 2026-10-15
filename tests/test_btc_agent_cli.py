@@ -221,3 +221,104 @@ def test_os_lock_rejects_second_worker_before_broker_access(smoke: Smoke) -> Non
             cli.main()
     assert smoke.broker_creations == 0
     assert smoke.broker.submissions == []
+
+
+def test_environment_configuration_and_ledgers_are_closed_and_separate(tmp_path: Path) -> None:
+    default = AgentConfig(mode="testnet", state_dir=tmp_path)
+    demo = AgentConfig(mode="testnet", test_environment="okx_demo", state_dir=tmp_path)
+    assert default.database == tmp_path / "testnet.sqlite3"
+    assert demo.database == tmp_path / "testnet-okx-demo.sqlite3"
+    assert default.state_namespace != demo.state_namespace
+    with pytest.raises(ValidationError):
+        AgentConfig(test_environment="okx_production")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        AgentConfig(test_environment="binance_futures_testnet")  # type: ignore[arg-type]
+    with Store(default.database).db as db:
+        db.execute("INSERT INTO intents VALUES ('oldbinance','buy',0.001,50000,1,0,NULL)")
+    store = Store(demo.database)
+    assert store.pending() == []
+    store.close()
+
+
+@pytest.mark.parametrize("missing", ["OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE"])
+def test_okx_requires_all_dedicated_credentials_without_production_or_binance_fallback(
+    smoke: Smoke, monkeypatch: pytest.MonkeyPatch, missing: str,
+) -> None:
+    monkeypatch.setenv("BTC_AGENT_TEST_ENVIRONMENT", "okx_demo")
+    for name in ("OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE"):
+        monkeypatch.setenv(name, "fake-demo-value")
+    monkeypatch.delenv(missing)
+    monkeypatch.setenv("QT_OKX_API_KEY", "fake-production-key-never-selected")
+    monkeypatch.setenv("QT_OKX_API_SECRET", "fake-production-secret-never-selected")
+    monkeypatch.setenv("QT_OKX_PASSPHRASE", "fake-production-passphrase-never-selected")
+    with pytest.raises(ValueError, match="Dedicated OKX_DEMO"):
+        cli.main()
+    assert smoke.broker_creations == 0
+    assert smoke.broker.submissions == []
+
+
+def test_probe_uses_selected_demo_adapter_and_labels_environment(
+    smoke: Smoke, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("BTC_AGENT_TEST_ENVIRONMENT", "okx_demo")
+    monkeypatch.setattr(sys, "argv", ["btc-agent", "probe-testnet"])
+    for name in ("OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE"):
+        monkeypatch.setenv(name, name)
+
+    def demo(key: str, secret: str, passphrase: str) -> SmokeBroker:
+        assert (key, secret, passphrase) == (
+            "OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE",
+        )
+        return smoke.broker
+
+    monkeypatch.setattr(cli, "OKXDemoBroker", demo)
+    assert cli.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["test_environment"] == "okx_demo"
+    assert result["authenticated"] is True
+    assert smoke.broker_creations == 0 and smoke.broker.submissions == []
+
+
+def test_okx_service_receives_venue_matched_daily_feed(
+    smoke: Smoke, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BTC_AGENT_TEST_ENVIRONMENT", "okx_demo")
+    monkeypatch.setattr(sys, "argv", ["btc-agent", "once"])
+    for name in ("OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE"):
+        monkeypatch.setenv(name, "fake-demo-value")
+    monkeypatch.setattr(cli, "OKXDemoBroker", lambda *args: smoke.broker)
+    seen: list[object] = []
+
+    class Worker:
+        def __init__(self, cfg: object, store: object, broker: object, candles: object, review: object):
+            seen.append(candles)
+
+        def cycle(self) -> dict[str, object]:
+            return {"status": "watching"}
+
+    monkeypatch.setattr(cli, "Service", Worker)
+    assert cli.main() == 0
+    assert seen == [market.okx_candles]
+    assert smoke.broker.submissions == []
+
+
+def test_okx_changed_account_is_blocked_before_adapter_creation(
+    smoke: Smoke, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BTC_AGENT_TEST_ENVIRONMENT", "okx_demo")
+    monkeypatch.setattr(sys, "argv", ["btc-agent", "once"])
+    for name in ("OKX_DEMO_API_KEY", "OKX_DEMO_API_SECRET", "OKX_DEMO_PASSPHRASE"):
+        monkeypatch.setenv(name, "fake-new-account")
+    cfg = AgentConfig()
+    store = Store(cfg.database)
+    with store.db:
+        store.put("account_fingerprint", "a-different-account")
+    store.close()
+
+    def no_adapter(*args: object) -> object:
+        pytest.fail("changed account must be blocked before any adapter exists")
+
+    monkeypatch.setattr(cli, "OKXDemoBroker", no_adapter)
+    with pytest.raises(ValueError, match="account changed"):
+        cli.main()
+    assert smoke.broker.submissions == []

@@ -160,7 +160,7 @@ class MonitorEngine:
     def __init__(self, config: MonitorConfig, *, boot_id: str | None = None):
         self.config = config
         self.boot_id = boot_id or uuid.uuid4().hex
-        self.source = Source()
+        self.source = Source.for_config(config)
         self.micro = MicroState(config.ring_size)
         self.channels: dict[str, MarketEvent] = {}
         self.backlogs: dict[str, float] = {}
@@ -180,6 +180,11 @@ class MonitorEngine:
 
     def restore(self, snapshot: MonitorSnapshot, now: float, mono: float) -> None:
         """Restore identities only. Persisted prices never restore current readiness."""
+        if snapshot.source != self.source or any(
+            item.source != self.source for item in snapshot.recent_events
+        ):
+            self.error("checkpoint_source_mismatch")
+            return
         for item in snapshot.recent_events[-50:]:
             self.events.append(item)
         if self.events:
@@ -317,7 +322,7 @@ class MonitorEngine:
                     "event_id": self.active.event_id,
                     "revision": self.active.revision,
                     "notification_class": state.lower(),
-                    "text": f"BTC/USDT spot {state}: {self.active.direction} wick; research only. {reason}. "
+                    "text": f"{self.source.exchange} {self.source.environment} BTC/USDT spot {state}: {self.active.direction} wick; research only. {reason}. "
                     f"Baseline {self.active.baseline:.2f}, extreme {self.active.extreme:.2f}, recovery {self.active.recovery_fraction:.0%}. "
                     f"As of {datetime.fromtimestamp(self.active.as_of, timezone.utc).isoformat()}; "
                     f"expires {datetime.fromtimestamp(self.active.expires_at, timezone.utc).isoformat()}; "
@@ -432,7 +437,7 @@ class MonitorEngine:
                 receive_age_seconds=receive_age,
                 backlog_seconds=backlog,
                 ready=ready,
-                source_time_known=name != "quote",
+                source_time_known=event.event_time is not None if event else name != "quote",
             )
             if not ready:
                 reasons.append(f"{name}_unhealthy")
@@ -659,6 +664,7 @@ class MonitorEngine:
         )
         self.assessment_revision += 1
         record = DecisionRecord(
+            source=self.source,
             assessment_id=f"{self.boot_id}-grid",
             revision=self.assessment_revision,
             as_of=now,

@@ -1,0 +1,4 @@
+# Match pyproject.toml's existing native-research extra.
+nautilus_trader==2.0.0rc4
+optuna==4.5.0
+TA-Lib==0.7.1

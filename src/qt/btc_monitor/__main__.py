@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from .config import MonitorConfig
+from .models import Source
 from .service import health_status, read_status, run_monitor, self_test
 
 
@@ -27,6 +28,8 @@ def main() -> int:
             asyncio.run(run_monitor(config))
         else:
             snapshot = read_status(config.state_dir)
+            if snapshot.source != Source.for_config(config):
+                raise ValueError("state_source_mismatch")
             if args.command == "status":
                 print(snapshot.model_dump_json())
             else:

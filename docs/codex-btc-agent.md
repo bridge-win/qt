@@ -1,7 +1,8 @@
-# Codex Bitcoin agent: operation and testnet acceptance
+# Codex Bitcoin agent: paper, Binance Testnet, and OKX demo
 
 This isolated service monitors BTC/USDT every five minutes, evaluates completed
-UTC daily candles, and trades only paper money or Binance Spot Testnet assets.
+UTC daily candles, and trades only paper money, Binance Spot Testnet assets,
+or OKX demo assets.
 There is no production trading mode. It runs independently of the existing QT
 dashboard, platform workers, and live broker.
 
@@ -21,7 +22,7 @@ flowchart LR
   C -->|approve or veto| R[Deterministic risk controls]
   Q[Fresh execution quote] --> R
   R --> D[SQLite order intent]
-  D --> E[Paper broker or Spot Testnet IOC limit]
+  D --> E[Paper broker or test-environment IOC limit]
   E --> A[Reconcile fills and fees]
   A --> D
 ```
@@ -47,8 +48,12 @@ produce larger losses. The exposure cap governs entries, not subsequent gains.
 SQLite WAL stores intents before submission, fills, owned positions, per-day
 spend, review inputs/output hashes, and heartbeat events. Unknown submissions
 are reconciled by client ID and never automatically resubmitted. A file lock
-prevents two workers using the same mode/database. Testnet and paper ledgers
-are separate; changing the API key requires a separate state directory.
+prevents two workers using the same environment/database. The existing Binance
+paths remain `paper.sqlite3` and `testnet.sqlite3`; OKX uses
+`paper-okx-demo.sqlite3` and `testnet-okx-demo.sqlite3`, with matching separate
+lock files. Changing the selected venue never loads the other venue's pending
+intents. Changing the API key requires a separate state directory. The `KILL`
+file intentionally halts every environment sharing that state directory.
 
 BTC left below venue minimums after an exit is retained as `dust_btc` and
 `dust_cost`. It counts toward exposure and inventory checks, but is not treated
@@ -93,7 +98,8 @@ No Bitcoin wallet or mainnet key is required or accepted.
    Configure `BINANCE_TESTNET_API_KEY` and `BINANCE_TESTNET_API_SECRET` locally,
    plus `CODEX_API_KEY`. Do not reuse the existing QT production credentials.
    Disable BNB fee discounts: third-asset commission is rejected by this ledger.
-2. Set `BTC_AGENT_MODE=testnet` in the same environment file. Keep the testnet
+2. Set `BTC_AGENT_MODE=testnet` and
+   `BTC_AGENT_TEST_ENVIRONMENT=binance_spot_testnet` in the same environment file. Keep the testnet
    account dedicated to this service. A balance reset or manually removed BTC
    blocks execution rather than overwriting owned inventory.
 3. Stop the worker while running the one-shot test so it can acquire the lock:
@@ -106,13 +112,90 @@ docker compose --env-file data/runtime/btc-agent.env -f docker-compose.btc-agent
 docker compose --env-file data/runtime/btc-agent.env -f docker-compose.btc-agent.yml up -d worker
 ```
 
-`probe-testnet` without keys checks only public quotes. With keys it also checks
-balances. `testnet-round-trip` is an explicit plumbing test: it requests Codex
+`probe-testnet` targets `BTC_AGENT_TEST_ENVIRONMENT`. Without keys it checks
+only the selected test environment's quote. With dedicated keys it also checks
+balances. Output and worker heartbeat records include `test_environment`. `testnet-round-trip` is an explicit plumbing test: it requests Codex
 approval for a test buy independently of strategy conditions, sends bounded
 IOC orders, and requires positive confirmed buy and sell fills, no pending
 orders and no active position. It reports any retained dust separately.
 A Codex veto, zero fill, or ambiguous submission does not pass the smoke test.
 Run it once in a clean testnet ledger; do not delete state to bypass cooldowns.
+
+## OKX demo configuration and boundaries
+
+Use `BTC_AGENT_MODE=testnet` with `BTC_AGENT_TEST_ENVIRONMENT=okx_demo`.
+The mode name is retained for compatibility; this selects OKX's simulated
+trading environment, not Binance. Configure only `OKX_DEMO_API_KEY`,
+`OKX_DEMO_API_SECRET`, and `OKX_DEMO_PASSPHRASE` in the untracked environment
+file. Create the credentials in OKX's demo-trading API area. Production
+`QT_OKX_*` and Binance credentials are never used as fallbacks.
+
+The existing `probe-testnet` and `testnet-round-trip` commands above operate on
+this selected environment. Starting or probing authenticated execution is an
+operator action; adding this adapter does not activate it. Keep the account
+and ledger dedicated. Do not enter keys into chat or into the monitoring UI.
+There is no credential form, credential retrieval, or real-money activation in
+this service.
+
+The OKX adapter uses the global `https://openapi.okx.com` host only. OKX demo
+shares its REST host with production, so every final HTTP request is locked to
+`x-simulated-trading: 1`, plus an exact method/path allowlist. The SDK is put in
+sandbox mode before any exchange method. Removing/changing the demo header,
+changing the host, requesting a withdrawal endpoint, or a key/environment
+mismatch blocks execution. Redirects, environment proxies, debug credential
+logging, and submission retries are disabled. There is no fallback to
+production, another domain, or regional US/Australia/EEA hosts. Regional
+accounts therefore are not supported by this adapter.
+
+Execution supports only BTC-USDT SPOT with `tdMode=cash`, base-BTC quantity,
+IOC limit orders and alphanumeric persisted client IDs of at most 32 characters.
+It validates current tick, lot, minimum base size, and maximum limit-order size.
+OKX's `maxLmtAmt` is denominated in USD; the adapter does not mislabel it as a
+USDT bound. OKX enforces this USD amount cap server-side, while the service
+separately applies its configured USDT budget. No margin, leverage, derivatives,
+market orders, deposits, transfers, withdrawals, or account setup is supported.
+
+An order acknowledgement is not a fill. The adapter checks the success code,
+per-order code and identities, then reconciles `trade/order` and `trade/fills`.
+It requires unique trade IDs, exact accumulated base quantity and accounted
+BTC/USDT commissions before terminal inventory changes. Fees are computed from
+individual trades, not a rounded order-average price. A timeout, duplicate ID,
+delayed order visibility, incomplete fill history, mismatched response or
+unsupported fee preserves the durable intent and blocks new submissions.
+Restarting reconciles that same ID rather than submitting it again.
+
+Current intentional limitations:
+- The fill query is limited to the first 100 recent fills. Pagination and archived
+  fill history are not implemented. If those rows cannot fully reconcile the
+  order, `DemoFillsIncompleteError` keeps it pending for operator investigation.
+- Positive fee rebates and nonzero fees in currencies other than BTC/USDT are
+  unsupported by the shared nonnegative-fee ledger. `DemoFeeAccountingError`
+  blocks reconciliation; the order is not marked rejected or replayed.
+- An acknowledged order not yet visible raises `DemoOrderNotVisibleError` and
+  can be reconciled by later cycles. Exchange resets/history expiry may make
+  reconciliation permanently inconclusive; preserve state and investigate.
+- Missing BTC or USDT cash balances fail closed. Provision virtual demo balances
+  in the appropriate cash trading account before an operator-run smoke test.
+- SDK `InvalidOrder` errors can represent duplicate IDs as well as definite
+  rejections. Failed submissions, including insufficient funds, conservatively
+  preserve the pending intent rather than inferring a terminal rejection from
+  an exception class or error-message wording. An order that never existed may
+  require operator investigation; the service does not auto-clear it.
+- Daily signals and paper quotes use OKX's real public market data, without
+  credentials or the demo header. Daily `1Dutc` history returns up to 300
+  confirmed bars, compared with Binance's up to 1,000; service validation still
+  requires 210 contiguous completed UTC days. Backtests across these unequal
+  histories are not directly comparable. Test execution quotes use the selected
+  demo broker, so a demo/real price discrepancy may block entry by design.
+
+These paths were validated with offline fixtures and contract tests only. No
+credentials were retrieved or used, no authenticated API calls or orders were
+made, and no demo round-trip, Docker deployment, sustained run or real-money
+execution is established by those tests. Follow the operator acceptance steps
+only with separate authorization and locally configured demo credentials.
+
+Official contracts: [OKX API v5](https://www.okx.com/docs-v5/en/) and
+[Binance Spot Testnet REST](https://developers.binance.com/en/docs/products/spot/testnet/rest-api).
 
 ## Recovery and stopping
 
@@ -149,7 +232,8 @@ while stopped. `docker compose down` retains state; `down -v` destroys it.
 python -m qt.btc_agent backtest > data/runtime/btc-agent-backtest.json
 ```
 
-The backtest downloads up to 1,000 daily production candles and compares the
+The backtest downloads daily public candles from the selected venue (up to
+1,000 Binance or 300 confirmed OKX bars) and compares the
 rules with buy-and-hold and monthly DCA from the same 100-USDT initial capital.
 It uses next-open fills, 10 bps fee and 10 bps slippage per side, completed data,
 and no Codex look-ahead. This rule-only diagnostic uses daily risk checks and

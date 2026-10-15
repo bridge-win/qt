@@ -24,6 +24,7 @@ from qt.btc_monitor.api import build_btc_monitor_router
 from qt.lab.persistence import LabRepository
 from qt.lab.router import LabSettings, build_lab_router
 from qt.lab.service import LabExecutionAdapter, LabService, ParquetTimelineProvider
+from qt.prediction_markets.api import build_prediction_market_router
 from qt.research.datasets import DatasetCatalog
 from qt.research.repository import IdempotencyConflictError, ResearchRepository
 from qt.workbench.auxiliary_datasets import (
@@ -48,6 +49,7 @@ class WorkbenchSettings:
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     origin_client_id: str | None = None
     origin_client_secret: str | None = None
+    btc_monitor_state_dir: Path | None = None
 
 
 class ExperimentRequest(BaseModel):
@@ -113,7 +115,7 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
         Local loopback development can omit the pair entirely.
         """
 
-        if settings.origin_client_id and request.url.path.startswith("/api/"):
+        if settings.origin_client_id:
             supplied_id = request.headers.get("cf-access-client-id", "")
             supplied_secret = request.headers.get("cf-access-client-secret", "")
             subject = request.headers.get("x-qt-access-subject", "")
@@ -140,7 +142,8 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
         prefix="/api/v3",
     )
     app.include_router(build_operations_router(operations_service), prefix="/api/v3")
-    app.include_router(build_btc_monitor_router(settings.state_root / "btc-monitor"), prefix="/api/v3")
+    app.include_router(build_btc_monitor_router(settings.btc_monitor_state_dir or settings.state_root / "btc-monitor"), prefix="/api/v3")
+    app.include_router(build_prediction_market_router(), prefix="/api/v3")
 
     @app.get("/api/v3/provenance")
     def provenance_report(method: str | None = None) -> dict[str, object]:

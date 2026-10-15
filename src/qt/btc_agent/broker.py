@@ -124,7 +124,73 @@ class _TestnetExchange(ccxt.binance):  # type: ignore[misc]  # ccxt ships no typ
         return cast(object, super().fetch(url, method, headers, body))
 
 
-class BinanceTestnetBroker:
+class _SpotRules:
+    """Shared decimal lot/price/notional checks for bounded spot IOC brokers."""
+
+    _filters: dict[str, dict[str, object]]
+
+    def _load_filters(self) -> None:
+        raise NotImplementedError
+
+    @staticmethod
+    def _bound(value: Decimal, rule: dict[str, object], minimum: str, maximum: str) -> None:
+        low = _number(rule.get(minimum, 0))
+        high = _number(rule.get(maximum, 0))
+        if value < low or (high > 0 and value > high):
+            raise BrokerError(f"Order violates testnet {minimum}/{maximum} filter")
+
+    def prepare_price(self, price: float, side: Side) -> float:
+        if side not in ("buy", "sell"):
+            raise BrokerError("Only buy and sell sides are supported")
+        self._load_filters()
+        rule = self._filters["PRICE_FILTER"]
+        tick = _number(rule.get("tickSize"), positive=True)
+        value = _number(price, positive=True)
+        rounding = ROUND_FLOOR if side == "buy" else ROUND_CEILING
+        rounded = (value / tick).to_integral_value(rounding=rounding) * tick
+        self._bound(rounded, rule, "minPrice", "maxPrice")
+        if rounded <= 0:
+            raise BrokerError("Rounded order price is zero")
+        return float(rounded)
+
+    def prepare_quantity(self, qty: float, price: float) -> float:
+        self._load_filters()
+        rule = self._filters["LOT_SIZE"]
+        step = _number(rule.get("stepSize"), positive=True)
+        value = _number(qty, positive=True)
+        rounded = (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
+        if rounded <= 0:
+            raise BrokerError("Rounded order quantity is zero")
+        self._bound(rounded, rule, "minQty", "maxQty")
+        notional = rounded * _number(price, positive=True)
+        for name in ("NOTIONAL", "MIN_NOTIONAL"):
+            if name in self._filters:
+                self._bound(notional, self._filters[name], "minNotional", "maxNotional")
+        return float(rounded)
+
+    def is_dust(self, qty: float, price: float) -> bool:
+        """Whether this balance rounds below the current minimum spot sell size.
+
+        Invalid numbers, unavailable metadata, and request failures still raise;
+        only confirmed exchange minimum constraints classify inventory as dust.
+        """
+        self._load_filters()
+        amount = _number(qty)
+        mark = _number(price, positive=True)
+        self._bound(mark, self._filters["PRICE_FILTER"], "minPrice", "maxPrice")
+        lot = self._filters["LOT_SIZE"]
+        step = _number(lot.get("stepSize"), positive=True)
+        rounded = (amount / step).to_integral_value(rounding=ROUND_FLOOR) * step
+        if rounded == 0 or rounded < _number(lot.get("minQty")):
+            return True
+        return any(
+            rounded * mark < _number(self._filters[name].get("minNotional"))
+            for name in ("NOTIONAL", "MIN_NOTIONAL")
+            if name in self._filters
+        )
+
+
+class BinanceTestnetBroker(_SpotRules):
     """No live mode, configurable API origin, withdrawal endpoint, or submit retries.
 
     Persist the client ID and limit before calling submit. A timeout must be
@@ -238,63 +304,6 @@ class BinanceTestnetBroker:
             raise BrokerError("Testnet notional filter is missing")
         self._filters = filters
         self._loaded_at = time.monotonic()
-
-    @staticmethod
-    def _bound(value: Decimal, rule: dict[str, object], minimum: str, maximum: str) -> None:
-        low = _number(rule.get(minimum, 0))
-        high = _number(rule.get(maximum, 0))
-        if value < low or (high > 0 and value > high):
-            raise BrokerError(f"Order violates testnet {minimum}/{maximum} filter")
-
-    def prepare_price(self, price: float, side: Side) -> float:
-        if side not in ("buy", "sell"):
-            raise BrokerError("Only buy and sell sides are supported")
-        self._load_filters()
-        rule = self._filters["PRICE_FILTER"]
-        tick = _number(rule.get("tickSize"), positive=True)
-        value = _number(price, positive=True)
-        rounding = ROUND_FLOOR if side == "buy" else ROUND_CEILING
-        rounded = (value / tick).to_integral_value(rounding=rounding) * tick
-        self._bound(rounded, rule, "minPrice", "maxPrice")
-        if rounded <= 0:
-            raise BrokerError("Rounded order price is zero")
-        return float(rounded)
-
-    def prepare_quantity(self, qty: float, price: float) -> float:
-        self._load_filters()
-        rule = self._filters["LOT_SIZE"]
-        step = _number(rule.get("stepSize"), positive=True)
-        value = _number(qty, positive=True)
-        rounded = (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
-        if rounded <= 0:
-            raise BrokerError("Rounded order quantity is zero")
-        self._bound(rounded, rule, "minQty", "maxQty")
-        notional = rounded * _number(price, positive=True)
-        for name in ("NOTIONAL", "MIN_NOTIONAL"):
-            if name in self._filters:
-                self._bound(notional, self._filters[name], "minNotional", "maxNotional")
-        return float(rounded)
-
-    def is_dust(self, qty: float, price: float) -> bool:
-        """Whether this balance rounds below the current minimum spot sell size.
-
-        Invalid numbers, unavailable metadata, and request failures still raise;
-        only confirmed exchange minimum constraints classify inventory as dust.
-        """
-        self._load_filters()
-        amount = _number(qty)
-        mark = _number(price, positive=True)
-        self._bound(mark, self._filters["PRICE_FILTER"], "minPrice", "maxPrice")
-        lot = self._filters["LOT_SIZE"]
-        step = _number(lot.get("stepSize"), positive=True)
-        rounded = (amount / step).to_integral_value(rounding=ROUND_FLOOR) * step
-        if rounded == 0 or rounded < _number(lot.get("minQty")):
-            return True
-        return any(
-            rounded * mark < _number(self._filters[name].get("minNotional"))
-            for name in ("NOTIONAL", "MIN_NOTIONAL")
-            if name in self._filters
-        )
 
     def submit(self, client_id: str, side: Side, qty: float, limit_price: float) -> Fill:
         _client_id(client_id)

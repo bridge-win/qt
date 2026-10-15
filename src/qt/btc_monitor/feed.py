@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 import websockets
+from websockets.exceptions import WebSocketException
 
 from .config import MonitorConfig
 from .models import MarketEvent
@@ -172,6 +173,11 @@ async def run_feed(
     report_error: Callable[[str], None],
 ) -> None:
     """Ordinary exchange failures reconnect; validation never fabricates channel health."""
+    if config.venue == "okx":
+        from .okx import run_okx_feed
+
+        await run_okx_feed(config, emit, reset, stop, report_error)
+        return
     backoff = 1.0
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(10), limits=httpx.Limits(max_connections=2)
@@ -234,7 +240,7 @@ async def run_feed(
             except (
                 OSError,
                 httpx.HTTPError,
-                websockets.exceptions.WebSocketException,
+                WebSocketException,
                 FeedValidationError,
             ):
                 report_error("feed_disconnected")

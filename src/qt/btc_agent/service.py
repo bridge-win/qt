@@ -56,6 +56,7 @@ class Service:
         except Exception as exc:
             # Provider exceptions can contain signed URLs; never log their text.
             result = {"status": "blocked", "reason": type(exc).__name__}
+        result = {"test_environment": self.cfg.test_environment, **result}
         self.store.event(self.clock(), result)
         return result
 
@@ -216,7 +217,7 @@ class Service:
         check_quote(book, self.cfg, self.clock())
         if self.cfg.kill_file.exists():
             raise ValueError("halted before submission")
-        client_id = f"qtc-{uuid.uuid4().hex[:28]}"
+        client_id = f"qtc{uuid.uuid4().hex[:28]}"
         if side == "sell":
             pos.exiting = True
             with self.store.db:

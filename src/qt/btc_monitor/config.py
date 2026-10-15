@@ -6,14 +6,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .venues import Environment, Venue, spot_source
 
 
 class MonitorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     state_dir: Path = Path("data/workbench/btc-monitor")
+    venue: Venue = "binance"
+    environment: Environment = "production"
     symbol: str = "BTCUSDT"
     rest_url: str = "https://data-api.binance.vision/api/v3"
     websocket_url: str = "wss://data-stream.binance.vision:443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@kline_1m"
@@ -51,17 +56,33 @@ class MonitorConfig(BaseModel):
     shutdown_seconds: float = Field(default=10, ge=1, le=120)
     retention_events: int = Field(default=1000, ge=10, le=100000)
 
+    @model_validator(mode="before")
+    @classmethod
+    def source_defaults(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        source = spot_source(values.get("venue", "binance"), values.get("environment", "production"))
+        values.setdefault("symbol", source.symbol)
+        values.setdefault("rest_url", source.rest_url)
+        values.setdefault("websocket_url", source.websocket_url)
+        values.setdefault("tick_size", 0.1 if source.exchange == "okx" else 0.01)
+        if "state_dir" not in values and (source.exchange, source.environment) != ("binance", "production"):
+            values["state_dir"] = Path(f"data/workbench/btc-monitor-{source.exchange}-{source.environment}")
+        return values
+
     @model_validator(mode="after")
     def supported_source(self) -> MonitorConfig:
-        # This first adapter is explicitly spot BTCUSDT, not a generic venue switch.
+        source = spot_source(self.venue, self.environment)
         if (
-            self.rest_url != "https://data-api.binance.vision/api/v3"
-            or self.websocket_url
-            != "wss://data-stream.binance.vision:443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@kline_1m"
+            self.rest_url != source.rest_url
+            or self.websocket_url != source.websocket_url
         ):
-            raise ValueError("only the official Binance spot data-only endpoints are supported")
-        if self.symbol != "BTCUSDT":
-            raise ValueError("this adapter supports only spot BTCUSDT")
+            raise ValueError("only the selected official public spot endpoints are supported")
+        if self.symbol != source.symbol:
+            raise ValueError("this adapter supports only the selected venue's spot BTC/USDT")
+        if self.venue == "okx" and self.bootstrap_candles > 300:
+            raise ValueError("OKX bootstrap_candles must be at most 300")
         if self.minimum_trade_buckets > self.minimum_coverage_seconds + 1:
             raise ValueError("minimum_trade_buckets cannot exceed coverage seconds")
         if self.ring_size < self.grid_horizon_seconds:
@@ -83,6 +104,10 @@ class MonitorConfig(BaseModel):
             if not isinstance(raw, dict):
                 raise ValueError("monitor configuration must be an object")
             values.update(raw)
+        for name in ("venue", "environment"):
+            variable = f"QT_BTC_MONITOR_{name.upper()}"
+            if variable in os.environ:
+                values[name] = os.environ[variable]
         if state_dir is not None:
             values["state_dir"] = state_dir
         return cls.model_validate(values)

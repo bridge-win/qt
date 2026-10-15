@@ -16,6 +16,8 @@ services:
     command: [run, --state-dir, /state]
     environment:
       QT_BTC_MONITOR_STATE_DIR: /state
+      QT_BTC_MONITOR_VENUE: ${QT_BTC_MONITOR_VENUE:-binance}
+      QT_BTC_MONITOR_ENVIRONMENT: ${QT_BTC_MONITOR_ENVIRONMENT:-production}
       QT_TELEGRAM_BOT_TOKEN: ${QT_TELEGRAM_BOT_TOKEN:-}
       QT_TELEGRAM_CHAT_ID: ${QT_TELEGRAM_CHAT_ID:-}
     volumes:
