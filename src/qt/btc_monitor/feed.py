@@ -202,10 +202,11 @@ async def run_feed(
                 except (httpx.HTTPError, FeedValidationError, ValueError):
                     # REST context failure must not disable independent realtime collection.
                     report_error("bootstrap_unavailable")
+                # Close must fit inside the service's shutdown_seconds / 3 cancellation window.
                 async with websockets.connect(
                     config.websocket_url,
                     open_timeout=15,
-                    close_timeout=5,
+                    close_timeout=min(1.0, config.shutdown_seconds / 6),
                     ping_interval=20,
                     ping_timeout=20,
                     max_queue=16,

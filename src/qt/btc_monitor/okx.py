@@ -102,8 +102,9 @@ async def _socket_session(
     url: str, channels: frozenset[str], config: MonitorConfig,
     emit: Callable[[MarketEvent], None], progress: StreamProgress, stop: asyncio.Event,
 ) -> None:
+    # Close must fit inside the service's shutdown_seconds / 3 cancellation window.
     async with websockets.connect(
-        url, open_timeout=15, close_timeout=5, ping_interval=None,
+        url, open_timeout=15, close_timeout=min(1.0, config.shutdown_seconds / 6), ping_interval=None,
         max_queue=16, max_size=65536,
     ) as socket:
         await socket.send(json.dumps({

@@ -254,3 +254,68 @@ async def test_store_start_is_bounded_before_processing_begins(tmp_path):
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(service.run(), timeout=2)
     assert not service.engine.micro.buckets
+
+
+@pytest.mark.parametrize("venue,environment", [("binance", "testnet"), ("okx", "demo")])
+@pytest.mark.asyncio
+async def test_slow_socket_close_preserves_clean_shutdown(tmp_path, monkeypatch, venue, environment):
+    from qt.btc_monitor import feed
+
+    connected = asyncio.Event()
+
+    class PublicClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return self
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [] if venue == "binance" else {"code": "0", "data": []}
+
+    class SlowCloseSocket:
+        def __init__(self, close_timeout):
+            self.close_timeout = close_timeout
+
+        async def __aenter__(self):
+            connected.set()
+            return self
+
+        async def __aexit__(self, *args):
+            # A peer that never acknowledges close consumes the transport budget.
+            await asyncio.sleep(self.close_timeout)
+
+        async def send(self, message):
+            return None
+
+        async def recv(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(feed.httpx, "AsyncClient", lambda **kwargs: PublicClient())
+    monkeypatch.setattr(
+        feed.websockets, "connect",
+        lambda *args, **kwargs: SlowCloseSocket(kwargs["close_timeout"]),
+    )
+    forced_exits = []
+    service = MonitorService(
+        MonitorConfig(state_dir=tmp_path, venue=venue, environment=environment, shutdown_seconds=3),
+        fatal_exit=forced_exits.append,
+    )
+    task = asyncio.create_task(service.run())
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=2)
+        service.stop_event.set()
+        await asyncio.wait_for(task, timeout=4)
+        assert not forced_exits
+        assert not read_status(tmp_path).health.alive
+        assert not service.store.health()["worker_alive"]
+    finally:
+        # Also release storage on the failing pre-fix path.
+        service.stop_event.set()
+        await service.store.stop(timeout=1)
