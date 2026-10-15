@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import RequestResponseEndpoint
 
+from qt.btc_monitor.api import build_btc_monitor_router
 from qt.lab.persistence import LabRepository
 from qt.lab.router import LabSettings, build_lab_router
 from qt.lab.service import LabExecutionAdapter, LabService, ParquetTimelineProvider
@@ -139,6 +140,7 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
         prefix="/api/v3",
     )
     app.include_router(build_operations_router(operations_service), prefix="/api/v3")
+    app.include_router(build_btc_monitor_router(settings.state_root / "btc-monitor"), prefix="/api/v3")
 
     @app.get("/api/v3/provenance")
     def provenance_report(method: str | None = None) -> dict[str, object]:

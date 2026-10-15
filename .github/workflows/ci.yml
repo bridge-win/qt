@@ -135,3 +135,17 @@ jobs:
             --file Dockerfile.platform \
             --output type=cacheonly \
             .
+
+  btc-monitor-image:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Validate monitor deployment configuration
+        run: docker compose --env-file config/btc-monitor.env.example -f docker-compose.btc-monitor.yml config --quiet
+      - name: Build hash-locked monitor image
+        run: docker buildx build --load --platform linux/amd64 --file Dockerfile.btc-monitor --target runtime --tag qt-btc-monitor:ci .
+      - name: Verify hardened image with offline fixtures
+        run: bash scripts/ci_btc_monitor_image_smoke.sh qt-btc-monitor:ci

@@ -1,0 +1,5 @@
+# Isolated public-data BTC monitor. Keep pins aligned with requirements-platform.lock.
+# This image does not install qt's execution, platform, research, or UI dependencies.
+httpx==0.28.1
+pydantic==2.13.4
+websockets==16.1.1

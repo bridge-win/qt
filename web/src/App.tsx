@@ -14,6 +14,7 @@ import { DataPage } from "./pages/DataPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { ComparePage } from "./pages/ComparePage";
+import { BtcMonitorPage } from "./pages/BtcMonitorPage";
 
 const { Content, Sider } = Layout;
 const { Paragraph, Text } = Typography;
@@ -39,7 +40,7 @@ type ExperimentFormValues = {
 const navItems: { key: string; label: string }[] = [
   { key: "/", label: "研究总览" }, { key: "/learn", label: "学习与指标" }, { key: "/data", label: "数据中心" },
   { key: "/strategies", label: "策略与规则" }, { key: "/experiments", label: "实验任务" }, { key: "/compare", label: "比较中心" },
-  { key: "/traces", label: "历史决策" }, { key: "/wicks", label: "插针事件" }, { key: "/portfolio", label: "机会与组合" },
+  { key: "/btc-monitor", label: "BTC 实时监测" }, { key: "/traces", label: "历史决策" }, { key: "/wicks", label: "插针事件" }, { key: "/portfolio", label: "机会与组合" },
   { key: "/validation", label: "搜索与验证" }, { key: "/runtime", label: "模拟与运行" }, { key: "/archive", label: "研究档案" },
 ];
 
@@ -60,7 +61,7 @@ function AppShell(): ReactElement {
   </Sider><Layout><Content className="content">{runtime.error && <ServiceOfflineBanner />}<Routes>
     <Route path="/" element={<OverviewPage />} /><Route path="/learn" element={<LearnPage />} /><Route path="/data" element={<DataPage />} />
     <Route path="/strategies" element={<StrategiesPage />} /><Route path="/experiments" element={<ExperimentsPage />} /><Route path="/compare" element={<ComparePage />} />
-    <Route path="/traces" element={<TracePage />} /><Route path="/wicks" element={<WicksPage />} />
+    <Route path="/btc-monitor" element={<BtcMonitorPage />} /><Route path="/traces" element={<TracePage />} /><Route path="/wicks" element={<WicksPage />} />
     <Route path="/portfolio" element={<PortfolioPage />} /><Route path="/validation" element={<ValidationPage />} />
     <Route path="/runtime" element={<RuntimePage />} /><Route path="/archive" element={<ArchivePage />} />
     <Route path="*" element={<Navigate to="/" replace />} />

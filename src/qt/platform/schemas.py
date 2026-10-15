@@ -17,10 +17,10 @@ if TYPE_CHECKING:
         | int
         | float
         | bool
-        | None
         | Mapping[str, "ImmutableDetailsValue"]
         | tuple["ImmutableDetailsValue", ...]
         | frozenset["ImmutableDetailsValue"]
+        | None
     )
 else:
     ImmutableDetailsValue = TypeAliasType(
@@ -29,10 +29,10 @@ else:
         | int
         | float
         | bool
-        | None
         | Mapping[str, "ImmutableDetailsValue"]
         | tuple["ImmutableDetailsValue", ...]
-        | frozenset["ImmutableDetailsValue"],
+        | frozenset["ImmutableDetailsValue"]
+        | None,
     )
 
 

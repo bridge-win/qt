@@ -79,3 +79,63 @@ host including workers.dev/preview, verify the Access JWT signature, issuer,
 audience and expiry, proxy only to the configured protected origin with service
 credentials, and read R2 only below allow-listed report prefixes. It must not
 turn API/artifact 404s into SPA HTML.
+
+## Read-only BTC spot monitor
+
+`GET /api/v3/btc-monitor` is the sole monitor endpoint. It inherits the existing
+workbench origin/Access authentication and returns `Cache-Control: no-store`.
+It reads only `state_root/btc-monitor/latest.json`; requests never create the
+monitor directory/database or start a collector. A missing worker is harmless to
+other workbench features. See [部署与运维](../docs/btc-monitor.md).
+
+The response is `{snapshot,read_status,read_reasons,server_time,
+snapshot_age_seconds,snapshot_max_age_seconds,future_tolerance_seconds,
+valid_until,data_valid_until,live_execution_enabled:false}`. All timestamps are
+UTC epoch seconds. `read_status` is `ok`, `degraded`, or `unavailable`; missing,
+malformed, oversized (>1 MiB), incompatible, non-finite or non-regular/symlink
+files return `snapshot:null` and a safe diagnostic code, without raw file or
+exception text. This diagnostic state uses HTTP 200; authorization/transport
+errors retain ordinary HTTP error semantics.
+
+Schema-version-1 snapshots contain:
+
+- `config_version`, `boot_id`, `published_at` and explicit source identity:
+  Binance `spot` `BTCUSDT` / `BTC/USDT`, `price_type:trade`. No futures/mark-price
+  meaning is implied.
+- `health`: separate `alive`, `data_ready`, `assessment_ready`, status/reasons,
+  coverage, last core/persistence progress, errors, and `channels` keyed by
+  trade/quote/candle. Each channel provides source and receive timestamps/ages,
+  consumer backlog, readiness, and `source_time_known`. Spot book ticker has no
+  exchange timestamp, so only that quote channel may use receive-only freshness.
+- `micro`: latest price, spread in bps and bounded 5/15/60-second window metrics.
+- `assessment`: stable assessment ID/revision, as-of/expiry, state
+  `INSUFFICIENT_DATA|DATA_UNHEALTHY|UNSUITABLE|CANDIDATE`, reasons, gates with
+  observed value/threshold, cost/range evidence, research range/levels,
+  gross/net spacing, missing budget/inventory/actual fee and validation inputs,
+  monitor/research allowed actions and execution blocked actions.
+- `recent_events`: bounded wick revisions with stable event ID, state
+  `WATCH|CONFIRMED|INVALIDATED|EXPIRED`, direction, baseline/extreme, recovery
+  fraction, as-of/expiry and source identity.
+- `context`: closed-candle/grid-history diagnostics, conservative freshness
+  limits, `sensitivity_preset:"balanced"`, `tick_size_assumed:true`, numeric
+  `tick_size`, `thresholds_calibrated:false`, and `notifications_configured`
+  boolean only. The preset and assumed tick are research metadata, without
+  validated venue constraints or calibrated profitability. No credential values.
+
+Every GET recomputes UTC ages, worker progress, per-channel source/receive
+freshness, nonnegative bounded backlog and assessment expiry. The read side
+caps snapshot age at 10 seconds, future skew at 2 seconds, source ages at
+5/5/125 seconds and backlog at 2 seconds (stricter configured limits apply).
+A heartbeat cannot renew old assessment evidence. Invalid positives become
+`DATA_UNHEALTHY`; affected active wick events are shown as expired diagnostic
+history. Disk history is never rewritten by the reader. Assessment-only expiry
+preserves separate source/process health when those remain fresh.
+
+`data_valid_until` is the read side's source/snapshot deadline; `valid_until`
+also includes the assessment's own expiry and evidence deadline. The UI polls
+every 2 seconds, advances these deadlines locally from server time plus elapsed
+monotonic client time (receipt anchors stay with cached responses across
+page remounts, charging the full request round-trip duration against freshness),
+and hides a retained candidate on a failed fetch or expiry without
+waiting for a successful new poll. Gate outcomes on historical data must be
+labeled as recorded evidence. No UI/API operation can place or size an order.

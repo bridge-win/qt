@@ -23,8 +23,8 @@ from qt.data.derivatives import (
     fetch_long_short_ratio,
     fetch_open_interest_history,
 )
-from qt.data.market import fetch_ohlcv
 from qt.data.macro import fetch_macro_veto_inputs
+from qt.data.market import fetch_ohlcv
 from qt.data.onchain import fetch_coinmetrics_mvrv_z
 from qt.data.sentiment import fetch_fear_greed
 from qt.execution.base import Order

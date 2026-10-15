@@ -18,15 +18,14 @@ from rich.console import Console
 
 from qt.core.config import load_settings
 from qt.core.logging import configure_logging, get_logger
+from qt.data.coinglass import fetch_aggregated_liquidations, fetch_etf_flows
 from qt.data.derivatives import (
     fetch_funding_rate_history,
     fetch_long_short_ratio,
     fetch_open_interest_history,
 )
-from qt.data.macro import fetch_fred
+from qt.data.macro import fetch_fred, fetch_yahoo_daily
 from qt.data.market import fetch_ohlcv
-from qt.data.coinglass import fetch_aggregated_liquidations, fetch_etf_flows
-from qt.data.macro import fetch_yahoo_daily
 from qt.data.onchain import (
     fetch_coinmetrics,
     fetch_coinmetrics_mvrv_z,

@@ -1,0 +1,39 @@
+name: qt-btc-monitor
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-monitor
+      target: runtime
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    group_add: ["${QT_BTC_MONITOR_READ_GID:-10001}"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    command: [run, --state-dir, /state]
+    environment:
+      QT_BTC_MONITOR_STATE_DIR: /state
+      QT_TELEGRAM_BOT_TOKEN: ${QT_TELEGRAM_BOT_TOKEN:-}
+      QT_TELEGRAM_CHAT_ID: ${QT_TELEGRAM_CHAT_ID:-}
+    volumes:
+      - type: bind
+        source: ${QT_BTC_MONITOR_HOST_STATE_DIR:-./data/workbench/btc-monitor}
+        target: /state
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, python, -m, qt.btc_monitor, health, --state-dir, /state]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 20s
+    mem_limit: 384m
+    cpus: 1.0
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}

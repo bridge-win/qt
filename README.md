@@ -1,5 +1,13 @@
 # QT — BTC Quantitative Trading Platform
 
+## Read-only BTC spot monitor
+
+The [BTC monitor operator guide](docs/btc-monitor.md) documents an isolated
+public-data Binance SPOT BTC/USDT worker, short-horizon anomaly/grid assessment,
+and the existing workbench read-only page. Its dedicated Docker deployment has
+no API port, account credentials, or live execution path. Assessment is market
+research; budget, saleable inventory, and actual fee tier remain unknown.
+
 ## Codex monitoring and sandbox trading
 
 The isolated [Codex BTC agent](docs/codex-btc-agent.md) provides continuous

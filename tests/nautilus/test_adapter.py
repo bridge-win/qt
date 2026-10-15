@@ -462,7 +462,7 @@ def test_btcqt_router_retains_partial_entry_and_routes_protection_by_position(
 @pytest.mark.native_engine
 def test_btcqt_delayed_fill_uses_latest_causal_anchor_not_submission_snapshot() -> None:
     """S1 ladder TP must use the state known at the fill, not order entry."""
-
+    pytest.importorskip("nautilus_trader")
     from nautilus_trader.model import OrderSide as NativeOrderSide
 
     initial = _source_state()
