@@ -65,7 +65,33 @@ def test_publish_round_trips_validated_dataset(tmp_path: Path) -> None:
     assert path.suffix == ".parquet"
     assert loaded is not None
     assert loaded.manifest == expected.manifest
-    pd.testing.assert_frame_equal(loaded.frame, expected.frame)
+    # Parquet preserves timestamps, but not pandas' advisory index frequency.
+    pd.testing.assert_frame_equal(loaded.frame, expected.frame, check_freq=False, check_exact=True)
+    assert frame_fingerprint(loaded.frame) == expected.manifest.normalized_sha256
+
+
+def test_publish_round_trips_allowed_gaps_without_filling_bars(tmp_path: Path) -> None:
+    data_request = request().model_copy(
+        update={"require_complete": False, "max_missing_ratio": 0.5}
+    )
+    complete = dataset(data_request)
+    missing_timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+    frame, gaps = validate_ohlcv(complete.frame.drop(missing_timestamp), data_request)
+    manifest = complete.manifest.model_copy(
+        update={"gaps": gaps, "normalized_sha256": frame_fingerprint(frame)}
+    )
+    cache = DataCache(tmp_path)
+
+    cache.publish(data_request, MarketDataset(frame=frame, manifest=manifest))
+    loaded = cache.load(data_request)
+
+    assert loaded is not None
+    assert loaded.manifest == manifest
+    assert len(loaded.manifest.gaps) == 1
+    assert loaded.manifest.gaps[0].start == missing_timestamp.to_pydatetime()
+    assert missing_timestamp not in loaded.frame.index
+    pd.testing.assert_frame_equal(loaded.frame, frame, check_freq=False, check_exact=True)
+    assert frame_fingerprint(loaded.frame) == manifest.normalized_sha256
 
 
 def test_load_returns_none_for_unknown_request(tmp_path: Path) -> None:

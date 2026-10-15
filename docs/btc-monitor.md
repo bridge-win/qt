@@ -124,8 +124,10 @@ API 每次读取重新检查投影版本、1 MiB 大小上限、10 秒快照年�
 
 本次开发已完成最小运行依赖的完整哈希下载、全新 Python 3.12 环境离线安装及 `pip check`，并通过 Compose YAML/镜像边界/状态挂载及 CI 接线的 7 项本地测试。按镜像 COPY 边界单独复制源码后，确认没有 FastAPI 或执行包仍可导入 CLI、通过临时目录离线 self-test；另用离线模拟 worker 验证 status 及快照模式 0640；模拟交易所不可用时核心持续前进，CLI health 为成功，优雅停止后 liveness 失效。静态 YAML 测试和这些宿主机模拟均不等于 `docker compose config`、镜像构建或容器验收。
 
-现有 CI 已新增 `btc-monitor-image` 作业（push/PR/手动触发，排除已有定时触发），会在 Ubuntu Docker runner 上校验 Compose、实际构建 Linux amd64 镜像并运行 `scripts/ci_btc_monitor_image_smoke.sh`。所有运行期容器使用 `--network none`，不需要任何密钥；测试只读根目录、UID/capabilities/no-new-privileges、有界资源与临时文件系统、默认 CLI self-test，以及只读挂载的离线 feed fixture 注入真实服务后的 status/health。它还测试 setgid 状态文件/API 组只读访问、暂停核心后健康过期、恢复、重启计数及 SIGTERM 的正常退出/停止投影，并输出实际容器 Python/SQLite/核心依赖版本。fixture 不打入生产镜像，不改变生产 CLI。该作业仅完成接线，是否通过须以对应提交的真实 CI 运行结果为准，不能将本地测试当作镜像测试通过。
+现有 CI 已新增 `btc-monitor-image` 作业（push/PR/手动触发，排除已有定时触发），会在 Ubuntu Docker runner 上校验 Compose、实际构建 Linux amd64 镜像并运行 `scripts/ci_btc_monitor_image_smoke.sh`。所有运行期容器使用 `--network none`，不需要任何密钥；测试只读根目录、UID/capabilities/no-new-privileges、有界资源与临时文件系统、默认 CLI self-test，以及只读挂载的离线 feed fixture 注入真实服务后的 status/health。它还测试 setgid 状态文件/API 组只读访问、暂停核心后健康过期、恢复、重启计数及 SIGTERM 的正常退出/停止投影，并输出实际容器 Python/SQLite/核心依赖版本。fixture 不打入生产镜像，不改变生产 CLI。
 
-开发环境没有 Docker，未执行镜像 build、容器启动、容器 UID/挂载/health 验证；本环境此前收到 Binance HTTP 451 地区限制，未继续做任何 Binance 实时探测，也未做真实 Telegram 发送。离线 fixture/self-test 和单元回归不证明服务器已部署、实时数据可达、手机送达、24 小时稳定运行或网格盈利。
+已发布应用提交 `5b3ed76a67c9883a3b5142c646a95f8bdb2cef65` 的 [离线 Linux amd64 镜像构建与运行验收作业](https://github.com/bridge-win/qt/actions/runs/38684088279/job/116254869050) 已实际通过。容器报告 Python `3.12.11`、SQLite `3.40.1`（使用 DELETE journal）、HTTPX `0.28.1`、Pydantic `2.13.4`、websockets `16.1.1`。这项结果证明该提交的离线镜像构建及上述容器运行检查通过；同次 CI 另有 Python 3.10 回测频率元数据断言失败，不能据此宣称整条 CI 已通过。
+
+本地开发环境没有 Docker，因此本地未执行镜像 build、容器启动、容器 UID/挂载/health 验证；本环境此前收到 Binance HTTP 451 地区限制，未继续做任何 Binance 实时探测，也未做真实 Telegram 发送。离线 fixture/self-test 和单元回归不证明服务器已部署、实时数据可达、手机送达、24 小时稳定运行或网格盈利。
 
 正式验收需在合规目标主机完成 Compose 展开/镜像构建、只读与权限验证、无认证行情连接、逐通道停滞/断线重连/重启/磁盘故障测试、可选 Telegram 投递确认及至少 24 小时实际观察，并记录目标主机上的 Python/SQLite/依赖版本和资源占用。
