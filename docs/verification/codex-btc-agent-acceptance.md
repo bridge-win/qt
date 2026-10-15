@@ -1,5 +1,9 @@
 # Codex BTC agent acceptance — 2026-10-13
 
+Follow-up: [independent acceptance, 2026-10-15](codex-btc-agent-independent-2026-10-15.md).
+That report separates newly repeated offline evidence from Docker, authenticated
+execution and 24-hour checks that remain unverified in the follow-up environment.
+
 Branch: `codex/btc-extreme-agent-testnet`. Deployment target: local Docker.
 
 ## Verified
