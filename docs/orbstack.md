@@ -107,14 +107,18 @@ Rotate any token previously shared in chat through BotFather before using it.
 Never put the token into a browser URL, shell argument, source file or this guide.
 
 1. In Telegram, open your bot, press Start, and send it a short message.
-2. Run `python3 scripts/telegram_chat_id.py` in your own terminal.
-3. Paste the new token only at its hidden prompt. It prints candidate numeric
-   chat IDs and a small identifying label, never tokens or message contents.
+2. Run `python3 scripts/telegram_chat_id.py --expected-bot YOUR_BOT_USERNAME`
+   in your own terminal, replacing the placeholder with your bot's public
+   username (with or without `@`).
+3. Paste the new token only at its hidden prompt. It checks the sender using
+   Telegram's read-only `getMe` method and stops if the username differs. It then
+   prints candidate numeric chat IDs and a small identifying label, never
+   tokens or message contents.
 4. Choose the intended recipient yourself. Privately edit both
    `QT_TELEGRAM_BOT_TOKEN` and `QT_TELEGRAM_CHAT_ID` in `.env.orbstack`, then run
    `up` again. Leave both blank to keep alerts disabled.
 
-The helper reads `getWebhookInfo` first. An existing webhook stops discovery;
+After verifying the sender, the helper reads `getWebhookInfo`. An existing webhook stops discovery;
 it never deletes or changes it. It does not send a message, set an update offset,
 change the update filter, save the token, or print raw API errors. An active
 poller/conflict is reported without changing that receiver. If another receiver
@@ -175,4 +179,5 @@ wheel availability and YAML parsing alone are not a runtime pass.
 - [Compose startup health order](https://docs.docker.com/compose/how-tos/startup-order/)
 - [Caddy Basic Auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth)
 - [Telegram update discovery](https://core.telegram.org/bots/api#getupdates)
+- [Telegram sender identity](https://core.telegram.org/bots/api#getme)
 - [Nautilus supported native platforms](https://nautilustrader.io/docs/latest/getting_started/installation/)

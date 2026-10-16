@@ -2,7 +2,7 @@
 """Discover Telegram chat IDs locally without putting a bot token in shell history.
 
 Run this yourself after rotating any token that was shared in chat. This helper
-only reads getWebhookInfo/getUpdates. It never sends a message, changes a webhook,
+only reads getMe/getWebhookInfo/getUpdates. It never sends a message, changes a webhook,
 sets an update offset, saves the token, or prints raw Telegram responses/errors.
 """
 
@@ -25,7 +25,7 @@ class DiscoveryError(Exception):
 
 def api_call(token: str, method: str) -> Any:
     """Use HTTPS directly; never expose request paths in errors or redirects."""
-    if method not in {"getWebhookInfo", "getUpdates"}:
+    if method not in {"getMe", "getWebhookInfo", "getUpdates"}:
         raise DiscoveryError("Unsupported discovery method.")
     connection = http.client.HTTPSConnection("api.telegram.org", timeout=15)
     payload = urlencode({"timeout": 0, "limit": 100}) if method == "getUpdates" else ""
@@ -69,6 +69,24 @@ def api_call(token: str, method: str) -> Any:
         connection.close()
 
 
+def verify_bot(token: str, expected_bot: str | None = None) -> str:
+    expected = expected_bot.removeprefix("@") if expected_bot is not None else None
+    if expected is not None and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", expected):
+        raise DiscoveryError("Expected bot must be a Telegram username, optionally prefixed with @.")
+    bot = api_call(token, "getMe")
+    username = bot.get("username") if isinstance(bot, dict) else None
+    if (
+        not isinstance(bot, dict)
+        or bot.get("is_bot") is not True
+        or not isinstance(username, str)
+        or not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username)
+    ):
+        raise DiscoveryError("Telegram returned an invalid bot identity. No chats were queried.")
+    if expected is not None and username.casefold() != expected.casefold():
+        raise DiscoveryError("The token belongs to a different bot. No chats were queried.")
+    return username
+
+
 def discover(token: str) -> list[dict[str, str]]:
     webhook = api_call(token, "getWebhookInfo")
     if not isinstance(webhook, dict) or "url" not in webhook:
@@ -103,7 +121,8 @@ def discover(token: str) -> list[dict[str, str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args(argv)
+    parser.add_argument("--expected-bot", metavar="USERNAME", help="Require this public bot username before discovering chats.")
+    args = parser.parse_args(argv)
     print(
         "First open your bot in Telegram, press Start and send a short message. "
         "Enter a newly generated token below; input is hidden and is not saved.",
@@ -117,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
             token = getpass.getpass("New Telegram bot token (hidden): ").strip()
         if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}", token):
             raise DiscoveryError("The token format is invalid. Paste the new token only at the hidden prompt.")
+        username = verify_bot(token, args.expected_bot)
+        print(f"Verified sender: @{username}", file=sys.stderr)
         chats = discover(token)
         if not chats:
             raise DiscoveryError(

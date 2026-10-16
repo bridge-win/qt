@@ -86,6 +86,48 @@ def test_request_has_no_offset_or_update_filter(helper, monkeypatch):
     assert "allowed_updates" not in request.kwargs["body"]
 
 
+def test_get_me_sends_no_parameters(helper, monkeypatch):
+    connection = Mock()
+    connection.getresponse.return_value.status = 200
+    connection.getresponse.return_value.read.return_value = b'{"ok": true, "result": {"is_bot": true, "username": "example_bot"}}'
+    monkeypatch.setattr(helper.http.client, "HTTPSConnection", Mock(return_value=connection))
+    assert helper.verify_bot("FAKE_TOKEN", "@Example_Bot") == "example_bot"
+    request = connection.request.call_args
+    assert request.args[:2] == ("POST", "/botFAKE_TOKEN/getMe")
+    assert request.kwargs["body"] == ""
+    connection.close.assert_called_once()
+
+
+@pytest.mark.parametrize("identity", [
+    None, [], {}, {"is_bot": False, "username": "example_bot"},
+    {"is_bot": True, "username": "\x1b[31mexample_bot"},
+    {"is_bot": True, "username": 123},
+])
+def test_invalid_bot_identity_fails_closed(helper, monkeypatch, identity):
+    call = Mock(return_value=identity)
+    monkeypatch.setattr(helper, "api_call", call)
+    with pytest.raises(helper.DiscoveryError, match="invalid bot identity"):
+        helper.verify_bot("FAKE_TOKEN", "example_bot")
+    call.assert_called_once_with("FAKE_TOKEN", "getMe")
+
+
+def test_wrong_bot_stops_before_querying_chats(helper, monkeypatch, capsys):
+    token = "123456:" + "A" * 35
+    monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(helper.getpass, "getpass", lambda _: token)
+    call = Mock(return_value={"is_bot": True, "username": "different_bot"})
+    monkeypatch.setattr(helper, "api_call", call)
+    discovery = Mock()
+    monkeypatch.setattr(helper, "discover", discovery)
+    assert helper.main(["--expected-bot", "example_bot"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "different bot" in captured.err
+    assert token not in captured.err
+    discovery.assert_not_called()
+    call.assert_called_once_with(token, "getMe")
+
+
 def test_nonterminal_does_not_read_or_transmit_token(helper, monkeypatch, capsys):
     monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: False)
     api = Mock()
@@ -102,9 +144,11 @@ def test_main_escapes_labels_and_never_outputs_token(helper, monkeypatch, capsys
     token = "123456:" + "A" * 35
     monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(helper.getpass, "getpass", lambda _: token)
+    monkeypatch.setattr(helper, "api_call", lambda *_: {"is_bot": True, "username": "example_bot"})
     monkeypatch.setattr(helper, "discover", lambda _: [{"chat_id": "123", "type": "private", "label": "\x1b[31m"}])
-    assert helper.main([]) == 0
+    assert helper.main(["--expected-bot", "@Example_Bot"]) == 0
     captured = capsys.readouterr()
     assert token not in captured.out + captured.err
     assert "\x1b" not in captured.out
+    assert "Verified sender: @example_bot" in captured.err
     assert json.loads(captured.out)[0]["chat_id"] == "123"
