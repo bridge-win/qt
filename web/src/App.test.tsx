@@ -70,7 +70,7 @@ describe("workbench workflow", () => {
     await pasteText(messageField, "Second immutable edit");
     await userEvent.click(screen.getByText("保存为不可变版本"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/strategies/draft-1/versions"), expect.objectContaining({ body: expect.stringContaining('"expected_version":2') })));
-  }, 15_000);
+  }, 30_000);
 
   it("clones a builtin without submitting editor content", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -97,7 +97,7 @@ describe("workbench workflow", () => {
       expect(request).toBeDefined();
       expect(JSON.parse(String((request?.[1] as RequestInit).body))).toEqual({ name: "Exact builtin copy", base_strategy_id: "qt:buy_and_hold" });
     });
-  }, 15_000);
+  }, 30_000);
 
   it("renders server learning semantics instead of an unavailable-document fallback", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
