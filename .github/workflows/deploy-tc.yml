@@ -45,6 +45,11 @@ jobs:
         run: |
           ruff check deploy/tc_receive.py tests/deploy
           pytest -q tests/deploy tests/nautilus tests/test_workbench*.py tests/test_provenance.py tests/test_cycle_and_overheat.py tests/lab/test_lab_service.py
+      - name: Validate reviewed BTC alert and delivery boundaries
+        run: |
+          ruff check src/qt/btc_alerts tests/btc_alerts
+          mypy src/qt/btc_alerts --follow-imports=silent
+          pytest -q tests/btc_alerts tests/btc_monitor tests/test_orbstack_deployment.py tests/test_telegram_chat_id.py
       - name: Package tested source and built assets
         run: |
           mkdir -p "$RUNNER_TEMP/qt-release"

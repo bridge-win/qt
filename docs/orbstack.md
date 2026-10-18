@@ -1,10 +1,13 @@
 # Local Workbench on OrbStack
 
 This bundle runs the existing research Workbench UI, authenticated API, one
-research worker, and one public BTC spot monitor on a Mac. It uses Docker
+research worker, a public BTC spot monitor, an opportunity-alert worker and an
+isolated Codex reviewer on a Mac. It uses Docker
 Compose directly on OrbStack, native `linux/arm64` on Apple Silicon and native
-`linux/amd64` on Intel. It does not start a trading agent, a Codex reviewer,
-PostgreSQL, a Cloudflare tunnel, or live orders. No test-account keys are needed.
+`linux/amd64` on Intel. It does not start a trading agent or live orders. No exchange account keys are
+needed. Opportunity alerts start in shadow mode; model and Telegram credentials
+are optional until their actual authentication/recipient checks pass. See
+[BTC alerts](btc-alerts.md) for the full notification setup.
 
 ## Start
 
@@ -23,8 +26,9 @@ username and a new local password, with hidden password entry. It hashes the
 password using the official Caddy container and saves a fresh internal origin
 pair to `.env.orbstack`, owned by the current user with mode 0600. Passwords are
 never command-line arguments or environment variables. It never overwrites an
-existing file. No real exchange, Telegram or Codex credential is generated or
-entered by the assistant. The shipped example has blank credentials.
+existing file. The initial login setup leaves external credentials blank. The alerts-init
+command adds a private internal review secret and supports hidden entry of
+explicitly authorized model/Telegram credentials. The shipped example has blank credentials.
 
 Open `http://127.0.0.1:8877` and enter the local login in your browser's prompt.
 The first image build downloads pinned Python wheels and builds the React UI,
@@ -43,7 +47,7 @@ the global Docker context. The wrapper always uses `docker --context orbstack`.
 
 Optional wrapper settings:
 
-- `QT_DOCKER_CONTEXT`: explicit alternative Docker context
+- `QT_DOCKER_CONTEXT`: must select orbstack on this Mac
 - `QT_ORBSTACK_PROJECT_NAME`: a separate Compose project (default `qt-orbstack`)
 - `QT_ORBSTACK_ENV_FILE`: absolute path to a private configuration file
 - `PYTHON`: Python executable used by setup/validation

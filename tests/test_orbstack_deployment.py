@@ -102,7 +102,7 @@ def test_init_noninteractive_never_generates_credentials(tmp_path, monkeypatch):
 
 def test_compose_defaults_are_isolated_nonroot_and_monitor_only():
     compose = yaml.safe_load((ROOT / "docker-compose.orbstack.yml").read_text())
-    assert set(compose["services"]) == {"web", "api", "research-worker", "monitor"}
+    assert set(compose["services"]) == {"web", "api", "research-worker", "monitor", "alerts", "reviewer"}
     for name, service in compose["services"].items():
         assert service["user"] == "10001:10001"
         assert service["read_only"] is True
@@ -117,9 +117,13 @@ def test_compose_defaults_are_isolated_nonroot_and_monitor_only():
     assert "environment" not in compose["services"]["research-worker"]
     content = (ROOT / "docker-compose.orbstack.yml").read_text()
     assert "docker.sock" not in content
-    assert "API_KEY" not in content
+    assert "BINANCE_API_KEY" not in content
     assert "API_SECRET" not in content
-    assert "CODEX_API_KEY" not in content
+    assert "CODEX_API_KEY" in compose["services"]["reviewer"]["environment"]
+    for name in ("api", "monitor", "alerts", "research-worker"):
+        assert "CODEX_API_KEY" not in compose["services"][name].get("environment", {})
+    assert "QT_TELEGRAM_BOT_TOKEN" not in compose["services"]["monitor"]["environment"]
+    assert "QT_TELEGRAM_BOT_TOKEN" in compose["services"]["alerts"]["environment"]
 
 
 def test_caddy_overwrites_trust_headers_and_protects_ui_api():

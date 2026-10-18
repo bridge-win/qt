@@ -2,34 +2,30 @@
 
 ## Thesis
 
-Bitcoin spot exhibits **strong short-horizon mean reversion after extreme,
-liquidation-driven drawdowns** while behaving close to a momentum/random-
-walk asset in normal regimes. We deploy capital only when multiple
-*independent* factor groups all signal capitulation, and only when macro
-conditions do not contradict. This is intentionally a low-frequency
-strategy (target: 2–10 trades / year) — opportunity is rare; quality is
-the moat.
+This document records a historical research hypothesis, not a validated live
+strategy. Extreme selling may be followed by recovery, continued decline, or
+illiquidity. Factor groups can be correlated, and missing data cannot be treated
+as independent confirmation. Trade frequency and profitability have not been
+established by the text below.
 
-## Empirical support
+## Evidence status
 
-| Source | Finding | Threshold used |
-|---|---|---|
-| Caporale, Gil-Alana & Plastun (2018), *Research in Int. Business & Finance* | Statistically significant short-horizon reversal after BTC one-day declines > 5%. | Drawdown filter |
-| Ardia, Bluteau & Rüede (2019), *Finance Research Letters* | Markov-switching GARCH on BTC: low-vol regime entry probability > 0.7 follows crashes. | Vol regime confirmation |
-| Gkillas & Katsiampa (2018), *Economics Letters* | EVT/GPD: extreme-tail BTC moves cluster and revert. | RV-ratio, drawdown |
-| Shu, Song & Zhu (2021), *Physica A* | LPPL confidence indicator timed the Mar-2020 trough. | Implied in price-action group |
-| Renato Shirakashi / Glassnode | aSOPR < 0.97 → forced loss realization (capitulation). | On-chain group |
-| Awe & Mahmudov (2018) | MVRV Z-Score < 0.5 → cycle-bottom zone (4/4 in 2015–2023). | On-chain group |
-| David Puell (2019) | Puell Multiple < 0.5 → miner capitulation (4/4 cycles). | On-chain group |
-| Hans Hauge (2019) | Reserve Risk < 0.002 → only ~3% of all days. | On-chain group |
-| Edwards (2019), Capriole | Hash Ribbons cross-up after miner capitulation → high-quality bottom signal. | On-chain group |
-| Philip Swift, LookIntoBitcoin | Pi Cycle Bottom indicator: 0 false positives 2013–2023. | On-chain group |
-| alternative.me Fear & Greed | F&G ≤ 15 sustained 3d → forward-return mean positive 85% historically. | Sentiment group |
-| Coinglass / Skew | OI single-day drop ≥ 15–20% → 1–3 day reversal hit rate ~75%. | Derivatives group |
+Previous revisions included precise hit-rate, zero-false-positive and cycle-count
+claims without reproducible datasets, horizons, costs or held-out evaluation.
+Those claims are withdrawn. The citation to Caporale, Gil-Alana and Plastun
+(2018) concerns persistence and does not substantiate the previous specific
+one-day decline greater than 5% implies reversal claim.
 
-We deliberately do not use any of these signals in isolation. The N-of-K
-voting design (see *Aggregation* below) means each factor is a noisy vote
-and only their joint occurrence triggers a trade.
+- [Liu and Tsyvinski](https://www.nber.org/papers/w24877) study historical
+  cryptocurrency returns and momentum; they do not validate these thresholds.
+- [Intraday momentum and reversal research](https://www.sciencedirect.com/science/article/pii/S1062940822000833)
+  motivates testing regimes separately.
+- [Backtest overfitting](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf)
+  motivates retained trials and independent evaluation.
+
+All numerical thresholds and assumed sizing statistics below are unvalidated
+engineering hypotheses. The deployed notification pipeline has its own
+[versioned rules, promotion gates and operations guide](btc-alerts.md).
 
 ## Signal aggregation: 5 groups + macro veto
 
@@ -61,11 +57,11 @@ Why **N-of-K boolean voting** instead of weighted-sum Z-scores?
 
 - Robust to missing data — drop the group from the denominator instead of
   zero-padding.
-- Each factor in isolation has high false-positive rate; their conjunction
-  doesn't.
+- Measure the conjunction's false-positive rate; combining correlated factors
+  does not itself establish accuracy.
 - Mirrors practitioner consensus (Glassnode "Recovering from a Bitcoin
   Bear", LookIntoBitcoin composite, Pi Cycle Bottom).
-- Resistant to over-fitting individual factor weights across regimes.
+- Fixed votes reduce parameter choices, but still require out-of-sample testing.
 
 ## Position sizing
 

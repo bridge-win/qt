@@ -37,6 +37,8 @@ jobs:
           "from qt.workbench.api import WorkbenchSettings, create_workbench_app; from qt.workbench.operations import OperationsService; print('workbench core import ok')"
       - name: BTC backtest package lint
         run: ruff check packages/btc-backtest/src packages/btc-backtest/tests
+      - name: BTC alert types
+        run: mypy src/qt/btc_alerts --follow-imports=silent
       - name: Test
         run: pytest -q
       - name: BTC backtest package tests
@@ -149,3 +151,20 @@ jobs:
         run: docker buildx build --load --platform linux/amd64 --file Dockerfile.btc-monitor --target runtime --tag qt-btc-monitor:ci .
       - name: Verify hardened image with offline fixtures
         run: bash scripts/ci_btc_monitor_image_smoke.sh qt-btc-monitor:ci
+
+  btc-alerts-image:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
+        with:
+          platforms: amd64,arm64
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Build both alert architectures and the isolated reviewer
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --file Dockerfile.btc-alerts --target reviewer --output type=cacheonly .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.btc-alerts --target runtime --tag qt-btc-alerts:ci .
+      - name: Verify offline alert ledger and image boundaries
+        run: bash scripts/ci_btc_alerts_image_smoke.sh qt-btc-alerts:ci

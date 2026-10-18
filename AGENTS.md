@@ -5,6 +5,9 @@
 - Read relevant files before editing and keep diffs scoped to the request.
 - Do not commit secrets, `.env` files, credentials, or generated local data.
 - Run the relevant validation commands before finishing a file-changing task.
+- On this Mac, run all local container commands with explicit
+  `docker --context orbstack`. Use `deploy/orbstack.sh` for this project's
+  services. Do not change the global context or operate on other projects.
 - At the end of every AI execution that changes files, inspect the actual diff,
   stage the relevant changes, create a git commit, and push the current branch
   to its configured remote.

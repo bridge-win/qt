@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Empty, Space, Table, Tag, Typography } from "antd";
 import { apiErrorText, request } from "../api";
 import { PageTitle } from "../workbench";
+import { BtcAlertsCard } from "./BtcAlertsCard";
 import { PolymarketSnapshotCard } from "./PolymarketSnapshotCard";
 
 const { Paragraph, Text } = Typography;
@@ -170,6 +171,7 @@ export function BtcMonitorPage(): ReactElement {
         ]} />
       </Card>
     </>}
+    <BtcAlertsCard />
     <PolymarketSnapshotCard />
   </>;
 }

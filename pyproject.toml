@@ -102,6 +102,8 @@ ignore = ["E501"]
 # Bilingual (English/中文) user-facing strings intentionally use CJK + symbols.
 "scripts/init_wizard.py" = ["RUF001", "RUF002"]
 "src/qt/dashboard/server.py" = ["RUF001", "RUF002"]
+"src/qt/btc_alerts/service.py" = ["RUF001"]
+"src/qt/btc_alerts/store.py" = ["RUF001"]
 # Imported historical source trees deliberately retain their original module
 # names, annotations, and formatting for provenance/parity review. New ports
 # and all non-legacy code remain under the normal strict lint policy.

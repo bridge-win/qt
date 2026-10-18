@@ -19,6 +19,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--parquet-root", type=Path, required=True)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--btc-monitor-state-dir", type=Path, default=os.environ.get("QT_BTC_MONITOR_STATE_DIR"))
+    parser.add_argument("--btc-alerts-state-dir", type=Path, default=os.environ.get("QT_BTC_ALERTS_STATE_DIR"))
     parser.add_argument(
         "--origin-client-id",
         default=os.environ.get("QT_WORKBENCH_ORIGIN_CLIENT_ID"),
@@ -42,6 +43,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 origin_client_id=args.origin_client_id,
                 origin_client_secret=args.origin_client_secret,
                 btc_monitor_state_dir=args.btc_monitor_state_dir,
+                btc_alerts_state_dir=args.btc_alerts_state_dir,
             )
         ),
         host=args.host,

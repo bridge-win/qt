@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import RequestResponseEndpoint
 
+from qt.btc_alerts.api import build_alerts_router
 from qt.btc_monitor.api import build_btc_monitor_router
 from qt.lab.persistence import LabRepository
 from qt.lab.router import LabSettings, build_lab_router
@@ -50,6 +51,7 @@ class WorkbenchSettings:
     origin_client_id: str | None = None
     origin_client_secret: str | None = None
     btc_monitor_state_dir: Path | None = None
+    btc_alerts_state_dir: Path | None = None
 
 
 class ExperimentRequest(BaseModel):
@@ -143,6 +145,7 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
     )
     app.include_router(build_operations_router(operations_service), prefix="/api/v3")
     app.include_router(build_btc_monitor_router(settings.btc_monitor_state_dir or settings.state_root / "btc-monitor"), prefix="/api/v3")
+    app.include_router(build_alerts_router(settings.btc_alerts_state_dir), prefix="/api/v3")
     app.include_router(build_prediction_market_router(), prefix="/api/v3")
 
     @app.get("/api/v3/provenance")

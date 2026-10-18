@@ -63,10 +63,12 @@ services:
     environment:
       QT_WORKBENCH_ORIGIN_CLIENT_ID: ${QT_WORKBENCH_ORIGIN_CLIENT_ID:?Origin credentials are required}
       QT_WORKBENCH_ORIGIN_CLIENT_SECRET: ${QT_WORKBENCH_ORIGIN_CLIENT_SECRET:?Origin credentials are required}
+      QT_BTC_ALERTS_STATE_DIR: /alerts
     volumes:
       - workbench-state:/state
       - workbench-parquet:/parquet
       - monitor-state:/monitor:ro
+      - alerts-state:/alerts
     healthcheck:
       test: [CMD, python, deploy/workbench_health.py, api]
       interval: 30s
@@ -110,8 +112,6 @@ services:
       QT_BTC_MONITOR_VENUE: ${QT_BTC_MONITOR_VENUE:-binance}
       QT_BTC_MONITOR_ENVIRONMENT: ${QT_BTC_MONITOR_ENVIRONMENT:-production}
       QT_BTC_MONITOR_STATE_DIR: /state/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}
-      QT_TELEGRAM_BOT_TOKEN: ${QT_TELEGRAM_BOT_TOKEN:-}
-      QT_TELEGRAM_CHAT_ID: ${QT_TELEGRAM_CHAT_ID:-}
     volumes: [monitor-state:/state]
     healthcheck:
       test: [CMD, python, -m, qt.btc_monitor, health, --state-dir, "/state/${QT_BTC_MONITOR_VENUE:-binance}-${QT_BTC_MONITOR_ENVIRONMENT:-production}"]
@@ -124,7 +124,58 @@ services:
     cpus: 1.0
     pids_limit: 64
 
+  alerts:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-alerts
+      target: runtime
+    environment:
+      QT_BTC_ALERTS_STATE_DIR: /state
+      QT_BTC_MONITOR_STATE_DIR: /monitor/binance-production
+      QT_TELEGRAM_BOT_TOKEN: ${QT_TELEGRAM_BOT_TOKEN:-}
+      QT_TELEGRAM_CHAT_ID: ${QT_TELEGRAM_CHAT_ID:-}
+      QT_BTC_ALERTS_EXPECTED_BOT: ${QT_BTC_ALERTS_EXPECTED_BOT:-radarxdotbot}
+      QT_BTC_ALERTS_REVIEW_SECRET: ${QT_BTC_ALERTS_REVIEW_SECRET:?Run alerts-init first}
+    volumes:
+      - alerts-state:/state
+      - monitor-state:/monitor:ro
+    depends_on:
+      monitor: {condition: service_started}
+      reviewer: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -m, qt.btc_alerts, health]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 150s
+    mem_limit: 384m
+    cpus: 1.0
+    pids_limit: 64
+
+  reviewer:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.btc-alerts
+      target: reviewer
+    environment:
+      CODEX_API_KEY: ${CODEX_API_KEY:-}
+      QT_BTC_ALERTS_CODEX_MODEL: ${QT_BTC_ALERTS_CODEX_MODEL:-}
+      QT_BTC_ALERTS_REVIEW_SECRET: ${QT_BTC_ALERTS_REVIEW_SECRET:?Run alerts-init first}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 120s
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 64
+
 volumes:
   workbench-state:
   workbench-parquet:
   monitor-state:
+  alerts-state:

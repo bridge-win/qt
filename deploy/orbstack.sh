@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTEXT="${QT_DOCKER_CONTEXT:-orbstack}"
+[[ "$CONTEXT" == orbstack ]] || { echo 'Local QT containers require --context orbstack.' >&2; exit 2; }
 PROJECT="${QT_ORBSTACK_PROJECT_NAME:-qt-orbstack}"
 PRIVATE_ENV="${QT_ORBSTACK_ENV_FILE:-${ROOT}/.env.orbstack}"
 PYTHON="${PYTHON:-python3}"
@@ -12,7 +13,8 @@ COMPOSE=("${DOCKER[@]}" compose --project-name "$PROJECT" --project-directory "$
 # Shell settings must not silently override the inspected private configuration.
 for key in QT_ORBSTACK_PORT QT_ORBSTACK_USERNAME QT_ORBSTACK_PASSWORD_HASH \
   QT_WORKBENCH_ORIGIN_CLIENT_ID QT_WORKBENCH_ORIGIN_CLIENT_SECRET \
-  QT_BTC_MONITOR_VENUE QT_BTC_MONITOR_ENVIRONMENT QT_TELEGRAM_BOT_TOKEN QT_TELEGRAM_CHAT_ID; do
+  QT_BTC_MONITOR_VENUE QT_BTC_MONITOR_ENVIRONMENT QT_TELEGRAM_BOT_TOKEN QT_TELEGRAM_CHAT_ID \
+  CODEX_API_KEY QT_BTC_ALERTS_CODEX_MODEL QT_BTC_ALERTS_REVIEW_SECRET QT_BTC_ALERTS_EXPECTED_BOT; do
   unset "$key"
 done
 
@@ -28,6 +30,7 @@ case "${1:-up}" in
     "$PYTHON" "$ROOT/deploy/orbstack_config.py" init --env-file "$PRIVATE_ENV" --context "$CONTEXT"
     ;;
   up)
+    "$PYTHON" "$ROOT/deploy/orbstack_config.py" alerts-bootstrap --env-file "$PRIVATE_ENV"
     config_check
     "${COMPOSE[@]}" up --build -d --wait --wait-timeout 240
     port="$("$PYTHON" "$ROOT/deploy/orbstack_config.py" port --env-file "$PRIVATE_ENV")"
@@ -45,6 +48,18 @@ case "${1:-up}" in
     echo 'Local API/worker probes passed; unauthenticated UI/API requests were rejected.'
     ;;
   status) "${COMPOSE[@]}" ps ;;
+  alerts-init) "$PYTHON" "$ROOT/deploy/orbstack_config.py" alerts-init --env-file "$PRIVATE_ENV" ;;
+  alerts-check) config_check; "${COMPOSE[@]}" exec -T alerts python -m qt.btc_alerts doctor ;;
+  alerts-mode)
+    [[ "${2:-}" =~ ^(off|shadow|notify)$ ]] || { echo 'Choose off, shadow or notify.' >&2; exit 2; }
+    "${COMPOSE[@]}" exec -T alerts python -m qt.btc_alerts mode --mode "$2"
+    ;;
+  alerts-verify)
+    [[ -n "${2:-}" ]] || { echo 'Provide the QT VERIFY challenge sent from your private Telegram chat.' >&2; exit 2; }
+    "${COMPOSE[@]}" exec -T alerts python -m qt.btc_alerts verify-recipient --nonce "$2"
+    ;;
+  alerts-test) "${COMPOSE[@]}" exec -T alerts python -m qt.btc_alerts test-notification ;;
+  alerts-research) "${COMPOSE[@]}" run --rm --no-deps -T alerts research ;;
   down) "${COMPOSE[@]}" down ;;
-  *) echo 'Usage: deploy/orbstack.sh [init|up|check|status|down]' >&2; exit 2 ;;
+  *) echo 'Usage: deploy/orbstack.sh [init|up|check|status|down|alerts-init|alerts-check|alerts-mode MODE|alerts-verify CHALLENGE|alerts-test|alerts-research]' >&2; exit 2 ;;
 esac

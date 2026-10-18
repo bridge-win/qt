@@ -18,6 +18,8 @@ KEYS = (
     "QT_WORKBENCH_ORIGIN_CLIENT_ID", "QT_WORKBENCH_ORIGIN_CLIENT_SECRET",
     "QT_BTC_MONITOR_VENUE", "QT_BTC_MONITOR_ENVIRONMENT",
     "QT_TELEGRAM_BOT_TOKEN", "QT_TELEGRAM_CHAT_ID",
+    "CODEX_API_KEY", "QT_BTC_ALERTS_CODEX_MODEL",
+    "QT_BTC_ALERTS_REVIEW_SECRET", "QT_BTC_ALERTS_EXPECTED_BOT",
 )
 PAIRS = {("binance", "production"), ("binance", "testnet"), ("okx", "production"), ("okx", "demo")}
 
@@ -71,6 +73,70 @@ def validate(values: dict[str, str]) -> None:
         raise ConfigError("Telegram token format is invalid; enter a new token locally.")
     if chat and not re.fullmatch(r"-?[0-9]{1,20}", chat):
         raise ConfigError("Telegram chat ID must be the numeric recipient ID discovered locally.")
+    for key in ("CODEX_API_KEY", "QT_BTC_ALERTS_REVIEW_SECRET"):
+        value = values.get(key, "")
+        if value and not re.fullmatch(r"[A-Za-z0-9_.-]{20,512}", value):
+            raise ConfigError(f"Invalid format for {key}; enter the value locally.")
+    model = values.get("QT_BTC_ALERTS_CODEX_MODEL", "")
+    if model and not re.fullmatch(r"[A-Za-z0-9_./-]{1,128}", model):
+        raise ConfigError("Invalid QT_BTC_ALERTS_CODEX_MODEL.")
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", values.get("QT_BTC_ALERTS_EXPECTED_BOT", "radarxdotbot")):
+        raise ConfigError("Invalid expected Telegram bot username.")
+
+
+def save_private(path: Path, values: dict[str, str]) -> None:
+    validate(values)
+    temporary = path.with_name(path.name + ".alerts.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write("# Private QT settings. Never share or commit this file.\n")
+            output.write("".join(f"{key}='{value}'\n" for key, value in values.items()))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def bootstrap_alerts(path: Path) -> None:
+    values = read_private(path)
+    validate(values)
+    updated = dict(values)
+    defaults = {
+        "CODEX_API_KEY": "", "QT_BTC_ALERTS_CODEX_MODEL": "",
+        "QT_BTC_ALERTS_REVIEW_SECRET": values.get("QT_BTC_ALERTS_REVIEW_SECRET") or secrets.token_urlsafe(48),
+        "QT_BTC_ALERTS_EXPECTED_BOT": "radarxdotbot",
+    }
+    for key, value in defaults.items():
+        if not updated.get(key):
+            updated[key] = value
+    if updated != values:
+        save_private(path, updated)
+
+
+def initialize_alerts(path: Path) -> None:
+    bootstrap_alerts(path)
+    if not sys.stdin.isatty():
+        raise ConfigError("Internal alert settings are ready. Run alerts-init in an interactive terminal for hidden external credential entry.")
+    values = read_private(path)
+    print("Enter current authorized credentials locally. Blank input preserves an existing value.")
+    for key in ("CODEX_API_KEY", "QT_TELEGRAM_BOT_TOKEN", "QT_TELEGRAM_CHAT_ID"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            value = getpass.getpass(f"{key} (hidden): ").strip()
+        if value:
+            values[key] = value
+    model = input("Supported Codex model ID (blank preserves current): ").strip()
+    if model:
+        values["QT_BTC_ALERTS_CODEX_MODEL"] = model
+    bot = input("Expected Telegram bot [radarxdotbot; blank preserves current]: ").strip().removeprefix("@")
+    if bot:
+        values["QT_BTC_ALERTS_EXPECTED_BOT"] = bot
+    save_private(path, values)
+    missing = [key for key in ("CODEX_API_KEY", "QT_BTC_ALERTS_CODEX_MODEL", "QT_TELEGRAM_BOT_TOKEN", "QT_TELEGRAM_CHAT_ID") if not values.get(key)]
+    print("Missing fields: " + ", ".join(missing) if missing else "Credentials saved privately. Restart target services, then verify the recipient and run alerts-check.")
 
 
 def initialize(path: Path, context: str) -> None:
@@ -125,13 +191,17 @@ def initialize(path: Path, context: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["init", "check", "port"])
+    parser.add_argument("command", choices=["init", "check", "port", "alerts-init", "alerts-bootstrap"])
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--context", default="orbstack")
     args = parser.parse_args()
     try:
         if args.command == "init":
             initialize(args.env_file, args.context)
+        elif args.command == "alerts-bootstrap":
+            bootstrap_alerts(args.env_file)
+        elif args.command == "alerts-init":
+            initialize_alerts(args.env_file)
         else:
             values = read_private(args.env_file)
             validate(values)
