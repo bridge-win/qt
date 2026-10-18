@@ -27,7 +27,7 @@ bash deploy/orbstack.sh down
 
 ## 已通过的自动化与运行检查
 
-- 全量 Python 回归：1303 passed、8 skipped。随后补充畸形 Telegram 响应的回归，相关完整测试集 312 passed。
+- 最终全量 Python 回归：1305 passed、8 skipped；相关完整测试集 312 passed。
 - 八项跳过为七项未配置 PostgreSQL 的既有集成测试和一项需预构建插件镜像的既有测试。
 - 前端 61 tests passed，TypeScript 检查及生产构建通过；依赖审计零漏洞。
 - Ruff 全仓 src/tests 通过，新增提醒模块 Mypy 通过，Python wheel 构建通过。
@@ -43,6 +43,7 @@ bash deploy/orbstack.sh down
 本机 API 采用现有依赖与 requirements-orbstack.lock 全部 73 个包一致的运行层刷新源码；未变更依赖锁或读取运行中容器的凭据制作镜像。
 CI 会从正式 Dockerfile 重新构建。此记录不预先声称 GitHub CI 或 Deploy TC 成功，应核对实现提交对应的运行结果。
 首个实现提交的 Deploy TC 被前端测试五秒限时阻止，未执行发布；已减少重复渲染并为该组件测试设置十五秒限时，保留全部断言后重新验收。
+第二轮发现原有草稿工作流测试逐字符输入在 CI 超过十五秒，并污染后续测试。已改为真实粘贴事件输入完整字段，保留全部版本与提交内容断言；没有提高这些测试的原有限时。
 
 ## 已实际执行的研究
 
@@ -59,7 +60,7 @@ CI 会从正式 Dockerfile 重新构建。此记录不预先声称 GitHub CI 或
 | 永续做空研究 | 0 | 历史资金费率覆盖不足，未晋级 |
 
 660 个触发候选中，596 个未通过扣成本收益风险比，36 个因延迟入场价格变化无法入场；28 个完成虚拟后验计算，再剔除跨事件持有期重叠。
-结果、公开数据哈希和基线对比保存在 alerts-state 的 research/；原始数据哈希为 `52998fc2ee5b909a8c46cb01935981b88a10be1da6b0b01b073fac1f9472d356`。
+结果、公开数据哈希和基线对比保存在 alerts-state 的 research/。最终研究的策略版本为 `d98efe4f83137e745b2ff50f`，冻结终点为 2026-10-18 04:15 UTC；原始数据哈希为 `ce7a22b35e0163974365053119cc57a2fd25c9e9ecd24d36a1f30a1d43df4ea9`。
 现金、持有 BTC、简单 EMA 趋势及没有 Codex 的数值规则均有比较记录。
 这些结果不能证明盈利，也不满足前向七天和二十个完整后验事件的条件。
 

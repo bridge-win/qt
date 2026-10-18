@@ -6,6 +6,12 @@ import WorkbenchApp from "./App";
 
 function json(body: unknown): Response { return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }); }
 
+async function pasteText(element: HTMLElement, text: string): Promise<void> {
+  const user = userEvent.setup();
+  await user.click(element);
+  await user.paste(text);
+}
+
 describe("workbench workflow", () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -53,15 +59,15 @@ describe("workbench workflow", () => {
     render(<QueryClientProvider client={client}><WorkbenchApp /></QueryClientProvider>);
     await userEvent.click(await screen.findByText("策略与规则"));
     await userEvent.click(await screen.findByText("从模板新建草稿"));
-    await userEvent.type(screen.getByLabelText("策略名称"), "Versioned rules");
+    await pasteText(screen.getByLabelText("策略名称"), "Versioned rules");
     await userEvent.click(screen.getByText("保存草稿"));
     const messageField = await screen.findByLabelText("本版说明");
-    await userEvent.type(messageField, "Tighten exit");
+    await pasteText(messageField, "Tighten exit");
     await userEvent.click(screen.getByText("保存为不可变版本"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/strategies/draft-1/versions"), expect.objectContaining({ method: "POST" })));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/strategy-versions/v2"), expect.anything()));
     await userEvent.clear(messageField);
-    await userEvent.type(messageField, "Second immutable edit");
+    await pasteText(messageField, "Second immutable edit");
     await userEvent.click(screen.getByText("保存为不可变版本"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/strategies/draft-1/versions"), expect.objectContaining({ body: expect.stringContaining('"expected_version":2') })));
   }, 15_000);
@@ -82,7 +88,7 @@ describe("workbench workflow", () => {
     render(<QueryClientProvider client={client}><WorkbenchApp /></QueryClientProvider>);
     await userEvent.click(await screen.findByText("策略与规则"));
     await userEvent.click(await screen.findByText("从模板新建草稿"));
-    await userEvent.type(screen.getByLabelText("策略名称"), "Exact builtin copy");
+    await pasteText(screen.getByLabelText("策略名称"), "Exact builtin copy");
     await userEvent.click(screen.getByRole("combobox", { name: "选择内置策略" }));
     await userEvent.click(await screen.findByText("Buy and hold · 内置只读"));
     await userEvent.click(screen.getByText("保存草稿"));
