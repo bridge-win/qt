@@ -123,6 +123,8 @@ class AlertService:
                 "authenticated": True, "at": self.clock(), "model": response.get("model"),
                 "model_pinned": response.get("model_pinned", False), "prompt_version": PROMPT_VERSION,
             })
+            if response.get("model_pinned"):
+                self.store.start_review_shadow(policy.strategy_version, str(response.get("model", "")), self.clock())
         except Exception as error:
             self.store.finish_review(batch_id, {**audit, "status": "failed", "error": type(error).__name__})
             self.store.put("reviewer_status", {"authenticated": False, "at": self.clock(), "reason": type(error).__name__})
@@ -133,6 +135,10 @@ class AlertService:
         by_id = {item.candidate_id: item for item in batch.reviews}
         for candidate in candidates:
             review = by_id[candidate.candidate_id]
+            recorded_review = {**review.model_dump(), "audit": {
+                "model": response.get("model"), "model_pinned": response.get("model_pinned", False),
+                "prompt_version": PROMPT_VERSION, "input_sha256": digest(payload),
+            }}
             reasons = self.store.promotion_reasons(candidate, self.clock())
             if not response.get("model_pinned"):
                 reasons.append("model_identity_not_pinned")
@@ -141,13 +147,13 @@ class AlertService:
             if conflict:
                 reasons.append("opposing_directions")
             if review.verdict != "approve":
-                self.store.record(candidate.candidate_id, "review_rejected", review.verdict, self.clock(), review.model_dump())
+                self.store.record(candidate.candidate_id, "review_rejected", review.verdict, self.clock(), recorded_review)
             elif reasons:
-                self.store.record(candidate.candidate_id, "evidence_pending", ",".join(reasons), self.clock(), review.model_dump())
+                self.store.record(candidate.candidate_id, "evidence_pending", ",".join(reasons), self.clock(), recorded_review)
             elif policy.mode == "shadow":
-                self.store.record(candidate.candidate_id, "shadow_approved", "shadow_mode", self.clock(), review.model_dump())
+                self.store.record(candidate.candidate_id, "shadow_approved", "shadow_mode", self.clock(), recorded_review)
             else:
-                self.store.record(candidate.candidate_id, "approved", "", self.clock(), review.model_dump())
+                self.store.record(candidate.candidate_id, "approved", "", self.clock(), recorded_review)
                 self.store.enqueue(candidate.candidate_id, render_notification(candidate, review.summary), candidate.expires_at, self.clock())
 
     def dispatch(self) -> None:
@@ -189,7 +195,10 @@ class AlertService:
             if not self.store.claim(item["event_id"], self.telegram.recipient_key, self.clock(), strategy_version=strategy_version):
                 self.store.record(item["event_id"], "cooldown", "hourly_limit_or_policy", self.clock())
                 continue
-            result = self.telegram.send(item["payload"]["text"])
+            try:
+                result = self.telegram.send(item["payload"]["text"])
+            except Exception:
+                result = {"status": "unknown", "error_code": "transport_unknown"}
             status = result["status"]
             retry_at = self.clock() + result.get("retry_after", 0)
             if status == "pending" and retry_at >= item["expires_at"]:

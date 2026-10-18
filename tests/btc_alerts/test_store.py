@@ -44,6 +44,9 @@ def test_interrupted_send_becomes_unknown_without_retry(store):
     assert store.pending(NOW + 10) == []
     second = store.request_test("second-test-request", NOW + 20, "fixture")
     assert not store.claim(second, "recipient-btc", NOW + 20)
+    boundary = store.request_test("interrupted-boundary-test", NOW + 3600, "fixture")
+    assert not store.claim(boundary, "recipient-btc", NOW + 3609)
+    assert store.claim(boundary, "recipient-btc", NOW + 3610)
 
 
 def test_explicit_429_releases_quota_but_retry_must_reclaim(store):
@@ -93,6 +96,8 @@ def test_no_approval_can_substitute_for_research_and_forward_evidence(store, can
     reasons = store.promotion_reasons(candidate, NOW)
     assert "validation_pending:trend:long" in reasons
     assert "forward_shadow_evidence_pending" in reasons
+
+
 def test_authentication_probe_uses_rolling_hour_across_calendar_boundary(store):
     assert store.review_budget("probe:previous-hour", 3599, {"kind": "authentication_probe"})
     assert not store.review_budget("probe:next-hour", 3600, {"kind": "authentication_probe"})

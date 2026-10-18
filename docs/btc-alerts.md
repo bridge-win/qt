@@ -94,6 +94,9 @@ Formal notifications require:
 - At least 100 non-overlapping OOS events per strategy/direction, costs,
   purged boundaries and a positive lower 95% weekly-block bootstrap bound.
 - At least seven elapsed days and 20 complete forward shadow outcomes.
+- Those outcomes must include completed reviews by the same pinned model and
+  prompt version; missing reviews and previous model identities do not count.
+  The seven-day review clock starts with that model's first completed review.
 - An authenticated pinned model, verified recipient and current market data.
 - Candidate age <600s; quote age ≤5s; spread ≤10 bps; movement
   ≤min(0.3%, 0.25×one-hour ATR/reference price); current net reward/risk ≥2.

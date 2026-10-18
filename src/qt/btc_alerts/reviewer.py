@@ -17,9 +17,9 @@ from typing import IO, Any
 
 import httpx
 
-from .models import Candidate, ReviewBatch, digest
+from .models import REVIEW_PROMPT_VERSION, Candidate, ReviewBatch, digest
 
-PROMPT_VERSION = "btc-opportunity-review-v1"
+PROMPT_VERSION = REVIEW_PROMPT_VERSION
 DISABLED_FEATURES = (
     "shell_tool", "unified_exec", "multi_agent", "apps", "plugins", "hooks",
     "code_mode_host", "browser_use", "browser_use_external", "computer_use",

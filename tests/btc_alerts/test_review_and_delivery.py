@@ -31,6 +31,8 @@ def verified(store, telegram):
 
 def qualify(store, candidate):
     store.put("shadow_started:" + candidate.strategy_version, NOW - 8 * 86400)
+    store.start_review_shadow(candidate.strategy_version, "fixture-only", NOW - 8 * 86400)
+    store.put("reviewer_status", {"model": "fixture-only", "authenticated": True, "model_pinned": True, "at": NOW})
     store.save_validation(candidate.strategy_version, "trend", "long", NOW, {
         "status": "passed", "oos_events": 100, "ci95_lower": 0.2, "costs_included": True, "purged": True,
     })
@@ -38,8 +40,27 @@ def qualify(store, candidate):
         timestamp = NOW - 8 * 86400 + index * 900
         past = candidate.model_copy(update={"candidate_id": "past-" + str(index), "bar_close": timestamp, "expires_at": timestamp + 600})
         store.add_candidate(past, NOW - 8 * 86400 + index)
+        store.record(past.candidate_id, "review_rejected", "fixture", timestamp, {
+            "verdict": "reject", "audit": {"model": "fixture-only", "model_pinned": True, "prompt_version": reviewer.PROMPT_VERSION},
+        })
         with store.connection() as db:
             db.execute("UPDATE events SET status='review_rejected',outcome=? WHERE event_id=?", (json.dumps({"status": "labelled", "net_r": 0.1}), past.candidate_id))
+
+
+@pytest.mark.parametrize("change", ["no_review", "different_model", "new_prompt", "unlabelled"])
+def test_forward_promotion_requires_real_matching_model_reviews(store, candidate, change):
+    qualify(store, candidate)
+    assert not store.promotion_reasons(candidate, NOW)
+    with store.connection() as db:
+        if change == "no_review":
+            db.execute("UPDATE events SET review=NULL")
+        elif change == "different_model":
+            store.put("reviewer_status", {"model": "other-model"})
+        elif change == "new_prompt":
+            db.execute("UPDATE events SET review=json_set(review,'$.audit.prompt_version','other-prompt')")
+        else:
+            db.execute("UPDATE events SET outcome=json_object('status','incomplete_outcome')")
+    assert "forward_shadow_evidence_pending" in store.promotion_reasons(candidate, NOW)
 
 
 @pytest.mark.parametrize("mutation", ["foreign_id", "foreign_citation", "missing", "opposing", "missing_card", "duplicate"])
@@ -157,13 +178,17 @@ def test_unverified_or_foreign_recipient_stays_blocked(store, kind):
     assert not telegram.verified(store)
 
 
-@pytest.mark.parametrize("kind,expected", [("timeout", "unknown"), ("500", "unknown"), ("bad_success", "unknown"), ("429", "pending"), ("403", "failed"), ("accepted", "accepted")])
+@pytest.mark.parametrize("kind,expected", [("timeout", "unknown"), ("500", "unknown"), ("bad_success", "unknown"), ("malformed_chat", "unknown"), ("malformed_429", "failed"), ("429", "pending"), ("403", "failed"), ("accepted", "accepted")])
 def test_telegram_transport_has_conservative_outcomes(kind, expected):
     def handler(request):
         if kind == "timeout":
             raise httpx.ReadTimeout("credential-bearing-url-must-never-escape", request=request)
         if kind == "accepted":
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 101, "chat": {"id": int(CHAT)}}})
+        if kind == "malformed_chat":
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 101, "chat": "invalid"}})
+        if kind == "malformed_429":
+            return httpx.Response(429, json={"ok": False, "parameters": "invalid"})
         if kind == "429":
             return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 20}})
         return httpx.Response(200 if kind == "bad_success" else int(kind), json={"ok": False})

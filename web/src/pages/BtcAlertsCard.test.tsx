@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BtcAlertsCard, type AlertsProjection } from "./BtcAlertsCard";
 
@@ -33,8 +33,8 @@ function setup(value = fixture()) {
   return fetcher;
 }
 
-describe("BTC reviewed opportunity alerts", () => {
-  afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear()); vi.unstubAllGlobals(); });
+describe("BTC reviewed opportunity alerts", { timeout: 15_000 }, () => {
+  afterEach(() => { cleanup(); clients.splice(0).forEach((client) => client.clear()); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
   it("shows validation blockers, citations and a shared hourly limit without order controls", async () => {
     setup();
@@ -87,6 +87,20 @@ describe("BTC reviewed opportunity alerts", () => {
     setup(value);
     expect(await screen.findByText("提醒服务状态不可确认")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "启用正式提醒" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送 QT 测试" })).toBeDisabled();
+  });
+
+  it("expires actionable status after 20 seconds even when refresh hangs and wall clock rolls back", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
+    const value = fixture();
+    value.worker.recipient_verified = true;
+    const fetcher = setup(value);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.getByRole("button", { name: "发送 QT 测试" })).toBeEnabled();
+    fetcher.mockImplementation(() => new Promise<Response>(() => {}));
+    vi.setSystemTime(Date.now() - 86400_000);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_001); });
+    expect(screen.getByText("提醒服务状态不可确认")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "发送 QT 测试" })).toBeDisabled();
   });
 });

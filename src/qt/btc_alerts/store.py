@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .knowledge import CARDS, SOURCES, strategy_cards
-from .models import Candidate, Policy, digest
+from .models import REVIEW_PROMPT_VERSION, Candidate, Policy, digest
 
 
 def encode(value: Any) -> str:
@@ -208,6 +208,11 @@ class Store:
     def recover(self, now: float) -> None:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "UPDATE quota SET next_allowed_at=MAX(next_allowed_at,?),last_seen_at=MAX(last_seen_at,?) "
+                "WHERE owner IN (SELECT event_id FROM outbox WHERE status='sending')",
+                (now + 3600, now),
+            )
             db.execute("UPDATE outbox SET status='unknown',error_code='interrupted_send' WHERE status='sending'")
             db.execute("UPDATE events SET status='review_unknown',reason='interrupted_review',updated_at=? WHERE status='reviewing'", (now,))
             db.execute("UPDATE outbox SET status='expired' WHERE status='pending' AND expires_at<=?", (now,))
@@ -290,6 +295,14 @@ class Store:
         with self.connection() as db:
             db.execute("INSERT OR REPLACE INTO validations VALUES (?,?,?,?,?)", (version, strategy_id, direction, now, encode(result)))
 
+    @staticmethod
+    def review_shadow_key(version: str, model: str) -> str:
+        return "review_shadow_started:" + digest([version, model, REVIEW_PROMPT_VERSION])
+
+    def start_review_shadow(self, version: str, model: str, now: float) -> None:
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO runtime VALUES (?,?)", (self.review_shadow_key(version, model), encode(now)))
+
     def promotion_reasons(self, candidate: Candidate, now: float) -> list[str]:
         reasons = []
         for trigger in candidate.triggers:
@@ -301,11 +314,18 @@ class Store:
                 or (candidate.direction == "short" and not value.get("funding_complete"))
             ):
                 reasons.append(f"validation_pending:{trigger.strategy_id}:{candidate.direction}")
-        started = self.get(f"shadow_started:{candidate.strategy_version}", now)
+        model = self.get("reviewer_status", {}).get("model", "")
+        started = max(
+            self.get(f"shadow_started:{candidate.strategy_version}", now),
+            self.get(self.review_shadow_key(candidate.strategy_version, model), now),
+        )
         with self.connection() as db:
             count = db.execute(
-                "SELECT COUNT(*) FROM events WHERE json_extract(outcome,'$.status')='labelled' AND json_extract(payload,'$.strategy_version')=?",
-                (candidate.strategy_version,),
+                "SELECT COUNT(*) FROM events WHERE json_extract(outcome,'$.status')='labelled' "
+                "AND json_extract(payload,'$.strategy_version')=? AND created_at>=? AND created_at<=? "
+                "AND json_extract(review,'$.audit.model')=? AND json_extract(review,'$.audit.model_pinned')=1 "
+                "AND json_extract(review,'$.audit.prompt_version')=?",
+                (candidate.strategy_version, started, now, model, REVIEW_PROMPT_VERSION),
             ).fetchone()[0]
         if now - started < 7 * 86400 or count < 20:
             reasons.append("forward_shadow_evidence_pending")

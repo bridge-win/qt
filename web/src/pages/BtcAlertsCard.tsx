@@ -51,20 +51,23 @@ function errorMessage(error: unknown): string {
 
 export function BtcAlertsCard(): ReactElement {
   const client = useQueryClient();
-  const [, tick] = useState(0);
+  const [stale, setStale] = useState(false);
   const [selected, setSelected] = useState<string>();
   const [draft, setDraft] = useState<Record<string, number> | null>(null);
-  useEffect(() => {
-    const timer = window.setInterval(() => tick((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
   const query = useQuery<Received>({
     queryKey: ["btc-alerts", "/api/v3/btc-alerts"],
     queryFn: async () => ({ value: await request<AlertsProjection>("/api/v3/btc-alerts"), receivedAt: performance.now() }),
     refetchInterval: 5000, retry: false,
   });
+  const receivedAt = query.data?.receivedAt;
+  useEffect(() => {
+    setStale(false);
+    if (receivedAt === undefined) return;
+    const timer = window.setTimeout(() => setStale(true), Math.max(0, 20_000 - (performance.now() - receivedAt)));
+    return () => window.clearTimeout(timer);
+  }, [receivedAt]);
   const data = query.data?.value;
-  const fresh = !!query.data && !query.isError && performance.now() - query.data.receivedAt <= 20_000;
+  const fresh = !!query.data && !query.isError && !stale && performance.now() - query.data.receivedAt <= 20_000;
   const alive = fresh && data?.worker?.alive;
   const now = (data?.server_time ?? 0) + (query.data ? (performance.now() - query.data.receivedAt) / 1000 : 0);
   const detail = useQuery({

@@ -10,13 +10,13 @@ SOURCES: dict[str, dict[str, Any]] = {
     "liu-tsyvinski-2018": {
         "title": "Risks and Returns of Cryptocurrency",
         "url": "https://www.nber.org/papers/w24877",
-        "published_at": "2018-08-01", "available_at": "2018-08-31",
+        "published_at": None, "publication_month": "2018-08", "available_at": "2026-10-18",
         "finding": "Historical cryptocurrency returns exhibit time-series momentum; this does not validate a 15-minute rule.",
     },
     "moskowitz-ooi-pedersen-2012": {
         "title": "Time Series Momentum",
         "url": "https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum",
-        "published_at": "2012-05-01", "available_at": "2012-05-31",
+        "published_at": "2012-05-01", "available_at": "2012-05-01",
         "finding": "Evidence concerns diversified futures and longer horizons, not a validated BTC intraday rule.",
     },
     "intraday-momentum-reversal-2022": {

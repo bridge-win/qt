@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Direction = Literal["long", "reduce_long", "short"]
 TIMEFRAMES = {"15m": 900, "1h": 3600, "4h": 14400}
 ALGORITHM_VERSION = "btc-alerts-v1"
+REVIEW_PROMPT_VERSION = "btc-opportunity-review-v1"
 
 
 def digest(value: Any) -> str:

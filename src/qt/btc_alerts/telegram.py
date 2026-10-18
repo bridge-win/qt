@@ -81,15 +81,17 @@ class Telegram:
         except RuntimeError:
             return {"status": "unknown", "error_code": "transport_unknown"}
         if status == 429:
-            delay = body.get("parameters", {}).get("retry_after", 1)
+            parameters = body.get("parameters", {})
+            delay = parameters.get("retry_after", 1) if isinstance(parameters, dict) else None
             if type(delay) is not int or not 1 <= delay <= 300:
                 return {"status": "failed", "error_code": "rate_limit_horizon"}
             return {"status": "pending", "error_code": "rate_limited", "retry_after": delay}
         result = body.get("result", {})
+        chat = result.get("chat", {}) if isinstance(result, dict) else None
         if (
             status == 200 and body.get("ok") is True and isinstance(result, dict)
             and type(result.get("message_id")) is int and result["message_id"] > 0
-            and str(result.get("chat", {}).get("id")) == self._chat_id
+            and isinstance(chat, dict) and str(chat.get("id")) == self._chat_id
         ):
             return {"status": "accepted", "message_id": result["message_id"]}
         if status >= 500 or 200 <= status < 300:
