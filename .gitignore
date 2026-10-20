@@ -34,6 +34,8 @@ data/parquet/
 data/cache/
 data/backtests/
 data/runtime/
+data/agent-hub-imports/
+data/agent-hub-files/
 *.parquet
 *.duckdb
 *.duckdb.wal

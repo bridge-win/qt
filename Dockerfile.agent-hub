@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim AS codex
+ARG CODEX_VERSION=0.162.1
+RUN npm install --global --registry=https://registry.npmjs.org @openai/codex@${CODEX_VERSION}
+
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS wheels
+WORKDIR /download
+COPY requirements-agent-hub.lock ./
+RUN python -m pip download --require-hashes --only-binary=:all: --dest /wheels -r requirements-agent-hub.lock
+
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/src PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+COPY --from=wheels /wheels /wheels
+COPY requirements-agent-hub.lock /tmp/requirements.lock
+RUN --network=none python -m pip install --no-index --no-compile --require-hashes --find-links=/wheels -r /tmp/requirements.lock \
+    && python -m pip check \
+    && rm -rf /wheels /tmp/requirements.lock \
+    && useradd --uid 10001 --create-home qt \
+    && mkdir /state /files /codex-home && chown qt:qt /state /files /codex-home
+WORKDIR /app
+COPY src/qt/__init__.py ./src/qt/__init__.py
+COPY src/qt/agent_hub ./src/qt/agent_hub
+COPY src/qt/prediction_markets ./src/qt/prediction_markets
+COPY src/qt/btc_agent ./src/qt/btc_agent
+COPY config/agent-hub.yaml ./config/agent-hub.yaml
+USER 10001:10001
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python", "-m", "qt.agent_hub"]
+CMD ["api"]
+
+FROM runtime AS model
+COPY --from=codex /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
+USER root
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+USER 10001:10001
+CMD ["codex"]
+
+FROM runtime AS test
+USER root
+COPY requirements-agent-hub-test.lock /tmp/test-requirements.lock
+RUN python -m pip install --require-hashes -r /tmp/test-requirements.lock \
+    && rm /tmp/test-requirements.lock
+USER 10001:10001
+ENTRYPOINT ["python", "-m", "pytest"]

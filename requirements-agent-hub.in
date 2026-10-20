@@ -1,0 +1,8 @@
+# Independent image: the official Polymarket SDK needs websockets<16 while
+# the existing BTC monitor pins 16.1.1. Never downgrade that other runtime.
+httpx==0.28.1
+pydantic==2.13.4
+PyYAML==6.0.3
+fastapi==0.139.0
+uvicorn==0.51.0
+polymarket-client==0.13.0

@@ -1,0 +1,71 @@
+# Server-owned configuration, mounted read-only. Model selection is per role.
+# An omitted model uses the model available to the local Codex login.
+tenant_id: personal
+mode: paper
+auto_execute: true
+max_order_quote: 25
+max_position_quote: 100
+max_daily_quote: 100
+minimum_confidence: 0.8
+minimum_prediction_edge: 0.08
+stop_loss_fraction: 0.10
+lease_seconds: 240
+codex_timeout: 150
+context_budget_chars: 16000
+roles:
+  research:
+    model: null
+    instruction: >-
+      Review supplied financial sources. Separate observations, hypotheses and missing evidence.
+      Cite source IDs. Never invent web searches, source contents or investment performance.
+  analysis:
+    model: null
+    instruction: >-
+      Critique the research thesis, data quality, time availability, costs and regime assumptions.
+      Identify counterevidence and falsifiable experiments. Only analyze supplied data.
+  backtest:
+    model: null
+    instruction: >-
+      Review deterministic sandbox results and their baseline, fees, sample size and limitations.
+      A historical return is not proof of predictive ability. Reject future information leakage.
+  forecast:
+    model: null
+    instruction: >-
+      Produce a bounded, explicitly uncertain forecast using supplied evidence and the exact
+      instrument. For a binary market probability means the named outcome, not general BTC direction.
+      Use HOLD and null probability when evidence or resolution rules are insufficient.
+  risk_review:
+    model: null
+    instruction: >-
+      Independently challenge the proposed forecast. You may propose, hold or reject; you cannot
+      change limits, choose credentials or issue orders. Reject stale evidence or unsupported confidence.
+  log_review:
+    model: null
+    instruction: >-
+      Analyze sanitized execution events, identify repeated failures and suggest testable fixes.
+      Do not apply changes. Distinguish infrastructure failure from model and data quality failures.
+schedules:
+  - name: market-monitor
+    kind: monitor
+    interval_seconds: 30
+    payload: {venue: binance, instrument: BTCUSDT}
+  - name: daily-research
+    kind: pipeline
+    interval_seconds: 86400
+    payload:
+      question: Evaluate BTC downside risk and a falsifiable mean-reversion hypothesis.
+      venue: binance
+      instrument: BTCUSDT
+      auto_execute: true
+  - name: hourly-forecast
+    kind: forecast
+    interval_seconds: 3600
+    payload: {question: Assess BTC direction using current evidence., venue: binance, instrument: BTCUSDT}
+  - name: daily-log-review
+    kind: log_review
+    interval_seconds: 86400
+    payload: {question: Review recent failures, recovery and tool usage.}
+  - name: mounted-context
+    kind: import_context
+    interval_seconds: 300
+    payload: {}

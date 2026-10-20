@@ -10,6 +10,32 @@ PYTHON="${PYTHON:-python3}"
 DOCKER=(docker --context "$CONTEXT")
 COMPOSE=("${DOCKER[@]}" compose --project-name "$PROJECT" --project-directory "$ROOT" --env-file "$PRIVATE_ENV" -f "$ROOT/docker-compose.orbstack.yml")
 
+# The additive Agent Hub has independent volumes, credentials and lifecycle.
+# It never restarts the existing workbench or another project's containers.
+if [[ "${1:-}" == hub-* ]]; then
+  HUB_ENV="${QT_AGENT_HUB_ENV_FILE:-${ROOT}/.env.agent-hub}"
+  HUB=("${DOCKER[@]}" compose --project-name qt-agent-hub --project-directory "$ROOT" --env-file "$HUB_ENV" -f "$ROOT/docker-compose.agent-hub.yml")
+  if [[ "$1" == hub-init ]]; then
+    "$PYTHON" "$ROOT/deploy/agent_hub_config.py" init --env-file "$HUB_ENV" --root "$ROOT"
+    exit
+  fi
+  "$PYTHON" "$ROOT/deploy/agent_hub_config.py" check --env-file "$HUB_ENV" --root "$ROOT"
+  "${DOCKER[@]}" info --format '{{.OSType}}/{{.Architecture}}' >/dev/null
+  "${HUB[@]}" config --quiet
+  case "$1" in
+    hub-up) "${HUB[@]}" up --build -d --wait --wait-timeout 240 ;;
+    hub-status) "${HUB[@]}" ps ;;
+    hub-check) "${HUB[@]}" exec -T api python -m qt.agent_hub.verify ;;
+    hub-test) "${HUB[@]}" --profile test build test; "${HUB[@]}" --profile test run --rm -T --no-deps test ;;
+    hub-exec) shift; "${HUB[@]}" exec -T "$@" ;;
+    hub-logs) "${HUB[@]}" logs --tail 80 "${2:-worker-1}" ;;
+    hub-restart) "${HUB[@]}" restart "${2:-worker-1}" ;;
+    hub-down) "${HUB[@]}" down ;;
+    *) echo 'Use hub-init|hub-up|hub-status|hub-test|hub-check|hub-exec SERVICE COMMAND...|hub-logs [service]|hub-restart [service]|hub-down' >&2; exit 2 ;;
+  esac
+  exit
+fi
+
 # Shell settings must not silently override the inspected private configuration.
 for key in QT_ORBSTACK_PORT QT_ORBSTACK_USERNAME QT_ORBSTACK_PASSWORD_HASH \
   QT_WORKBENCH_ORIGIN_CLIENT_ID QT_WORKBENCH_ORIGIN_CLIENT_SECRET \

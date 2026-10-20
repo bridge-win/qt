@@ -28,6 +28,20 @@ compares Codex/Claude frameworks and proposes the knowledge, data, learning,
 execution and deployment architecture for the next stage. It distinguishes
 existing capabilities from proposed additions.
 
+## Personal ResearchOps Agent Hub
+
+The [Agent Hub architecture and operator guide](docs/agent-hub-architecture.md)
+documents the additive eight-service Docker stack and one-shot volume initializer:
+six Codex roles, durable jobs, scheduled research, bounded RSS headlines,
+lexical evidence retrieval, expiring memory, a separate
+fixed-function backtest executor, and a bounded paper-trading ledger. Start with
+`./deploy/orbstack.sh hub-init`, then use `hub-up`, `hub-test`, and `hub-check`.
+The local UI binds to `http://127.0.0.1:8878` by default and requires the private
+owner token. Codex CLI uses the local login cache with online inference;
+the default mode is paper, and live orders have not been validated. See the guide
+for credential boundaries and geographic restrictions, and the
+[local acceptance record](docs/agent-hub-acceptance.md) for tested behavior and limits.
+
 QT is a low-frequency, long-only BTC trading system that buys **only**
 during extreme capitulation events (black-swan crashes, liquidation
 cascades, long-wick insertions) where **multiple independent factor

@@ -1,0 +1,220 @@
+name: qt-agent-hub
+
+x-runtime: &runtime
+  image: qt-agent-hub:local
+  build: {context: ., dockerfile: Dockerfile.agent-hub, target: runtime}
+  restart: unless-stopped
+  init: true
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=128m,mode=1777"]
+  stop_grace_period: 180s
+  mem_limit: 512m
+  cpus: 1.0
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+x-environment: &environment
+  QT_AGENT_HUB_CONFIG: /config/agent-hub.yaml
+  QT_AGENT_HUB_STATE: /state
+  QT_AGENT_HUB_FILES: /files
+  QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
+  QT_AGENT_HUB_SANDBOX_URL: http://sandbox:8092
+  QT_AGENT_HUB_CODEX_URL: http://codex:8091
+  QT_AGENT_HUB_PORT: ${QT_AGENT_HUB_PORT:-8878}
+
+x-volumes: &volumes
+  - hub-state:/state
+  - hub-files:/files
+  - ./config/agent-hub.yaml:/config/agent-hub.yaml:ro
+  - ${QT_AGENT_HUB_IMPORTS:?Run hub-init}:/files/personal/imports:ro
+
+services:
+  initialize:
+    <<: *runtime
+    user: "0:0"
+    restart: "no"
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    entrypoint: [python, -m, qt.agent_hub.initialize]
+    environment:
+      QT_AGENT_HUB_CONFIG: /config/agent-hub.yaml
+      QT_AGENT_HUB_STATE: /state
+      QT_AGENT_HUB_FILES: /files
+    # Do not mount host imports or credentials into this one-shot initializer.
+    volumes:
+      - hub-state:/state
+      - hub-files:/files
+      - ./config/agent-hub.yaml:/config/agent-hub.yaml:ro
+    network_mode: none
+
+  test:
+    <<: *runtime
+    profiles: [test]
+    image: qt-agent-hub-tests:local
+    build: {context: ., dockerfile: Dockerfile.agent-hub, target: test}
+    restart: "no"
+    network_mode: none
+    # Subprocess fixtures are executable scripts; production /tmp stays noexec.
+    tmpfs: ["/tmp:size=128m,mode=1777,exec"]
+    entrypoint: [python, -m, pytest]
+    command: [/tests, -q, --confcutdir=/tests, -o, cache_dir=/tmp/pytest-cache]
+    volumes:
+      - ./tests/test_agent_hub_store.py:/tests/test_agent_hub_store.py:ro
+      - ./tests/test_agent_hub_capabilities.py:/tests/test_agent_hub_capabilities.py:ro
+      - ./tests/test_agent_hub_trading.py:/tests/test_agent_hub_trading.py:ro
+      - ./tests/test_agent_hub_runtime.py:/tests/test_agent_hub_runtime.py:ro
+
+  api:
+    <<: *runtime
+    command: [api]
+    environment:
+      <<: *environment
+      QT_AGENT_HUB_SERVICE_TOKEN: ${QT_AGENT_HUB_SERVICE_TOKEN:?Run hub-init}
+      QT_AGENT_HUB_TRADING_SECRETS_FILE: /run/secrets/trading
+    volumes:
+      - hub-state:/state
+      - hub-files:/files
+      - ./config/agent-hub.yaml:/config/agent-hub.yaml:ro
+      - ${QT_AGENT_HUB_IMPORTS:?Run hub-init}:/files/personal/imports:ro
+      - ${QT_AGENT_HUB_TRADING_SECRETS:?Run hub-init}:/run/secrets/trading:ro
+    ports: ["127.0.0.1:${QT_AGENT_HUB_PORT:-8878}:8878"]
+    networks: [control, outbound]
+    depends_on: {initialize: {condition: service_completed_successfully}}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8878/healthz',timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  scheduler:
+    <<: *runtime
+    command: [scheduler, --worker-id, scheduler]
+    environment: *environment
+    volumes: *volumes
+    networks: [control]
+    depends_on: {api: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, python, -m, qt.agent_hub, health, --worker-id, scheduler]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker-1:
+    <<: *runtime
+    command: [worker, --worker-id, worker-1, --kinds, "pipeline,research,analysis,backtest,forecast,risk_review,log_review"]
+    environment: *environment
+    volumes: *volumes
+    networks: [control, outbound]
+    depends_on: {initialize: {condition: service_completed_successfully}, codex: {condition: service_healthy}, sandbox: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, python, -m, qt.agent_hub, health, --worker-id, worker-1]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker-2:
+    <<: *runtime
+    command: [worker, --worker-id, worker-2, --kinds, "pipeline,research,analysis,backtest,forecast,risk_review,log_review"]
+    environment:
+      <<: *environment
+      QT_AGENT_HUB_CODEX_URL: http://codex-2:8091
+    volumes: *volumes
+    networks: [control, outbound]
+    depends_on: {initialize: {condition: service_completed_successfully}, codex-2: {condition: service_healthy}, sandbox: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, python, -m, qt.agent_hub, health, --worker-id, worker-2]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  market-worker:
+    <<: *runtime
+    command: [worker, --worker-id, market-worker, --kinds, "monitor,execute,import_context"]
+    environment:
+      <<: *environment
+      QT_AGENT_HUB_TRADING_SECRETS_FILE: /run/secrets/trading
+    volumes:
+      - hub-state:/state
+      - hub-files:/files
+      - ./config/agent-hub.yaml:/config/agent-hub.yaml:ro
+      - ${QT_AGENT_HUB_IMPORTS:?Run hub-init}:/files/personal/imports:ro
+      - ${QT_AGENT_HUB_TRADING_SECRETS:?Run hub-init}:/run/secrets/trading:ro
+    networks: [control, outbound]
+    depends_on: {initialize: {condition: service_completed_successfully}}
+    healthcheck:
+      test: [CMD, python, -m, qt.agent_hub, health, --worker-id, market-worker]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  codex:
+    <<: *runtime
+    image: qt-agent-hub-codex:local
+    build: {context: ., dockerfile: Dockerfile.agent-hub, target: model}
+    command: [codex]
+    environment:
+      QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
+      QT_AGENT_HUB_CODEX_HOME: /codex-home
+      QT_AGENT_HUB_CODEX_TIMEOUT: "150"
+    secrets: [codex_auth]
+    volumes: [codex-home:/codex-home]
+    networks: [control, outbound]
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8091/healthz',timeout=8)); assert d['ready']"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+
+  codex-2:
+    <<: *runtime
+    image: qt-agent-hub-codex:local
+    build: {context: ., dockerfile: Dockerfile.agent-hub, target: model}
+    command: [codex]
+    environment:
+      QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
+      QT_AGENT_HUB_CODEX_HOME: /codex-home
+      QT_AGENT_HUB_CODEX_TIMEOUT: "150"
+    secrets: [codex_auth]
+    # Same OAuth cache and cross-process lock: refreshes are serialized.
+    volumes: [codex-home:/codex-home]
+    networks: [control, outbound]
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8091/healthz',timeout=8)); assert d['ready']"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+
+  sandbox:
+    <<: *runtime
+    command: [sandbox]
+    environment:
+      QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
+    networks: [control]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 32
+    stop_grace_period: 10s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/healthz',timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  hub-state:
+  hub-files:
+  codex-home:
+
+networks:
+  control: {internal: true}
+  outbound: {}
+
+secrets:
+  codex_auth:
+    file: ${QT_AGENT_HUB_CODEX_AUTH:?Run hub-init}

@@ -1,0 +1,640 @@
+"""Durable multi-agent workflow. Domain tools, not model prose, own side effects."""
+
+from __future__ import annotations
+
+import hashlib
+import itertools
+import json
+import logging
+import math
+import os
+import threading
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Protocol, cast
+
+import httpx
+
+from qt.agent_hub.codex import CodexBusyError
+from qt.agent_hub.config import ROLES, HubConfig
+from qt.agent_hub.context import ContextStore, _safe_path
+from qt.agent_hub.sandbox import SandboxRunner
+from qt.agent_hub.store import HubStore
+from qt.agent_hub.trading import TradingService, trading_from_env
+
+LOG = logging.getLogger(__name__)
+FLOW = ("research", "analysis", "backtest", "forecast", "risk_review", "execute", "log_review")
+
+
+class ModelProvider(Protocol):
+    def invoke(self, role: str, task: str, context: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class HistoryProvider(Protocol):
+    def history(self) -> list[dict[str, Any]]: ...
+
+
+class ExperimentRunner(Protocol):
+    def run(self, tenant_id: str, job_id: str, request: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class RemoteCodex:
+    def __init__(self, config: HubConfig) -> None:
+        self.config = config
+        self.url = os.environ.get("QT_AGENT_HUB_CODEX_URL", "http://codex:8091").rstrip("/")
+
+    def invoke(self, role: str, task: str, context: dict[str, Any]) -> dict[str, Any]:
+        with httpx.Client(timeout=self.config.codex_timeout + 10, trust_env=False) as client:
+            response = client.post(
+                f"{self.url}/invoke",
+                json={
+                    "role": role,
+                    "task": task,
+                    "context": context,
+                    "model": self.config.roles[role].model,
+                },
+                headers={
+                    "Authorization": f"Bearer {os.environ.get('QT_AGENT_HUB_EXECUTOR_TOKEN', '')}"
+                },
+            )
+            if response.status_code == 429:
+                try:
+                    retry_after = float(response.headers.get("Retry-After", "5"))
+                except ValueError:
+                    retry_after = 5.0
+                raise CodexBusyError(retry_after=retry_after)
+            if response.status_code != 200:
+                raise RuntimeError(f"codex_executor_http_{response.status_code}")
+            value = response.json()
+            if not isinstance(value, dict) or not isinstance(value.get("summary"), str):
+                raise RuntimeError("invalid_codex_executor_result")
+            return value
+
+
+class MarketData:
+    def history(self) -> list[dict[str, Any]]:
+        with httpx.Client(timeout=20, trust_env=False) as client:
+            response = client.get(
+                "https://data-api.binance.vision/api/v3/klines",
+                params={
+                    "symbol": "BTCUSDT",
+                    "interval": "1d",
+                    "limit": 1000,
+                },
+            )
+            response.raise_for_status()
+            rows = response.json()
+        if not isinstance(rows, list) or len(rows) > 1000:
+            raise ValueError("invalid_market_history")
+        now_ms = time.time() * 1000
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 7:
+                raise ValueError("invalid_market_candle")
+            values = [float(item) for item in row[:6]]
+            if not all(math.isfinite(item) for item in values) or min(values[1:5]) <= 0:
+                raise ValueError("invalid_market_number")
+            if float(row[6]) < now_ms:
+                result.append(
+                    {
+                        "timestamp": int(values[0]),
+                        "open": values[1],
+                        "high": values[2],
+                        "low": values[3],
+                        "close": values[4],
+                        "volume": values[5],
+                    }
+                )
+        if len(result) < 30 or any(
+            a["timestamp"] >= b["timestamp"] for a, b in itertools.pairwise(result)
+        ):
+            raise ValueError("insufficient_or_unordered_history")
+        return result
+
+
+class HubRuntime:
+    def __init__(
+        self,
+        config: HubConfig,
+        root: Path,
+        files: Path,
+        *,
+        provider: ModelProvider | None = None,
+        market: HistoryProvider | None = None,
+        trading: TradingService | None = None,
+        sandbox: ExperimentRunner | None = None,
+    ) -> None:
+        self.config, self.root, self.files = config, root, files
+        root.mkdir(parents=True, exist_ok=True)
+        self.store = HubStore(root / "hub.sqlite3")
+        self.context = ContextStore(root / "context.sqlite3", files)
+        if trading is not None:
+            self.trading = trading
+        elif config.mode == "paper":
+            self.trading = TradingService(
+                root / "trading.sqlite3",
+                mode="paper",
+                max_order_quote=config.max_order_quote,
+                max_position_quote=config.max_position_quote,
+                max_daily_quote=config.max_daily_quote,
+            )
+        else:
+            self.trading = trading_from_env(
+                root / "trading.sqlite3",
+                environ={
+                    **os.environ,
+                    "QT_AGENT_HUB_TRADING_MODE": config.mode,
+                    "QT_AGENT_HUB_EXECUTION_TENANT": config.tenant_id,
+                },
+            )
+            from decimal import Decimal
+
+            self.trading.max_order_quote = Decimal(str(config.max_order_quote))
+            self.trading.max_position_quote = Decimal(str(config.max_position_quote))
+            self.trading.max_daily_quote = Decimal(str(config.max_daily_quote))
+        self.provider: ModelProvider = provider or RemoteCodex(config)
+        self.market: HistoryProvider = market or MarketData()
+        self.sandbox: ExperimentRunner = sandbox or SandboxRunner(root / "experiments")
+
+    def install_schedules(self) -> None:
+        for item in self.config.schedules:
+            self.store.put_schedule(
+                self.config.tenant_id,
+                item.name,
+                item.kind,
+                item.payload,
+                item.interval_seconds,
+                enabled=item.enabled,
+            )
+
+    def _ancestors(self, tenant: str, payload: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        parent = payload.get("parent_id")
+        for _ in range(12):
+            if not parent:
+                break
+            job = self.store.get_job(tenant, parent)
+            if not job or job["status"] != "succeeded":
+                raise ValueError("workflow_parent_unavailable")
+            result.setdefault(job["kind"], job.get("result") or {})
+            parent = job["payload"].get("parent_id")
+        return result
+
+    def _quote(self, payload: dict[str, Any]) -> dict[str, Any]:
+        instrument = payload.get("instrument", "BTCUSDT")
+        if payload.get("venue") == "polymarket" and payload.get("outcome_token"):
+            instrument = payload["outcome_token"]
+        return cast(dict[str, Any], self.trading.quote(payload.get("venue", "binance"), instrument))
+
+    def _artifact(self, tenant: str, job_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        destination = _safe_path(self.files.resolve(), tenant, "artifacts", f"{job_id}.json")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        raw = json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
+        temp = destination.with_suffix(".tmp")
+        temp.write_bytes(raw)
+        temp.replace(destination)
+        return {
+            "path": f"artifacts/{destination.name}",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+
+    def _import_context(self, tenant: str) -> dict[str, Any]:
+        folder = _safe_path(self.files.resolve(), tenant, "imports")
+        imported, skipped = [], 0
+        if not folder.exists():
+            return {"imported": [], "status": "no_mounted_files"}
+        for source in sorted(folder.glob("*"))[:100]:
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or source.suffix.lower() not in {".md", ".txt", ".csv"}
+            ):
+                skipped += 1
+                continue
+            if source.stat().st_size > 200000:
+                skipped += 1
+                continue
+            content = source.read_text(encoding="utf-8")
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            marker = (
+                self.root
+                / f"import-{tenant}-{hashlib.sha256(source.name.encode()).hexdigest()}.sha256"
+            )
+            if marker.exists() and marker.read_text() == digest:
+                continue
+            imported.append(self.context.ingest(tenant, f"mount:{source.name}", content))
+            marker.write_text(digest)
+        return {"imported": imported, "skipped": skipped}
+
+    def _fit_context(
+        self, job: dict[str, Any], task: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Bound the complete model input, after adding tools and prior steps."""
+        envelope = json.dumps({"role": job["kind"], "task": task}, ensure_ascii=False).encode()
+        budget = max(1000, min(48000, 58000 - len(envelope)))
+        if len(json.dumps(context, ensure_ascii=False).encode()) <= budget:
+            return context
+        reference = self._artifact(
+            job["tenant_id"],
+            hashlib.sha256(f"context:{job['id']}:{job['lease_token']}".encode()).hexdigest(),
+            context,
+        )
+
+        def compact(value: Any, text_limit: int = 1200, list_limit: int = 5) -> Any:
+            if isinstance(value, str):
+                return value[:text_limit]
+            if isinstance(value, list):
+                return [compact(item, text_limit, list_limit) for item in value[:list_limit]]
+            if isinstance(value, dict):
+                return {
+                    key: compact(item, text_limit, list_limit)
+                    for key, item in value.items()
+                    if key not in {"actions", "equity_curve", "fills", "execution_events"}
+                }
+            return value
+
+        result = cast(dict[str, Any], compact(context))
+        result["offloaded_context"] = reference
+        result["context_compacted"] = True
+        if len(json.dumps(result, ensure_ascii=False).encode()) > budget:
+            result = cast(dict[str, Any], compact(result, 240, 2))
+        if len(json.dumps(result, ensure_ascii=False).encode()) > budget:
+            raise ValueError("context_cannot_fit_provider_budget")
+        return result
+
+    def handle(
+        self, job: dict[str, Any], *, lease_guard: Callable[[], bool] | None = None
+    ) -> tuple[dict[str, Any], str | None, dict[str, Any] | None]:
+        tenant, kind, payload = job["tenant_id"], job["kind"], job["payload"]
+        if kind == "pipeline":
+            return (
+                {"flow": list(FLOW), "version": 1},
+                "research",
+                {**payload, "pipeline_id": job["id"]},
+            )
+        if kind == "import_context":
+            return self._import_context(tenant), None, None
+        if kind == "monitor":
+            reconciliation = self.trading.reconcile(tenant)
+            if reconciliation["unresolved_orders"]:
+                reconciliation["error"] = "unresolved_orders_reconcile_required"
+            quote = self._quote(payload)
+            self.store.event(tenant, job["id"], "market_snapshot", quote)
+            protection = []
+            if self.config.auto_execute and quote.get("ready") and quote.get("bid"):
+                portfolio = self.trading.portfolio(tenant)
+                for position in portfolio["positions"]:
+                    if (
+                        position["venue"] != quote["venue"]
+                        or position["instrument"] != quote["instrument"]
+                    ):
+                        continue
+                    quantity, average = (
+                        float(position["quantity"]),
+                        float(position["average_price"]),
+                    )
+                    if (
+                        quantity <= 0
+                        or average <= 0
+                        or float(quote["bid"]) > average * (1 - self.config.stop_loss_fraction)
+                    ):
+                        continue
+                    quantity = min(
+                        quantity, self.config.max_order_quote * 0.99 / float(quote["bid"])
+                    )
+                    try:
+                        protection.append(
+                            self.trading.submit(
+                                tenant,
+                                {
+                                    "idempotency_key": f"protect:{job['id']}:{position['instrument']}",
+                                    "venue": position["venue"],
+                                    "instrument": position["instrument"],
+                                    "side": "SELL",
+                                    "quantity": quantity,
+                                    "limit_price": quote["bid"],
+                                    "quote_timestamp": quote["timestamp"],
+                                },
+                                lease_guard=lease_guard,
+                            )
+                        )
+                    except ValueError:
+                        protection.append(
+                            {
+                                "status": "blocked",
+                                "reason": "protective_exit_risk_or_liquidity_block",
+                            }
+                        )
+            return (
+                {
+                    "reconciliation": reconciliation,
+                    "quote": quote,
+                    "portfolio": self.trading.portfolio(tenant),
+                    "protection": protection,
+                },
+                None,
+                None,
+            )
+        previous = self._ancestors(tenant, payload)
+        if kind == "execute":
+            return (
+                self.execute(tenant, job, previous, lease_guard=lease_guard),
+                "log_review" if payload.get("pipeline_id") else None,
+                dict(payload) if payload.get("pipeline_id") else None,
+            )
+        if kind not in ROLES:
+            raise ValueError("unknown_job_kind")
+        query = str(payload.get("question", "Assess BTC market evidence and uncertainty."))[:8000]
+        context: dict[str, Any] = self.context.assemble(
+            tenant, query[:4000], budget_chars=self.config.context_budget_chars
+        )
+        context["previous_steps"] = {
+            key: {
+                k: v
+                for k, v in value.items()
+                if k in {"answer", "quote", "venue", "instrument", "status", "reason"}
+            }
+            for key, value in previous.items()
+        }
+        context["server_policy"] = {
+            "mode": self.config.mode,
+            "max_order_quote": self.config.max_order_quote,
+            "instrument": payload.get("instrument", "BTCUSDT"),
+            "venue": payload.get("venue", "binance"),
+            "outcome_token": payload.get("outcome_token"),
+        }
+        backtest = previous.get("backtest", {}).get("experiment")
+        if isinstance(backtest, dict):
+            context["verified_backtest"] = {
+                key: value
+                for key, value in backtest.items()
+                if key in {"status", "metrics", "input_hash", "input_artifact", "limitations"}
+            }
+        if kind == "research":
+            from qt.agent_hub.sources import collect
+
+            context["public_sources"] = collect(
+                self.context, tenant, self.root / "source-cache" / tenant
+            )
+        if kind in {"research", "forecast", "risk_review"}:
+            try:
+                context["market"] = self._quote(payload)
+            except (httpx.HTTPError, ValueError, RuntimeError):
+                context["market"] = {"ready": False, "reason": "market_data_unavailable"}
+        if kind in {"analysis", "backtest", "forecast"}:
+            try:
+                history = self.market.history()
+                context["market_history"] = {
+                    "source": "binance-public-closed-daily-candles",
+                    "bars": len(history),
+                    "recent": history[-30:],
+                }
+                if kind == "backtest":
+                    experiment_request = {
+                        "task": "backtest",
+                        "prices": [row["close"] for row in history],
+                        "initial_cash": 1000,
+                        "fee_bps": 10,
+                        "window": 20,
+                    }
+                    input_artifact = self._artifact(
+                        tenant,
+                        hashlib.sha256(
+                            f"backtest-input:{job['id']}:{job['lease_token']}".encode()
+                        ).hexdigest(),
+                        {
+                            "request": experiment_request,
+                            "bars": history,
+                            "source": "https://data-api.binance.vision/api/v3/klines",
+                            "retrieved_at": time.time(),
+                            "closed_bars_only": True,
+                        },
+                    )
+                    experiment = self.sandbox.run(tenant, job["id"], experiment_request)
+                    experiment["input_artifact"] = input_artifact
+                    if experiment.get("status") not in {"completed", "succeeded"}:
+                        raise RuntimeError("isolated_experiment_not_completed")
+                    context["experiment"] = {
+                        key: value
+                        for key, value in experiment.items()
+                        if key not in {"equity_curve", "fills"}
+                    }
+            except (httpx.HTTPError, ValueError, RuntimeError):
+                if kind == "backtest":
+                    raise RuntimeError("backtest_input_or_executor_unavailable") from None
+                context["market_history"] = {"ready": False}
+        if kind == "log_review":
+            context["execution_events"] = self.store.events(tenant, limit=40)
+        instruction = self.config.roles[kind].instruction + "\nTask: "
+        task = instruction + query[: max(0, 8192 - len(instruction))]
+        context = self._fit_context(job, task, context)
+        answer = self.provider.invoke(kind, task, context)
+        runtime_metadata = answer.pop("_runtime", {})
+        result: dict[str, Any] = {
+            "agent": kind,
+            "model": self.config.roles[kind].model or "codex-account-default",
+            "provider": "local-codex",
+            "answer": answer,
+            "runtime": runtime_metadata,
+            "config_sha256": hashlib.sha256(self.config.model_dump_json().encode()).hexdigest(),
+        }
+        if kind == "backtest":
+            result["experiment"] = experiment
+        if kind == "forecast":
+            result["quote"] = context.get("market")
+            result["venue"] = payload.get("venue", "binance")
+            result["instrument"] = payload.get("instrument", "BTCUSDT")
+            result["outcome_token"] = payload.get("outcome_token")
+        # Attempt-addressed artifacts are immutable across lease takeovers. A
+        # late provider response cannot overwrite the accepted attempt's file.
+        result["artifact"] = self._artifact(tenant, f"{job['id']}-{job['lease_token']}", result)
+        if payload.get("pipeline_id") and kind in FLOW:
+            index = FLOW.index(kind)
+            next_kind = FLOW[index + 1] if index + 1 < len(FLOW) else None
+            if next_kind == "execute" and not (
+                self.config.auto_execute and payload.get("auto_execute")
+            ):
+                next_kind = "log_review"
+            return result, next_kind, dict(payload) if next_kind else None
+        return result, None, None
+
+    def execute(
+        self,
+        tenant: str,
+        job: dict[str, Any],
+        previous: dict[str, Any],
+        *,
+        lease_guard: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        if lease_guard is not None and not lease_guard():
+            return {"status": "blocked", "reason": "execution_lease_lost"}
+        forecast = previous.get("forecast", {})
+        review = previous.get("risk_review", {}).get("answer", {})
+        answer, quote = forecast.get("answer", {}), forecast.get("quote", {})
+        if not self.config.auto_execute or not job["payload"].get("auto_execute"):
+            return {"status": "blocked", "reason": "automatic_execution_disabled"}
+        if review.get("decision") != "propose" or answer.get("decision") != "propose":
+            return {"status": "held", "reason": "agent_review_did_not_propose"}
+        if (
+            min(float(review.get("confidence", 0)), float(answer.get("confidence", 0)))
+            < self.config.minimum_confidence
+        ):
+            return {"status": "held", "reason": "insufficient_confidence"}
+        if not answer.get("evidence") or not review.get("evidence"):
+            return {"status": "held", "reason": "missing_evidence"}
+        venue, instrument, side = (
+            forecast.get("venue"),
+            forecast.get("instrument"),
+            answer.get("side"),
+        )
+        if side not in {"BUY", "SELL"}:
+            return {"status": "held", "reason": "no_directional_action"}
+        # Get a fresh executable quote; the model's old snapshot never becomes an order price.
+        if venue == "polymarket":
+            instrument = forecast.get("outcome_token")
+            if not instrument:
+                return {"status": "held", "reason": "prediction_requires_explicit_outcome_intent"}
+        current = self.trading.quote(venue, instrument)
+        if venue == "polymarket":
+            probability = answer.get("probability")
+            if probability is None or not 0 <= probability <= 1:
+                return {"status": "held", "reason": "prediction_probability_missing"}
+            edge = (
+                probability - float(current["ask"])
+                if side == "BUY"
+                else float(current["bid"]) - probability
+            )
+            if edge < self.config.minimum_prediction_edge:
+                return {"status": "held", "reason": "prediction_edge_below_policy"}
+        ask, bid = float(current["ask"]), float(current["bid"])
+        price = ask if side == "BUY" else bid
+        if not quote or not quote.get("timestamp"):
+            return {"status": "held", "reason": "forecast_missing_market_snapshot"}
+        horizon = answer.get("horizon_seconds")
+        if not horizon or time.time() - float(quote["timestamp"]) > horizon:
+            return {"status": "held", "reason": "forecast_horizon_expired"}
+        if abs(price / float(quote.get("ask", price)) - 1) > 0.02:
+            return {"status": "held", "reason": "forecast_price_drift"}
+        quantity = self.config.max_order_quote / price * 0.99
+        if side == "SELL":
+            held = next(
+                (
+                    float(position["quantity"])
+                    for position in self.trading.portfolio(tenant)["positions"]
+                    if position["venue"] == venue and position["instrument"] == instrument
+                ),
+                0.0,
+            )
+            quantity = min(quantity, held)
+            if quantity <= 0:
+                return {"status": "held", "reason": "no_position_to_sell"}
+        intent = {
+            "idempotency_key": f"pipeline:{job['payload'].get('pipeline_id', job['id'])}",
+            "venue": venue,
+            "instrument": instrument,
+            "side": side,
+            "quantity": quantity,
+            "limit_price": price,
+            "quote_timestamp": current["timestamp"],
+        }
+        return cast(dict[str, Any], self.trading.submit(tenant, intent, lease_guard=lease_guard))
+
+    def run_once(self, worker_id: str, kinds: list[str] | None = None) -> dict[str, Any] | None:
+        tenant = self.config.tenant_id
+        job = self.store.claim(
+            tenant, worker_id, lease_seconds=self.config.lease_seconds, kinds=kinds
+        )
+        if not job:
+            return None
+        stopped = threading.Event()
+        lease_lost = threading.Event()
+
+        def lease_guard() -> bool:
+            if lease_lost.is_set():
+                return False
+            valid = self.store.heartbeat(
+                tenant,
+                job["id"],
+                worker_id,
+                job["lease_token"],
+                lease_seconds=self.config.lease_seconds,
+            )
+            if not valid:
+                lease_lost.set()
+            return cast(bool, valid)
+
+        def renew() -> None:
+            while not stopped.wait(self.config.lease_seconds / 3):
+                if not lease_guard():
+                    break
+
+        heartbeat = threading.Thread(target=renew, daemon=True)
+        heartbeat.start()
+        started = time.monotonic()
+        try:
+            result, next_kind, next_payload = self.handle(job, lease_guard=lease_guard)
+            if next_payload is not None:
+                next_payload["parent_id"] = job["id"]
+            accepted = self.store.complete_and_enqueue(
+                tenant,
+                job["id"],
+                worker_id,
+                job["lease_token"],
+                result,
+                next_kind=next_kind,
+                next_payload=next_payload,
+                idempotency_key=f"{job['id']}:{next_kind}" if next_kind else None,
+            )
+            if accepted and isinstance(result.get("answer"), dict):
+                try:
+                    self.context.remember(
+                        tenant,
+                        f"job:{job['id']}",
+                        json.dumps(result["answer"], ensure_ascii=False),
+                        scope="short",
+                        ttl_seconds=86400,
+                        source=f"job:{job['id']}",
+                    )
+                except (ValueError, OSError):
+                    LOG.warning("derived_memory_unavailable job=%s", job["id"])
+            self.store.event(
+                tenant,
+                job["id"],
+                "step_finished",
+                {
+                    "kind": job["kind"],
+                    "accepted": accepted,
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                },
+            )
+        except CodexBusyError as error:
+            self.store.defer(
+                tenant,
+                job["id"],
+                worker_id,
+                job["lease_token"],
+                retry_delay=error.retry_after,
+                reason="codex_executor_busy",
+            )
+            LOG.info(
+                "job_deferred kind=%s job=%s reason=codex_executor_busy", job["kind"], job["id"]
+            )
+        except Exception as error:
+            # Provider/upstream bodies may contain credentials or private document contents.
+            code = type(error).__name__
+            self.store.fail(tenant, job["id"], worker_id, job["lease_token"], code, retry_delay=30)
+            LOG.warning("job_failed kind=%s job=%s error_type=%s", job["kind"], job["id"], code)
+        finally:
+            stopped.set()
+            heartbeat.join(timeout=2)
+        return cast(dict[str, Any] | None, self.store.get_job(tenant, job["id"]))
+
+    def heartbeat_file(self, worker_id: str) -> None:
+        folder = self.root / "heartbeats"
+        folder.mkdir(exist_ok=True)
+        target = folder / f"{worker_id}.json"
+        temp = target.with_suffix(".tmp")
+        temp.write_text(json.dumps({"worker_id": worker_id, "timestamp": time.time()}))
+        temp.replace(target)
