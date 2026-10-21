@@ -1,0 +1,18 @@
+# Server-owned manifest. Models cannot modify permissions.
+skill_id: qt-backtest
+version: 1.0.0
+role: backtest
+description: Interpret a version-bound deterministic experiment and its limitations.
+allowed_tools:
+- context.search
+- context.read_chunk
+- market.quote
+- experiment.run
+- market.history
+input_schema: context.v2
+output_schema: codex.response.v1
+evaluation_tags:
+- strategy_binding
+- baseline
+- future_leakage
+- costs

@@ -3,46 +3,97 @@
 <title>QT · Agent Hub</title>
 <style>
 :root{color-scheme:dark;--bg:#0b111b;--panel:#131e2b;--line:#27394a;--text:#dce8ef;--muted:#90a6b7;--accent:#70e0bf}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,sans-serif}main{max-width:1440px;margin:auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center;gap:20px}h1{font-size:28px;margin:0}h2{font-size:17px;margin:0 0 16px}.muted,small{color:var(--muted)}.pill{padding:4px 12px;border:1px solid var(--line);border-radius:20px;color:var(--accent)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:22px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}.wide{grid-column:span 2}.full{grid-column:1/-1}input,select,textarea,button{font:inherit;border-radius:6px;border:1px solid var(--line);padding:9px 12px;background:#0d1722;color:var(--text)}input,textarea,select{width:100%;margin:5px 0 12px}textarea{min-height:86px}button{cursor:pointer;background:#183b3a;color:var(--accent)}button:hover{border-color:var(--accent)}button.danger{background:#472831;color:#ffc0bf}.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}.row button{flex:0 0 auto;white-space:nowrap}label{display:block;color:var(--muted);font-size:12px}.metrics{display:flex;gap:28px;margin-top:12px}.metrics b{display:block;font-size:30px;font-weight:500;color:var(--accent)}table{border-collapse:collapse;width:100%;font-size:12px}td,th{text-align:left;border-bottom:1px solid var(--line);padding:10px 8px;vertical-align:top}th{color:var(--muted);font-weight:500}pre{white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto;font-size:12px;background:#0b1520;padding:14px;border-radius:6px}#notice{position:sticky;top:0;background:#172f35;padding:12px;display:none;z-index:5}.flow{color:var(--muted);margin:10px 0 24px}.flow span{display:inline-block;padding:6px 10px;border:1px solid var(--line);border-radius:6px;margin:4px}.check{display:flex;gap:8px;align-items:center;margin:10px 0}.check input{width:auto;margin:0}#login{max-width:480px;margin:80px auto}.scroll{overflow:auto;max-height:390px}a{color:var(--accent)}@media(max-width:900px){main{padding:16px}.grid{grid-template-columns:1fr}.wide{grid-column:auto}header{align-items:start;flex-direction:column}.metrics{gap:20px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,sans-serif}main{max-width:1440px;margin:auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center;gap:20px}h1{font-size:28px;margin:0}h2{font-size:17px;margin:0 0 16px}.muted,small{color:var(--muted)}.pill{padding:4px 12px;border:1px solid var(--line);border-radius:20px;color:var(--accent)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:22px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}.wide{grid-column:span 2}.full{grid-column:1/-1}input,select,textarea,button{font:inherit;border-radius:6px;border:1px solid var(--line);padding:9px 12px;background:#0d1722;color:var(--text)}input,textarea,select{width:100%;margin:5px 0 12px}textarea{min-height:86px}button{cursor:pointer;background:#183b3a;color:var(--accent)}button:hover{border-color:var(--accent)}button.danger{background:#472831;color:#ffc0bf}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row>*{flex:1 1 140px}.row button{flex:0 0 auto;white-space:nowrap}label{display:block;color:var(--muted);font-size:12px}.metrics{display:flex;gap:28px;margin-top:12px;flex-wrap:wrap}.metrics b{display:block;font-size:30px;font-weight:500;color:var(--accent)}table{border-collapse:collapse;width:100%;font-size:12px}td,th{text-align:left;border-bottom:1px solid var(--line);padding:10px 8px;vertical-align:top}th{color:var(--muted);font-weight:500}pre{white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto;font-size:12px;background:#0b1520;padding:14px;border-radius:6px}#notice{position:sticky;top:0;background:#172f35;padding:12px;display:none;z-index:5}.flow{color:var(--muted);margin:10px 0 24px}.flow span{display:inline-block;padding:6px 10px;border:1px solid var(--line);border-radius:6px;margin:4px}.check{display:flex;gap:8px;align-items:center;margin:10px 0}.check input{width:auto;margin:0}#login{max-width:480px;margin:80px auto}.scroll{overflow:auto;max-height:390px}a{color:var(--accent)}@media(max-width:900px){main{padding:16px}.grid{grid-template-columns:1fr}.wide{grid-column:auto}header{align-items:start;flex-direction:column}.metrics{gap:20px}}
+.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.card{min-width:0;overflow-wrap:anywhere}.row>*{min-width:0}@media(max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
 </style></head><body><div id="notice" role="status"></div><main>
-<header><div><small>QT RESEARCH & EXECUTION</small><h1>Agent Hub</h1><div class="muted">研究有证据，实验可复现，交易可对账</div></div><div class="row"><span id="mode" class="pill">个人版 · 本地 Codex</span><button id="logout">退出</button></div></header>
+<header><div><small>QT RESEARCH & EXECUTION</small><h1>Agent Hub <small>2.0</small></h1><div class="muted">研究有证据，实验可复现，交易可对账</div></div><div class="row"><span id="mode" class="pill">个人版 · 本地 Codex</span><button id="logout">退出</button></div></header>
 <section id="login" class="card"><h2>连接本地工作台</h2><p class="muted">访问令牌保存在本机 <code>.env.agent-hub</code> 的 QT_AGENT_HUB_SERVICE_TOKEN 中。令牌仅保留在当前页面内存。</p><form id="loginForm"><label for="token">本地访问令牌</label><input id="token" type="password" autocomplete="off" required><button>连接</button></form></section>
 <div id="workspace" hidden>
 <div class="flow" id="flow"></div>
 <div class="grid">
-<section class="card full"><div class="row"><h2>运行概览</h2><button id="refresh">刷新</button><button id="kill" class="danger">停止新交易</button><button id="resume">恢复交易权限</button></div><div class="metrics" id="metrics"></div><div id="workers" class="muted"></div></section>
-<section class="card wide"><h2>提交研究 / 预测 / 回测任务</h2><form id="jobForm"><label for="question">问题与验收目标</label><textarea id="question" required>分析当前 BTC 市场，检验均值回归假设，比较基线并说明证据不足之处。</textarea><div class="row"><div><label for="kind">流程</label><select id="kind"><option value="pipeline">完整多 Agent 流程</option><option value="research">资料研究</option><option value="analysis">分析与反证</option><option value="backtest">回测与解释</option><option value="forecast">实时预测</option><option value="log_review">日志分析</option><option value="monitor">行情采样</option><option value="import_context">导入挂载资料</option></select></div><div><label for="venue">市场</label><select id="venue"><option value="binance">BTC / Binance</option><option value="polymarket">Polymarket</option></select></div></div><label for="instrument">BTCUSDT 或 Polymarket 市场 slug</label><input id="instrument" value="BTCUSDT" required><label for="outcome">预测市场 outcome token（须明确对应结算结果）</label><input id="outcome" placeholder="BTC 任务留空"><label class="check"><input id="auto" type="checkbox">完成风控后允许按当前模拟盘配置自动执行</label><button>提交持久任务</button></form></section>
+<section class="card full"><div class="row"><h2>运行概览</h2><button id="refresh">刷新</button><span id="riskMode" class="pill">风控状态</span><button id="reduce">只允许减仓</button><button id="kill" class="danger">冻结全部下单</button><button id="resume">允许按风控交易</button></div><div class="metrics" id="metrics"></div><div id="workers" class="muted"></div></section>
+<section class="card wide"><h2>提交研究 / 预测 / 回测任务</h2><form id="jobForm"><label for="question">问题与验收目标</label><textarea id="question" required>使用 MA 趋势策略研究当前 BTC 证据，比较样本外基线、交易成本和参数敏感性；证据不足时 HOLD。</textarea><div class="row"><div><label for="kind">流程</label><select id="kind"><option value="pipeline">完整多 Agent 流程</option><option value="research">资料研究</option><option value="analysis">分析与反证</option><option value="backtest">回测与解释</option><option value="forecast">实时预测</option><option value="log_review">日志分析</option><option value="monitor">行情采样</option><option value="import_context">导入挂载资料</option></select></div><div><label for="venue">市场</label><select id="venue"><option value="binance">BTC / Binance</option><option value="polymarket">Polymarket</option></select></div></div><label for="strategy">受验证策略</label><select id="strategy"><option value="ma_trend">MA 趋势 · 版本与数据快照绑定</option></select><label for="instrument">BTCUSDT 或 Polymarket 市场 slug</label><input id="instrument" value="BTCUSDT" required><label for="outcome">预测市场 outcome token（须明确对应结算结果）</label><input id="outcome" placeholder="BTC 任务留空"><label class="check"><input id="auto" type="checkbox">完成风控后允许按当前模拟盘配置自动执行</label><button>提交持久任务</button></form></section>
 <section class="card"><h2>实时行情</h2><div class="row"><button id="quote">读取报价</button><button id="discover">发现 BTC 预测市场</button></div><pre id="quoteResult">点击读取公开市场数据</pre><small>预测概率与市场价格不同。没有足够证据时 Agent 会 HOLD。</small></section>
-<section class="card full"><h2>任务与执行轨迹</h2><div class="scroll"><table><thead><tr><th>角色 / 任务</th><th>状态</th><th>尝试</th><th>创建时间</th><th>查看</th></tr></thead><tbody id="jobs"></tbody></table></div><pre id="jobDetail" hidden></pre></section>
+<section class="card full"><h2>任务与执行轨迹</h2><div class="scroll"><table><thead><tr><th>角色 / 任务</th><th>状态</th><th>尝试</th><th>创建时间</th><th>查看</th></tr></thead><tbody id="jobs"></tbody></table></div><div id="validationSummary" class="muted">选择任务详情查看验证、证据和提案绑定。</div><pre id="runEvidence" hidden></pre><details id="jobDetailPanel" hidden><summary>完整任务与事件</summary><pre id="jobDetail"></pre></details></section>
 <section class="card wide"><h2>持仓与订单</h2><div class="row"><button id="portfolio">刷新账本</button><button id="reconcile">对账未知订单</button></div><pre id="portfolioResult"></pre><pre id="ordersResult"></pre></section>
 <section class="card"><h2>定时调度</h2><pre id="schedules"></pre><small>模型、角色指令和周期由只读挂载的 config/agent-hub.yaml 配置。</small></section>
-<section class="card"><h2>知识库检索</h2><form id="searchForm"><label for="query">关键词 / 问题</label><input id="query" value="research risk"><button>检索</button></form><pre id="searchResult"></pre></section>
-<section class="card"><h2>导入文本证据</h2><form id="documentForm"><label for="source">来源</label><input id="source" placeholder="研究笔记或原始文档链接" required><label for="content">内容</label><textarea id="content" required></textarea><button>保存到知识库</button></form><small>外部文件可放入 data/agent-hub-imports；仅导入有界 UTF-8 文本。</small></section>
+<section class="card full"><div class="row"><h2>上线前验证</h2><span id="releaseBadge" class="pill">待检查</span><button id="readiness">检查当前状态</button></div><p class="muted">此检查展示当前工程门禁与验证记录；模拟盘就绪不代表预测有效或真实账户已验收。</p><div id="releaseChecks"></div><details><summary>验证原始结果</summary><pre id="releaseResult"></pre></details></section><section class="card wide"><h2>能力与版本化技能</h2><pre id="capabilities"></pre><details><summary>六角色技能、工具权限和评测标签</summary><pre id="skills"></pre></details></section><section class="card"><h2>知识库检索</h2><form id="searchForm"><label for="query">关键词 / 问题</label><input id="query" value="research risk"><label for="asOf">有效且已公开的历史时点（可选）</label><input id="asOf" type="datetime-local"><label for="knownAt">系统已观察到的时点（可选）</label><input id="knownAt" type="datetime-local"><button>检索</button></form><pre id="searchResult"></pre></section>
+<section class="card"><h2>导入文本证据</h2><form id="documentForm"><label for="source">来源</label><input id="source" placeholder="研究笔记或原始文档链接" required><label for="content">内容</label><textarea id="content" required></textarea><details><summary>历史资料时间与来源（可选）</summary><label for="validFrom">内容生效时间</label><input id="validFrom" type="datetime-local"><label for="availableAt">首次公开可得时间</label><input id="availableAt" type="datetime-local"><label for="provenance">历史可得性证明来源（回填历史时间时必填）</label><input id="provenance" placeholder="官方历史发布记录 URL"></details><button>保存到知识库</button></form><small>外部文件可放入 data/agent-hub-imports；仅导入有界 UTF-8 文本。</small></section>
 <section class="card"><h2>长期记忆</h2><form id="memoryForm"><label for="memoryKey">记忆键</label><input id="memoryKey" placeholder="report-preference" required><label for="memoryValue">已确认偏好 / 结论与适用范围</label><textarea id="memoryValue" required></textarea><button>保存</button></form><button id="memories">查看记忆</button><pre id="memoryResult"></pre></section>
-<section class="card full"><h2>运行事件</h2><pre id="events"></pre></section>
+<section class="card full"><div class="row"><h2>跨角色 Trace</h2><button id="allTraces">查看全部流程</button></div><div id="traceScope" class="muted">全部流程；仅包含经过筛选的运行元数据。</div><pre id="traces"></pre></section><section class="card full"><h2>运行事件</h2><pre id="events"></pre></section>
 </div></div></main>
 <script>
+
 'use strict';
-let accessToken='';
+let accessToken='', selectedRun=null, refreshing=false;
 const $=id=>document.getElementById(id);
 const display=(id,value)=>{$(id).textContent=typeof value==='string'?value:JSON.stringify(value,null,2)};
 function notice(message){display('notice',message);$('notice').style.display='block';setTimeout(()=>{$('notice').style.display='none'},7000)}
-async function api(path,method='GET',body){const response=await fetch(path,{method,headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('请求失败 '+response.status+' '+(await response.text()).slice(0,180));return response.json()}
+async function api(path,method='GET',body){
+  const response=await fetch(path,{method,headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+  if(!response.ok){if(response.status===401){accessToken='';$('workspace').hidden=true;$('login').hidden=false}throw new Error('请求失败 '+response.status+' '+(await response.text()).slice(0,180))}
+  return response.json();
+}
 async function guard(fn){try{await fn()}catch(error){notice(error.message)}}
 function button(text,action){const b=document.createElement('button');b.textContent=text;b.onclick=()=>guard(action);return b}
-async function refresh(){const [status,jobs,schedules,events]=await Promise.all([api('/api/status'),api('/api/jobs'),api('/api/schedules'),api('/api/events')]);display('mode',status.mode+' · '+status.tenant_id+' · local Codex');$('metrics').replaceChildren();for(const [key,value]of Object.entries(status.queue.counts)){const item=document.createElement('div'),number=document.createElement('b');number.textContent=value;item.append(number,document.createTextNode(key));$('metrics').append(item)}display('workers',status.workers.map(w=>w.worker_id+' '+(w.healthy?'在线':'心跳过期')).join(' · '));$('jobs').replaceChildren();for(const item of jobs.items){const tr=document.createElement('tr');for(const value of [item.kind,item.status,item.attempts,new Date(item.created_at*1000).toLocaleString()]){const td=document.createElement('td');td.textContent=value;tr.append(td)}const td=document.createElement('td');td.append(button('详情',async()=>{display('jobDetail',await api('/api/jobs/'+item.id));$('jobDetail').hidden=false}));if(item.status==='deadletter')td.append(button('重试',async()=>{await api('/api/jobs/'+item.id+'/retry','POST');await refresh()}));tr.append(td);$('jobs').append(tr)}display('schedules',schedules.items);display('events',events.items.slice(-20))}
-$('loginForm').onsubmit=event=>{event.preventDefault();guard(async()=>{accessToken=$('token').value.trim();await refresh();$('token').value='';$('login').hidden=true;$('workspace').hidden=false})};
+function optionalTimestamp(id){return $(id).value?new Date($(id).value).getTime()/1000:null}
+async function loadTraces(){
+  const query=new URLSearchParams({limit:'100'});if(selectedRun)query.set('run_id',selectedRun);
+  display('traces',(await api('/api/traces?'+query)).items);
+  display('traceScope',selectedRun?'当前流程 '+selectedRun:'全部流程；仅包含经过筛选的运行元数据。');
+}
+async function loadReadiness(){
+  const result=await api('/api/release/readiness');display('releaseResult',result);
+  display('releaseBadge',result.paper_ready?'模拟盘工程门禁通过':'模拟盘门禁仍有待处理项');
+  $('releaseChecks').replaceChildren();
+  for(const check of result.checks||[]){const row=document.createElement('p');row.textContent=check.id+' · '+check.status+' · '+(typeof check.detail==='string'?check.detail:JSON.stringify(check.detail));$('releaseChecks').append(row)}
+}
+async function showJob(id){
+  const item=await api('/api/jobs/'+encodeURIComponent(id)), result=item.result||{};
+  selectedRun=(item.payload||{}).pipeline_id||item.id;
+  display('jobDetail',item);$('jobDetailPanel').hidden=false;
+  const validation=result.validation||((result.experiment||{}).validation)||{};
+  const evidence=result.evidence_validation||{}, proposal=result.proposal||{};
+  display('validationSummary',item.kind+' · '+item.status+' · '+(result.reason||'查看本步骤证据与验证结果'));
+  display('runEvidence',{skill:result.skill,validation,evidence_validation:evidence,evidence_receipt:result.evidence_receipt,proposal,experiment:result.experiment,execution:result.execution,answer:result.answer});
+  $('runEvidence').hidden=false;await loadTraces();
+}
+async function refresh(){
+  if(refreshing)return;refreshing=true;
+  try{
+    const [status,jobs,schedules,events]=await Promise.all([api('/api/status'),api('/api/jobs'),api('/api/schedules'),api('/api/events')]);
+    display('mode',status.mode+' · '+status.tenant_id+' · local Codex');display('riskMode','风控: '+(status.trading.risk_mode||'unknown'));
+    $('metrics').replaceChildren();
+    for(const [key,value]of Object.entries(status.queue.counts)){const item=document.createElement('div'),number=document.createElement('b');number.textContent=value;item.append(number,document.createTextNode(key));$('metrics').append(item)}
+    display('workers',status.workers.map(w=>w.worker_id+' '+(w.healthy?'在线':'心跳过期')).join(' · '));$('jobs').replaceChildren();
+    for(const item of jobs.items){
+      const tr=document.createElement('tr');
+      for(const value of [item.kind,item.error==='cancelled_by_owner'?'cancelled':item.status,item.attempts,new Date(item.created_at*1000).toLocaleString()]){const td=document.createElement('td');td.textContent=value;tr.append(td)}
+      const td=document.createElement('td');td.append(button('详情',()=>showJob(item.id)));
+      if(item.status==='deadletter'&&item.error!=='cancelled_by_owner')td.append(button('重试',async()=>{await api('/api/jobs/'+item.id+'/retry','POST');await refresh()}));
+      if(['queued','running'].includes(item.status))td.append(button('取消流程',async()=>{await api('/api/jobs/'+item.id+'/cancel','POST');notice('取消已记录；已成交订单仍保留并对账');await refresh()}));
+      tr.append(td);$('jobs').append(tr);
+    }
+    display('schedules',schedules.items);display('events',events.items.slice(-20));await loadTraces();
+  }finally{refreshing=false}
+}
+$('loginForm').onsubmit=event=>{event.preventDefault();guard(async()=>{
+  accessToken=$('token').value.trim();await refresh();
+  const [capabilities,skills]=await Promise.all([api('/api/capabilities'),api('/api/skills')]);display('capabilities',capabilities);display('skills',skills.items);
+  $('token').value='';$('login').hidden=true;$('workspace').hidden=false;await guard(loadReadiness);
+})};
 $('logout').onclick=()=>{accessToken='';location.reload()};$('refresh').onclick=()=>guard(refresh);
-$('jobForm').onsubmit=event=>{event.preventDefault();guard(async()=>{const item=await api('/api/jobs','POST',{kind:$('kind').value,question:$('question').value,venue:$('venue').value,instrument:$('instrument').value,outcome_token:$('outcome').value||null,auto_execute:$('auto').checked,idempotency_key:crypto.randomUUID()});notice('任务已入队 '+item.id);await refresh()})};
-$('quote').onclick=()=>guard(async()=>display('quoteResult',await api('/api/quote?'+new URLSearchParams({venue:$('venue').value,instrument:$('instrument').value}))));
+$('jobForm').onsubmit=event=>{event.preventDefault();guard(async()=>{const item=await api('/api/jobs','POST',{kind:$('kind').value,question:$('question').value,venue:$('venue').value,instrument:$('instrument').value,outcome_token:$('outcome').value||null,strategy:$('strategy').value,auto_execute:$('auto').checked,idempotency_key:crypto.randomUUID()});notice('任务已入队 '+item.id);await refresh()})};
+$('quote').onclick=()=>guard(async()=>display('quoteResult',await api('/api/quote?'+new URLSearchParams({venue:$('venue').value,instrument:$('outcome').value||$('instrument').value}))));
 $('discover').onclick=()=>guard(async()=>display('quoteResult',await api('/api/prediction-markets?q=bitcoin')));
 $('portfolio').onclick=()=>guard(async()=>{display('portfolioResult',await api('/api/portfolio'));display('ordersResult',await api('/api/orders'))});
 $('reconcile').onclick=()=>guard(async()=>display('ordersResult',await api('/api/reconcile','POST',{})));
-for(const [id,enabled] of [['kill',true],['resume',false]])$(id).onclick=()=>guard(async()=>{await api('/api/kill','POST',{enabled});notice(enabled?'新交易已停止':'交易权限已恢复，风控仍生效');await refresh()});
-$('searchForm').onsubmit=event=>{event.preventDefault();guard(async()=>display('searchResult',await api('/api/search?q='+encodeURIComponent($('query').value))))};
-$('documentForm').onsubmit=event=>{event.preventDefault();guard(async()=>{await api('/api/documents','POST',{source:$('source').value,content:$('content').value});notice('证据已保存')})};
-$('memoryForm').onsubmit=event=>{event.preventDefault();guard(async()=>{await api('/api/memories','POST',{key:$('memoryKey').value,value:$('memoryValue').value,scope:'long',source:'owner-confirmed'});notice('记忆已保存')})};
+for(const [id,mode] of [['kill','frozen'],['reduce','reduce_only'],['resume','active']])$(id).onclick=()=>guard(async()=>{await api('/api/risk-mode','POST',{mode});notice('风控模式已更新: '+mode);await refresh()});
+$('readiness').onclick=()=>guard(loadReadiness);$('allTraces').onclick=()=>guard(async()=>{selectedRun=null;await loadTraces()});
+$('searchForm').onsubmit=event=>{event.preventDefault();guard(async()=>{const query=new URLSearchParams({q:$('query').value});for(const [id,key]of [['asOf','as_of'],['knownAt','known_at']]){const timestamp=optionalTimestamp(id);if(timestamp!==null)query.set(key,timestamp)}display('searchResult',await api('/api/search?'+query))})};
+$('documentForm').onsubmit=event=>{event.preventDefault();guard(async()=>{const document=await api('/api/documents','POST',{source:$('source').value,content:$('content').value,valid_from:optionalTimestamp('validFrom'),available_at:optionalTimestamp('availableAt'),provenance:$('provenance').value||null});notice('证据已保存 · 版本 '+document.revision)})};
+$('memoryForm').onsubmit=event=>{event.preventDefault();guard(async()=>{await api('/api/memories','POST',{key:$('memoryKey').value,value:$('memoryValue').value,scope:'long',source:'owner-confirmed'});notice('记忆版本已保存')})};
 $('memories').onclick=()=>guard(async()=>display('memoryResult',await api('/api/memories')));
-for(const name of ['研究','分析','回测','预测','风控','执行','日志复盘']){const span=document.createElement('span');span.textContent=name;$('flow').append(span)}
+for(const name of ['研究','分析','策略验证','预测','提案审查','有界执行','日志复盘']){const span=document.createElement('span');span.textContent=name;$('flow').append(span)}
 setInterval(()=>{if(accessToken&&!document.hidden)guard(refresh)},15000);
 </script></body></html>

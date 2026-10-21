@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +36,7 @@ class JobRequest(BaseModel):
     venue: Literal["binance", "polymarket"] = "binance"
     instrument: str = Field(default="BTCUSDT", min_length=1, max_length=200)
     outcome_token: str | None = Field(default=None, max_length=78)
+    strategy: Literal["ma_trend"] = "ma_trend"
     auto_execute: bool = False
     idempotency_key: str = Field(
         default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=200
@@ -43,11 +44,14 @@ class JobRequest(BaseModel):
 
 
 class DocumentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     source: str = Field(min_length=1, max_length=2048)
     content: str = Field(min_length=1, max_length=200000)
     valid_from: float | None = None
     valid_until: float | None = None
+    available_at: float | None = None
+    published_at: float | None = None
+    provenance: str | None = Field(default=None, max_length=2048)
 
 
 class MemoryRequest(BaseModel):
@@ -64,11 +68,16 @@ class KillRequest(BaseModel):
     enabled: bool
 
 
+class RiskModeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["active", "reduce_only", "frozen"]
+
+
 def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> FastAPI:
     service = runtime or HubRuntime(config, root, files)
     tenant = config.tenant_id
     app = FastAPI(
-        title="QT Agent Hub", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None
+        title="QT Agent Hub", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.runtime = service
 
@@ -85,6 +94,10 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
         allowed = {
             f"http://127.0.0.1:{os.environ.get('QT_AGENT_HUB_PORT', '8878')}",
             f"http://localhost:{os.environ.get('QT_AGENT_HUB_PORT', '8878')}",
+            # The container always listens on 8878, independently of the host
+            # published port. Internal same-network browser acceptance uses it.
+            "http://127.0.0.1:8878",
+            "http://localhost:8878",
         }
         if origin and origin not in allowed:
             return JSONResponse({"detail": "untrusted origin"}, status_code=403)
@@ -139,7 +152,55 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
             },
             "retrieval": "SQLite FTS5/BM25 with CJK fallback; no embedding model",
             "sandbox": "isolated fixed-function numerical executor",
+            "version": "2.0.0",
         }
+
+    @app.get("/api/capabilities", dependencies=auth)
+    def capabilities() -> dict:
+        return {
+            "version": "2.0.0",
+            "deployment": "personal-single-host-docker",
+            "provider": "local-codex-online-inference-serialized-shared-auth",
+            "workflow": "durable-six-role-workflow-with-fenced-execution",
+            "evidence": "run-receipts-version-hash-tenant-and-time-validation",
+            "memory": "versioned-short-long-with-ttl-and-historical-views",
+            "retrieval": "lexical-fts5-cjk-and-authorized-bounded-chunk-readback",
+            "skills": "server-owned-versioned-manifests-with-domain-tool-allowlists",
+            "strategy": "ma_trend",
+            "execution": ["paper", "testnet-adapter", "live-adapter"],
+            "risk_modes": ["active", "reduce_only", "frozen"],
+            "mcp": {
+                "protocol": "2026-07-28",
+                "legacy_protocol": "2025-11-25",
+                "scope": "authenticated-json-http-discovery-and-three-tools",
+                "unsupported": ["tasks", "subscriptions", "oauth-discovery", "a2a"],
+            },
+            "unverified_or_unimplemented": [
+                "funded-live-account-acceptance",
+                "multi-tenant-identity-and-database-rls",
+                "arbitrary-generated-code-sandbox",
+                "semantic-embedding-retrieval",
+                "independently-demonstrated-predictive-alpha",
+                "cloud-disaster-recovery",
+            ],
+        }
+
+    @app.get("/api/skills", dependencies=auth)
+    def skills() -> dict:
+        return {"items": service.skills.list()}
+
+    @app.get("/api/traces", dependencies=auth)
+    def traces(
+        run_id: str | None = Query(default=None, max_length=200),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> dict:
+        return {"items": service.governance.traces(tenant, run_id=run_id, limit=limit)}
+
+    @app.get("/api/release/readiness", dependencies=auth)
+    def release_readiness() -> dict:
+        from qt.agent_hub.release import readiness
+
+        return readiness(service)
 
     @app.get("/api/roles", dependencies=auth)
     def roles() -> dict:
@@ -170,6 +231,12 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
         except KeyError:
             raise HTTPException(404, "job not found") from None
 
+    @app.post("/api/jobs/{job_id}/cancel", dependencies=auth)
+    def cancel(job_id: str) -> dict:
+        if service.store.get_job(tenant, job_id) is None:
+            raise HTTPException(404, "job not found")
+        return service.store.cancel_run(tenant, job_id)
+
     @app.get("/api/schedules", dependencies=auth)
     def schedules() -> dict:
         return {"items": service.store.list_schedules(tenant)}
@@ -186,15 +253,18 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
             body.content,
             valid_from=body.valid_from,
             valid_until=body.valid_until,
+            available_at=body.available_at,
+            published_at=body.published_at,
+            provenance=body.provenance,
         )
 
     @app.get("/api/search", dependencies=auth)
-    def search(q: str, as_of: float | None = None) -> dict:
-        return {"items": service.context.search(tenant, q, as_of=as_of)}
+    def search(q: str, as_of: float | None = None, known_at: float | None = None) -> dict:
+        return {"items": service.context.search(tenant, q, as_of=as_of, known_at=known_at)}
 
     @app.get("/api/memories", dependencies=auth)
-    def memories() -> dict:
-        return {"items": service.context.memories(tenant)}
+    def memories(as_of: float | None = None, known_at: float | None = None) -> dict:
+        return {"items": service.context.memories(tenant, as_of=as_of, known_at=known_at)}
 
     @app.post("/api/memories", dependencies=auth)
     def remember(body: MemoryRequest) -> dict:
@@ -229,6 +299,13 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
     def orders() -> dict:
         return {"items": service.trading.orders(tenant)}
 
+    @app.get("/api/orders/{order_id}", dependencies=auth)
+    def order(order_id: str) -> dict:
+        item = service.trading.get_order(tenant, order_id)
+        if item is None:
+            raise HTTPException(404, "order not found")
+        return item
+
     @app.get("/api/portfolio", dependencies=auth)
     def portfolio() -> dict:
         return service.trading.portfolio(tenant)
@@ -249,6 +326,10 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
     def kill(body: KillRequest) -> dict:
         service.trading.set_kill(tenant, body.enabled)
         return service.trading.status(tenant)
+
+    @app.post("/api/risk-mode", dependencies=auth)
+    def risk_mode(body: RiskModeRequest) -> dict:
+        return service.trading.set_risk_mode(tenant, body.mode)
 
     @app.get("/api/artifacts/{name}", dependencies=auth)
     def artifact(name: str):
@@ -275,73 +356,27 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
             f'qt_agent_hub_jobs{{status="{key}"}} {value}'
             for key, value in summary["counts"].items()
         ]
-        return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+        return PlainTextResponse(
+            "\n".join(lines) + "\n" + service.governance.metrics(tenant),
+            media_type="text/plain; version=0.0.4",
+        )
 
     @app.post("/mcp", dependencies=auth)
-    def mcp(body: dict):
-        """Small stateless HTTP MCP surface: read tools and durable submissions only."""
-        request_id, method, params = body.get("id"), body.get("method"), body.get("params", {})
-        tools = [
-            {
-                "name": "search_evidence",
-                "description": "Search authorized, time-filtered evidence",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                    "additionalProperties": False,
-                },
-            },
-            {
-                "name": "read_status",
-                "description": "Read task, worker and trading status",
-                "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-            },
-            {
-                "name": "submit_research",
-                "description": "Submit a durable research-only pipeline",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"question": {"type": "string"}},
-                    "required": ["question"],
-                    "additionalProperties": False,
-                },
-            },
-        ]
-        if method == "notifications/initialized":
-            return PlainTextResponse("", status_code=202)
-        if method == "initialize":
-            result = {
-                "protocolVersion": "2025-11-25",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "qt-agent-hub", "version": "1.0.0"},
-            }
-        elif method == "ping":
-            result = {}
-        elif method == "tools/list":
-            result = {"tools": tools}
-        elif method == "tools/call":
-            name, arguments = params.get("name"), params.get("arguments", {})
-            if name == "search_evidence":
-                value = service.context.search(tenant, arguments.get("query", ""))
-            elif name == "read_status":
-                value = status()
-            elif name == "submit_research":
-                item = JobRequest(question=arguments.get("question", ""), auto_execute=False)
-                value = enqueue(item)
-            else:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32602, "message": "unknown tool"},
-                }
-            result = {"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False)}]}
-        else:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32601, "message": "method not found"},
-            }
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    async def mcp(request: Request):
+        from qt.agent_hub.mcp import dispatch, error
+
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError):
+            return error(None, -32700, "Invalid JSON")
+        return dispatch(
+            body,
+            request.headers,
+            search=lambda query: service.context.search(tenant, query),
+            status=status,
+            submit_research=lambda question: enqueue(
+                JobRequest(question=question, auto_execute=False)
+            ),
+        )
 
     return app

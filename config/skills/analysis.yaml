@@ -1,0 +1,16 @@
+# Server-owned manifest. Models cannot modify permissions.
+skill_id: qt-analysis
+version: 1.0.0
+role: analysis
+description: Challenge a research hypothesis using supplied data.
+allowed_tools:
+- context.search
+- context.read_chunk
+- market.quote
+- market.history
+input_schema: context.v2
+output_schema: codex.response.v1
+evaluation_tags:
+- counterevidence
+- historical_availability
+- claim_grounding

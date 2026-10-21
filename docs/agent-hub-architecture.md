@@ -1,5 +1,7 @@
 # QT ResearchOps Agent：架构、调研证据与运行边界
 
+本文保留初版实现与调研记录；当前部署和新增能力以 [Agent Hub v2](agent-hub-v2.md) 为准。
+
 调研核验截至 **2026-10-21**。实现依据为本仓库 `src/qt/agent_hub/`、`config/agent-hub.yaml`、`docker-compose.agent-hub.yml` 及部署脚本。本文把已实现能力、厂商披露和后续设计分开；未标发布日期的滚动文档只记录核验日期，不当作 2026 年 9 月新发布的功能。
 
 实现入口：[运行时](../src/qt/agent_hub/runtime.py)、[任务账本](../src/qt/agent_hub/store.py)、[Codex 边界](../src/qt/agent_hub/codex.py)、[公共来源采集](../src/qt/agent_hub/sources.py)、[上下文与记忆](../src/qt/agent_hub/context.py)、[执行与对账](../src/qt/agent_hub/trading.py)、[角色配置](../config/agent-hub.yaml)、[Compose](../docker-compose.agent-hub.yml)。

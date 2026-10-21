@@ -25,6 +25,9 @@ x-environment: &environment
   QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
   QT_AGENT_HUB_SANDBOX_URL: http://sandbox:8092
   QT_AGENT_HUB_CODEX_URL: http://codex:8091
+  QT_AGENT_HUB_RESEARCH_URL: http://research:8094
+  QT_AGENT_HUB_SKILLS_DIR: /app/config/skills
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${QT_AGENT_HUB_OTLP_ENDPOINT:-${OTEL_EXPORTER_OTLP_ENDPOINT:-}}
   QT_AGENT_HUB_PORT: ${QT_AGENT_HUB_PORT:-8878}
 
 x-volumes: &volumes
@@ -60,13 +63,86 @@ services:
     network_mode: none
     # Subprocess fixtures are executable scripts; production /tmp stays noexec.
     tmpfs: ["/tmp:size=128m,mode=1777,exec"]
-    entrypoint: [python, -m, pytest]
-    command: [/tests, -q, --confcutdir=/tests, -o, cache_dir=/tmp/pytest-cache]
+    entrypoint: [python, deploy/agent_hub_tests.py]
+    command: []
+    volumes: ["./tests:/tests:ro"]
+
+  research-test:
+    <<: *runtime
+    profiles: [test]
+    image: qt-agent-hub-research-tests:local
+    build: {context: ., dockerfile: Dockerfile.workbench, target: hub-research-test}
+    restart: "no"
+    network_mode: none
+    tmpfs: ["/tmp:size=512m,mode=1777,exec"]
+    entrypoint: [python, deploy/agent_hub_tests.py]
+    command: [--native]
+    volumes: ["./tests:/tests:ro"]
+    mem_limit: 2g
+    cpus: 2.0
+    environment:
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+
+  ui-test:
+    <<: *runtime
+    profiles: [test]
+    image: qt-agent-hub-ui-tests:local
+    build: {context: ., dockerfile: Dockerfile.agent-hub-ui}
+    restart: "no"
+    # Same loopback origin as the API's production Origin policy.
+    network_mode: service:api
+    tmpfs: ["/tmp:size=512m,mode=1777,exec"]
+    shm_size: 1g
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 256
+    entrypoint: [python, deploy/agent_hub_ui_test.py]
+    command: []
+    environment:
+      QT_AGENT_HUB_SERVICE_TOKEN: ${QT_AGENT_HUB_SERVICE_TOKEN:?Run hub-init}
+      QT_AGENT_HUB_UI_URL: http://127.0.0.1:8878
+      QT_AGENT_HUB_UI_REPORTS: /state/ui-acceptance
     volumes:
-      - ./tests/test_agent_hub_store.py:/tests/test_agent_hub_store.py:ro
-      - ./tests/test_agent_hub_capabilities.py:/tests/test_agent_hub_capabilities.py:ro
-      - ./tests/test_agent_hub_trading.py:/tests/test_agent_hub_trading.py:ro
-      - ./tests/test_agent_hub_runtime.py:/tests/test_agent_hub_runtime.py:ro
+      - hub-state:/state
+      - ./deploy/agent_hub_ui_test.py:/app/deploy/agent_hub_ui_test.py:ro
+    depends_on: {api: {condition: service_healthy}}
+
+  initialize-research:
+    <<: *runtime
+    user: "0:0"
+    restart: "no"
+    # Repeated initialization must chmod an existing volume owned by uid 10001.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    entrypoint: [python, -c]
+    command:
+      - "import os; from pathlib import Path; p=Path('/state'); assert p.is_dir() and not p.is_symlink(); os.chmod(p,0o750); os.chown(p,10001,10001)"
+    volumes: ["hub-research-state:/state"]
+    network_mode: none
+
+  research:
+    <<: *runtime
+    image: qt-agent-hub-research:local
+    build: {context: ., dockerfile: Dockerfile.workbench, target: runtime}
+    entrypoint: [python, -m, qt.agent_hub]
+    command: [research]
+    environment:
+      QT_AGENT_HUB_EXECUTOR_TOKEN: ${QT_AGENT_HUB_EXECUTOR_TOKEN:?Run hub-init}
+      QT_AGENT_HUB_RESEARCH_STATE: /state/research
+      OPENBLAS_NUM_THREADS: "2"
+      OMP_NUM_THREADS: "2"
+    volumes: ["hub-research-state:/state"]
+    networks: [control]
+    depends_on: {initialize-research: {condition: service_completed_successfully}}
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 256
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8094/healthz',timeout=5)); assert d['ok']"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
   api:
     <<: *runtime
@@ -109,7 +185,7 @@ services:
     environment: *environment
     volumes: *volumes
     networks: [control, outbound]
-    depends_on: {initialize: {condition: service_completed_successfully}, codex: {condition: service_healthy}, sandbox: {condition: service_healthy}}
+    depends_on: {initialize: {condition: service_completed_successfully}, codex: {condition: service_healthy}, sandbox: {condition: service_healthy}, research: {condition: service_healthy}}
     healthcheck:
       test: [CMD, python, -m, qt.agent_hub, health, --worker-id, worker-1]
       interval: 15s
@@ -124,7 +200,7 @@ services:
       QT_AGENT_HUB_CODEX_URL: http://codex-2:8091
     volumes: *volumes
     networks: [control, outbound]
-    depends_on: {initialize: {condition: service_completed_successfully}, codex-2: {condition: service_healthy}, sandbox: {condition: service_healthy}}
+    depends_on: {initialize: {condition: service_completed_successfully}, codex-2: {condition: service_healthy}, sandbox: {condition: service_healthy}, research: {condition: service_healthy}}
     healthcheck:
       test: [CMD, python, -m, qt.agent_hub, health, --worker-id, worker-2]
       interval: 15s
@@ -210,6 +286,7 @@ volumes:
   hub-state:
   hub-files:
   codex-home:
+  hub-research-state:
 
 networks:
   control: {internal: true}

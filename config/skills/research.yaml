@@ -1,0 +1,16 @@
+# Server-owned manifest. Models cannot modify permissions.
+skill_id: qt-research
+version: 1.0.0
+role: research
+description: Collect and compare attributed source evidence.
+allowed_tools:
+- context.search
+- context.read_chunk
+- market.quote
+- research.collect
+input_schema: context.v2
+output_schema: codex.response.v1
+evaluation_tags:
+- source_membership
+- historical_availability
+- prompt_injection

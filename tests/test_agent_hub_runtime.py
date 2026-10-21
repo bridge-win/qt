@@ -23,6 +23,7 @@ from qt.agent_hub.codex import CodexBusyError, _home_lock
 from qt.agent_hub.codex_service import create_codex_app
 from qt.agent_hub.config import ROLES, HubConfig, Role
 from qt.agent_hub.context import ContextStore
+from qt.agent_hub.research import native_bridge_fingerprint
 from qt.agent_hub.runtime import HubRuntime, RemoteCodex
 from qt.agent_hub.sandbox import validate_request
 from qt.agent_hub.sandbox_service import create_sandbox_app, experiment
@@ -87,6 +88,34 @@ class OfflineSandbox:
         return {**experiment(validate_request(request)), "status": "completed", "job_id": job_id}
 
 
+class OfflineResearch:
+    """Only a transport fixture; native engine quality is verified by its own suite."""
+
+    def health(self):
+        return {
+            "ok": True,
+            "engine": {"fixture": True, "native_bridge_sha256": native_bridge_fingerprint()},
+        }
+
+    def run(self, tenant_id, job_id, history, *, strategy="ma_trend"):
+        return {
+            "status": "completed",
+            "eligible_for_paper": True,
+            "engine": self.health()["engine"],
+            "strategy_version_id": "fixture:ma_trend@1",
+            "strategy_sha256": "fixture",
+            "data_sha256": "fixture",
+            "fixture": True,
+            "execution_signal": {
+                "strategy_version_id": "fixture:ma_trend@1",
+                "strategy_sha256": "fixture",
+                "data_sha256": "fixture",
+                "side": "BUY",
+                "as_of_bar": (time.time() - 86400) * 1000,
+            },
+        }
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def blocked(*args: object, **kwargs: object) -> None:
@@ -149,6 +178,7 @@ def runtime(tmp_path: Path, config: HubConfig, public_quotes: list[str]) -> HubR
         provider=FixtureProvider(),
         market=FixtureMarket(),
         sandbox=OfflineSandbox(),
+        research=OfflineResearch(),
     )
 
 
@@ -469,6 +499,41 @@ def test_paper_pipeline_records_one_fee_accounted_fill_and_idempotent_replay(
     assert len(runtime.trading.orders(TENANT)) == 1
 
 
+def test_runtime_forged_evidence_cannot_authorize_paper_fill(runtime: HubRuntime) -> None:
+    class Forged(FixtureProvider):
+        def invoke(self, role, task, context):
+            answer = super().invoke(role, task, context)
+            answer["evidence"] = ["not-a-registered-reference"]
+            return answer
+
+    runtime.config = runtime.config.model_copy(update={"auto_execute": True})
+    runtime.provider = Forged(decision="propose")
+    _enqueue(runtime, "pipeline", auto_execute=True)
+    jobs = _drain(runtime)
+    result = next(job["result"] for job in jobs if job["kind"] == "execute")
+    assert result["status"] == "held" and result["reason"] == "unverified_evidence"
+    assert not runtime.trading.orders(TENANT)
+
+
+def test_changed_validated_signal_cannot_authorize_unrelated_model_action(
+    runtime: HubRuntime,
+) -> None:
+    class WrongSignal(OfflineResearch):
+        def run(self, *args, **kwargs):
+            report = super().run(*args, **kwargs)
+            report["execution_signal"]["side"] = "SELL"
+            return report
+
+    runtime.config = runtime.config.model_copy(update={"auto_execute": True})
+    runtime.provider = FixtureProvider(decision="propose")
+    runtime.research = WrongSignal()
+    _enqueue(runtime, "pipeline", auto_execute=True)
+    jobs = _drain(runtime)
+    result = next(job["result"] for job in jobs if job["kind"] == "execute")
+    assert result["reason"] == "action_not_bound_to_validated_strategy"
+    assert not runtime.trading.orders(TENANT)
+
+
 @pytest.mark.parametrize("lookup_initially_available", [True, False])
 def test_monitor_recovers_unknown_execution_once_without_resending_or_bypassing_freeze(
     runtime: HubRuntime,
@@ -690,7 +755,8 @@ def test_mcp_auth_readonly_tool_allowlist_and_research_cannot_enable_execution(
     result = invoke(
         "submit_research", {"question": "evidence", "auto_execute": True, "tenant_id": "bravo"}
     )
-    assert "result" in result
+    assert result["error"]["code"] == -32602
+    assert "result" in invoke("submit_research", {"question": "evidence"})
     queued = runtime.store.list_jobs(TENANT)
     assert len(queued) == 1
     assert queued[0]["kind"] == "pipeline"
@@ -895,3 +961,56 @@ def test_repeated_executor_busy_does_not_deadletter_the_six_role_pipeline(
     assert (
         sum(event["event_type"] == "job.deferred" for event in runtime.store.events(TENANT)) == 24
     )
+
+
+def _queue_reviewed_execution(runtime: HubRuntime) -> None:
+    runtime.config = runtime.config.model_copy(update={"auto_execute": True})
+    runtime.provider = FixtureProvider(decision="propose")
+    _enqueue(runtime, "pipeline", auto_execute=True)
+    for _ in range(7):
+        if runtime.run_once("agent-worker", kinds=["pipeline", *ROLES]) is None:
+            break
+    else:
+        raise AssertionError("review did not finish")
+    queued = [job for job in runtime.store.list_jobs(TENANT) if job["status"] == "queued"]
+    assert len(queued) == 1 and queued[0]["kind"] == "execute"
+
+
+def test_execution_rejects_approvals_from_an_old_release(runtime: HubRuntime) -> None:
+    _queue_reviewed_execution(runtime)
+    runtime.config = runtime.config.model_copy(update={"minimum_confidence": 0.81})
+    execution = runtime.run_once("market-worker", kinds=["execute"])
+    assert execution and execution["status"] == "succeeded"
+    assert execution["result"] == {
+        "status": "held",
+        "reason": "prior_approval_release_changed",
+        "release_sha256": execution["result"]["release_sha256"],
+    }
+    assert not runtime.trading.orders(TENANT)
+
+
+@pytest.mark.parametrize("change", ["engine", "unavailable", "bridge"])
+def test_execution_rejects_changed_or_unavailable_native_engine(
+    runtime: HubRuntime, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    if change == "bridge":
+        monkeypatch.setattr(
+            runtime.research,
+            "health",
+            lambda: {"engine": {"fixture": True, "native_bridge_sha256": "different-image"}},
+        )
+    _queue_reviewed_execution(runtime)
+    if change == "engine":
+        current = runtime.research.health()
+        current["engine"]["source_sha256"] = "new-engine-source"
+        monkeypatch.setattr(runtime.research, "health", lambda: current)
+    elif change == "unavailable":
+
+        def unavailable():
+            raise RuntimeError("upstream unavailable")
+
+        monkeypatch.setattr(runtime.research, "health", unavailable)
+    execution = runtime.run_once("market-worker", kinds=["execute"])
+    assert execution and execution["status"] == "succeeded"
+    assert execution["result"]["reason"] == "research_engine_changed_or_unavailable"
+    assert not runtime.trading.orders(TENANT)

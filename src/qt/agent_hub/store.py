@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 JsonDict = dict[str, object]
 _STATUSES = ("queued", "running", "succeeded", "deadletter")
@@ -67,6 +67,8 @@ class HubStore:
                     ON hub_jobs(tenant_id, status, lease_until);
                 CREATE INDEX IF NOT EXISTS hub_jobs_history
                     ON hub_jobs(tenant_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS hub_jobs_evidence
+                    ON hub_jobs(tenant_id, status, kind, created_at DESC);
                 CREATE TABLE IF NOT EXISTS hub_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tenant_id TEXT NOT NULL,
@@ -96,6 +98,10 @@ class HubStore:
                 );
                 CREATE INDEX IF NOT EXISTS hub_schedules_due
                     ON hub_schedules(tenant_id, enabled, next_run_at);
+                CREATE TABLE IF NOT EXISTS hub_cancellations (
+                    tenant_id TEXT NOT NULL, run_id TEXT NOT NULL, created_at REAL NOT NULL,
+                    PRIMARY KEY(tenant_id,run_id)
+                );
                 COMMIT;
                 """
             )
@@ -307,6 +313,7 @@ class HubStore:
         tenant_id, job_id = _text(tenant_id, "tenant_id"), _text(job_id, "job_id")
         with self._connection(write=True) as connection:
             previous = self._get(connection, tenant_id, job_id)
+            self._check_not_cancelled(connection, tenant_id, previous)
             if previous["status"] != "deadletter":
                 raise ValueError("only deadletter jobs can be requeued")
             now = _now()
@@ -442,6 +449,26 @@ class HubStore:
                     (tenant_id, limit),
                 ).fetchall()
             ]
+
+    def successful_jobs_between(
+        self, tenant_id: str, kinds: list[str], *, since: float, until: float
+    ) -> list[JsonDict]:
+        """Acceptance evidence is time-bounded, never truncated by unrelated jobs."""
+        tenant_id = _text(tenant_id, "tenant_id")
+        if not isinstance(kinds, list) or not 1 <= len(kinds) <= 100:
+            raise ValueError("kinds must contain 1 to 100 kinds")
+        selected = sorted({_text(kind, "kind") for kind in kinds})
+        since = _number(since, "since", 0, _MAX_TIMESTAMP)
+        until = _number(until, "until", since, _MAX_TIMESTAMP)
+        placeholders = ",".join("?" for _ in selected)
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM hub_jobs WHERE tenant_id=? AND status='succeeded' "
+                f"AND kind IN ({placeholders}) AND created_at>=? AND created_at<=? "
+                "ORDER BY created_at DESC, rowid DESC",
+                (tenant_id, *selected, since, until),
+            ).fetchall()
+            return [_job(row) for row in rows]
 
     def event(
         self,
@@ -645,6 +672,48 @@ class HubStore:
                 "total_events": events,
             }
 
+    def cancel_run(self, tenant_id: str, job_id: str) -> JsonDict:
+        """Fence pending/running steps atomically; never undo committed external effects.
+
+        Cancelled jobs retain the existing deadletter storage status and an explicit
+        cancellation reason for backwards-compatible ledgers. They cannot be retried.
+        """
+        tenant_id, job_id = _text(tenant_id, "tenant_id"), _text(job_id, "job_id")
+        with self._connection(write=True) as connection:
+            selected = self._get(connection, tenant_id, job_id)
+            payload = cast(dict[str, Any], selected["payload"])
+            run_id = str(payload.get("pipeline_id", job_id))
+            now = _now()
+            connection.execute(
+                "INSERT OR IGNORE INTO hub_cancellations VALUES(?,?,?)", (tenant_id, run_id, now)
+            )
+            rows = connection.execute(
+                "SELECT * FROM hub_jobs WHERE tenant_id=? AND "
+                "(id=? OR json_extract(payload_json,'$.pipeline_id')=?) "
+                "AND status IN ('queued','running')",
+                (tenant_id, run_id, run_id),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE hub_jobs SET status='deadletter',error='cancelled_by_owner',"
+                    "lease_token=lease_token+1,lease_until=NULL,updated_at=?,finished_at=? "
+                    "WHERE tenant_id=? AND id=?",
+                    (now, now, tenant_id, row["id"]),
+                )
+                self._append_event(
+                    connection, tenant_id, row["id"], "job.cancelled", {"run_id": run_id}, now
+                )
+            return {"run_id": run_id, "cancelled_jobs": len(rows), "status": "cancelled"}
+
+    @staticmethod
+    def _check_not_cancelled(connection: sqlite3.Connection, tenant: str, job: JsonDict) -> None:
+        payload = cast(dict[str, Any], job["payload"])
+        run_id = payload.get("pipeline_id", job.get("id"))
+        if connection.execute(
+            "SELECT 1 FROM hub_cancellations WHERE tenant_id=? AND run_id=?", (tenant, run_id)
+        ).fetchone():
+            raise ValueError("run_cancelled_start_a_new_run")
+
     def _enqueue(
         self,
         connection: sqlite3.Connection,
@@ -670,6 +739,9 @@ class HubStore:
                 raise ValueError("idempotency key was already used for a different request")
             return _job(existing)
         job_id = uuid.uuid4().hex
+        self._check_not_cancelled(
+            connection, tenant_id, {"id": job_id, "payload": json.loads(payload_json)}
+        )
         connection.execute(
             "INSERT INTO hub_jobs(id,tenant_id,kind,payload_json,idempotency_key,initial_not_before,"
             "not_before,status,max_attempts,created_at,updated_at) "

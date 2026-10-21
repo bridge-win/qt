@@ -170,6 +170,161 @@ def test_concurrent_duplicate_delivery_books_exactly_one_fill(
     assert Decimal(service.portfolio("alice")["positions"][0]["quantity"]) == Decimal("0.0002")
 
 
+def test_lookup_recovers_immutable_intent_without_quote_and_scopes_tenant_and_mode(
+    tmp_path: Path, public: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite")
+    original = intent(key="pipeline:decision")
+    filled = service.submit("alice", original)
+    reads = len(public["requests"])
+    monkeypatch.setattr(
+        service, "quote", lambda *args: pytest.fail("recovery must not fetch a fresh quote")
+    )
+    recovered = service.lookup_order("alice", original["idempotency_key"])
+    assert recovered == filled
+    assert recovered["execution_intent"] == original
+    assert len(recovered["intent_sha256"]) == 64
+    assert len(public["requests"]) == reads
+    assert service.lookup_order("bob", original["idempotency_key"]) is None
+    assert (
+        TradingService(service.path, mode="live").lookup_order("alice", original["idempotency_key"])
+        is None
+    )
+    assert service.lookup_order("alice", "missing") is None
+    assert service.get_order("alice", filled["order_id"]) == filled
+    assert service.get_order("bob", filled["order_id"]) is None
+    assert TradingService(service.path, mode="live").get_order("alice", filled["order_id"]) is None
+    with pytest.raises(TradingError, match="invalid_order_id"):
+        service.get_order("alice", original["idempotency_key"])
+    # Explicit changed parameters still conflict; recovery cannot waive this.
+    with pytest.raises(TradingError, match="idempotency_key_conflict"):
+        service.submit("alice", {**original, "quote_timestamp": original["quote_timestamp"] + 1})
+    recovered["execution_intent"]["quantity"] = "100"
+    assert (
+        service.lookup_order("alice", original["idempotency_key"])["execution_intent"] == original
+    )
+
+
+def test_lookup_supports_legacy_record_and_detects_corrupt_intent(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite")
+    filled = service.submit("alice", intent())
+    legacy = {
+        k: v
+        for k, v in filled.items()
+        if k not in {"execution_intent", "intent_sha256", "risk_effect"}
+    }
+    with sqlite3.connect(service.path) as db:
+        db.execute("UPDATE hub_trade_orders SET data=?", (json.dumps(legacy),))
+    assert service.lookup_order("alice", "one") == filled
+    legacy["quantity"] = "0.0003"
+    with sqlite3.connect(service.path) as db:
+        db.execute("UPDATE hub_trade_orders SET data=?", (json.dumps(legacy),))
+    with pytest.raises(TradingError, match="stored_execution_intent_integrity_error"):
+        service.lookup_order("alice", "one")
+    assert len(service.orders("alice")) == 1
+
+
+def test_exhausted_new_risk_budget_allows_stop_loss_but_sell_does_not_refund_it(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", max_daily_quote=21)
+    bought = service.submit("alice", intent(quantity="0.0004"))
+    public.update(bid="45000", ask="45010")
+    sell = service.submit(
+        "alice", intent(key="stop", side="SELL", quantity="0.0004", limit_price="45000")
+    )
+    assert sell["status"] == "FILLED" and sell["risk_effect"] == "reduce_only"
+    assert Decimal(service.portfolio("alice")["positions"][0]["quantity"]) == 0
+    with pytest.raises(TradingError, match="max_daily_quote_exceeded"):
+        service.submit("alice", intent(key="reopen", limit_price="45010"))
+    usage = service.status("alice")["daily_usage"]
+    assert Decimal(usage["new_risk_quote"]) == Decimal(bought["quote_qty"]) + Decimal(
+        bought["fee_quote"]
+    )
+    assert Decimal(usage["sell_reduce_only_quote"]) == Decimal(sell["quote_qty"]) + Decimal(
+        sell["fee_quote"]
+    )
+    assert Decimal(usage["turnover_quote_including_fees_and_open_reservations"]) > 21
+
+
+def test_reduce_only_control_persists_and_frozen_kill_retains_full_stop_semantics(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", max_daily_quote=11)
+    service.submit("alice", intent())
+    state = service.set_risk_mode("alice", "reduce_only")
+    assert state["risk_mode"] == "reduce_only" and state["kill_enabled"] is False
+    restarted = TradingService(service.path, max_daily_quote=11)
+    assert restarted.status("alice")["risk_mode"] == "reduce_only"
+    assert restarted.status("bob")["risk_mode"] == "active"
+    with pytest.raises(TradingError, match="reduce_only_mode"):
+        restarted.submit("alice", intent(key="blocked"))
+    restarted.set_kill("alice", True)
+    with pytest.raises(TradingError, match="kill_switch"):
+        restarted.submit("alice", intent(key="stop", side="SELL", limit_price="50000"))
+    restarted.set_risk_mode("alice", "reduce_only")
+    assert (
+        restarted.submit("alice", intent(key="stop", side="SELL", limit_price="50000"))["status"]
+        == "FILLED"
+    )
+    assert restarted.set_kill("alice", False)["risk_mode"] == "active"
+    for invalid in (True, [], "paused"):
+        with pytest.raises(TradingError, match="unsupported_risk_mode"):
+            restarted.set_risk_mode("alice", invalid)
+
+
+def test_reduce_only_still_obeys_order_inventory_quote_and_liquidity_limits(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", max_daily_quote=21)
+    service.submit("alice", intent(quantity="0.0004"))
+    service.set_risk_mode("alice", "reduce_only")
+    with pytest.raises(TradingError, match="no_short"):
+        service.submit(
+            "alice", intent(key="oversell", side="SELL", quantity="0.00049", limit_price="50000")
+        )
+    public.update(bid="100000", ask="100010")
+    with pytest.raises(TradingError, match="max_order"):
+        service.submit(
+            "alice", intent(key="too_large", side="SELL", quantity="0.0004", limit_price="100000")
+        )
+    public.update(bid="45000", ask="45010", size="0.0001")
+    with pytest.raises(TradingError, match="stale_or_future_client_quote"):
+        service.submit(
+            "alice",
+            intent(key="stale", side="SELL", limit_price="45000", quote_timestamp=time.time() - 30),
+        )
+    partial = service.submit(
+        "alice", intent(key="shallow", side="SELL", quantity="0.0004", limit_price="45000")
+    )
+    assert partial["status"] == "EXPIRED" and Decimal(partial["filled_qty"]) == Decimal("0.0001")
+    assert Decimal(service.portfolio("alice")["positions"][0]["quantity"]) == Decimal("0.0003")
+
+
+def test_concurrent_reduce_only_exits_cannot_oversell_inventory(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", max_daily_quote=11)
+    service.submit("alice", intent())
+    service.set_risk_mode("alice", "reduce_only")
+
+    def exit_position(key: str) -> str:
+        try:
+            return service.submit("alice", intent(key=key, side="SELL", limit_price="50000"))[
+                "status"
+            ]
+        except TradingError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(exit_position, ["exit-a", "exit-b"]))
+    assert sorted(outcomes) == ["FILLED", "insufficient_position_no_short_selling"]
+    assert Decimal(service.portfolio("alice")["positions"][0]["quantity"]) == 0
+    assert len(service.orders("alice")) == 2
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -333,6 +488,143 @@ class FakeExecution:
     def lookup(self, client_id: str, record: dict[str, Any]) -> dict[str, Any] | None:
         self.lookups += 1
         return self.result
+
+
+@pytest.mark.parametrize("phase", ["reserved_before_send", "sent_before_accounting", "accounted"])
+def test_crash_recovery_returns_original_intent_and_never_resends(
+    tmp_path: Path,
+    public: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    service = TradingService(tmp_path / "ledger.sqlite", mode="testnet")
+    adapter = FakeExecution()
+    service.bind_execution("alice", "binance", adapter, acknowledge=True)
+    original = intent(key="pipeline:crash")
+    save, finish = service._save, service._finish
+
+    if phase == "reserved_before_send":
+
+        def crash_on_submitting(db: Any, tenant: str, record: dict[str, Any]) -> None:
+            if record["status"] == "SUBMITTING":
+                raise SimulatedProcessCrash
+            save(db, tenant, record)
+
+        monkeypatch.setattr(service, "_save", crash_on_submitting)
+    elif phase == "sent_before_accounting":
+
+        def crash_before_finish(
+            db: Any, tenant: str, record: dict[str, Any], result: dict[str, Any]
+        ) -> Any:
+            adapter.result = result
+            raise SimulatedProcessCrash
+
+        monkeypatch.setattr(service, "_finish", crash_before_finish)
+
+    if phase == "accounted":
+        service.submit("alice", original)
+    else:
+        with pytest.raises(SimulatedProcessCrash):
+            service.submit("alice", original)
+    monkeypatch.setattr(service, "_save", save)
+    monkeypatch.setattr(service, "_finish", finish)
+    restarted = TradingService(service.path, mode="testnet")
+    restarted.bind_execution("alice", "binance", adapter, acknowledge=True)
+    public.update(bid="40000", ask="40010")
+    # A recovered workflow returns this result before applying new market or
+    # forecast gates. Even an hour later, the original intent remains intact.
+    recovered = restarted.lookup_order("alice", original["idempotency_key"])
+    assert recovered["execution_intent"] == original
+    assert (
+        recovered["status"]
+        == {
+            "reserved_before_send": "PREPARING",
+            "sent_before_accounting": "SUBMITTING",
+            "accounted": "FILLED",
+        }[phase]
+    )
+    assert restarted.submit("alice", original) == recovered
+    restarted.reconcile("alice")
+    recovered = restarted.lookup_order("alice", original["idempotency_key"])
+    assert recovered["status"] == ("UNKNOWN" if phase == "reserved_before_send" else "FILLED")
+    assert adapter.sends == (0 if phase == "reserved_before_send" else 1)
+    assert len(restarted.orders("alice")) == 1
+    positions = restarted.portfolio("alice")["positions"]
+    assert (Decimal(positions[0]["quantity"]) if positions else Decimal(0)) == (
+        Decimal(0) if phase == "reserved_before_send" else Decimal("0.0002")
+    )
+
+
+@pytest.mark.parametrize("mode", ["testnet", "live"])
+def test_execution_reduce_only_keeps_account_inventory_and_unknown_guards(
+    tmp_path: Path,
+    public: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", mode=mode, max_daily_quote=21)
+    adapter = FakeExecution()
+    adapter.environment = mode
+    service.bind_execution("alice", "binance", adapter, acknowledge=True)
+    service.submit("alice", intent())
+    adapter.fail = True
+    assert service.submit("alice", intent(key="unknown"))["status"] == "UNKNOWN"
+    service.set_risk_mode("alice", "reduce_only")
+    with pytest.raises(TradingError, match="unresolved_order"):
+        service.submit("alice", intent(key="stop", side="SELL", limit_price="50000"))
+    assert adapter.sends == 2
+    adapter.result = {"status": "REJECTED", "filled_qty": "0", "quote_qty": "0"}
+    service.reconcile("alice")
+    # Existing BUY spends 10.012002; a SELL must still work with only 0.987998
+    # new-risk budget remaining, under the same live/testnet execution path.
+    service.max_daily_quote = Decimal("11")
+    adapter.fail = False
+    monkeypatch.setattr(adapter, "balances", lambda _: {"cash": "100", "quantity": "0"})
+    with pytest.raises(TradingError, match="no_short"):
+        service.submit("alice", intent(key="stop", side="SELL", limit_price="50000"))
+    monkeypatch.setattr(adapter, "balances", lambda _: {"cash": "100", "quantity": "1"})
+    # The fixture fill uses 10.002 quote, so set an equal valid bid to exercise
+    # the actual shared live/testnet ledger path without an external endpoint.
+    public.update(bid="50010", ask="50020")
+    result = service.submit("alice", intent(key="stop", side="SELL", limit_price="50010"))
+    assert result["status"] == "FILLED" and adapter.sends == 3
+    assert Decimal(service.portfolio("alice")["positions"][0]["quantity"]) == 0
+    with pytest.raises(TradingError, match="not_configured"):
+        service.submit("bob", intent(key="unauthorized", side="SELL", limit_price="50010"))
+
+
+@pytest.mark.parametrize(
+    "mode,code",
+    [("frozen", "kill_switch_enabled"), ("reduce_only", "reduce_only_mode_new_risk_blocked")],
+)
+def test_risk_mode_changed_after_reservation_prevents_exchange_send(
+    tmp_path: Path,
+    public: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    code: str,
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", mode="testnet")
+    adapter = FakeExecution()
+    service.bind_execution("alice", "binance", adapter, acknowledge=True)
+    risk = service._risk
+
+    def change_control(db: sqlite3.Connection, tenant: str, *args: Any) -> None:
+        risk(db, tenant, *args)
+        db.execute(
+            "INSERT OR REPLACE INTO hub_trade_kill VALUES(?,?)",
+            (tenant, trading._RISK_MODES[mode]),
+        )
+
+    monkeypatch.setattr(service, "_risk", change_control)
+    result = service.submit("alice", intent())
+    assert result["status"] == "REJECTED" and result["rejection_reason"] == code
+    assert adapter.sends == 0 and result["accounted"] is True
+    assert Decimal(service.portfolio("alice")["cash"]["binance"]["amount"]) == 100
+    assert service.lookup_order("alice", "one") == result
 
 
 def test_execution_requires_server_binding_matching_mode_and_separate_tenant_account(
@@ -934,6 +1226,35 @@ def test_production_binance_checks_fence_after_metadata_before_post(
     assert not any(row.method == "POST" for row in production_transport["requests"])
     assert service.status("alice")["unresolved_orders"] == 0
     assert all(Decimal(row["quantity"]) == 0 for row in service.portfolio("alice")["positions"])
+
+
+@pytest.mark.parametrize("mode", ["reduce_only", "frozen"])
+def test_production_binance_rechecks_risk_mode_after_metadata_before_post(
+    tmp_path: Path,
+    public: dict[str, Any],
+    production_transport: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", mode="live")
+    adapter = BinanceSpotAdapter("fixture-key", "fixture-secret")
+    service.bind_execution("alice", "binance", adapter, acknowledge=True)
+    prepare = adapter._prepare
+
+    def stop_after_metadata(order: dict[str, Any]) -> Any:
+        result = prepare(order)
+        service.set_risk_mode("alice", mode)
+        return result
+
+    monkeypatch.setattr(adapter, "_prepare", stop_after_metadata)
+    result = service.submit("alice", intent())
+    assert result["status"] == "REJECTED"
+    assert result["rejection_reason"] == (
+        "kill_switch_enabled" if mode == "frozen" else "reduce_only_mode_new_risk_blocked"
+    )
+    assert not any(row.method == "POST" for row in production_transport["requests"])
+    assert service.status("alice")["unresolved_orders"] == 0
+    assert Decimal(service.status("alice")["daily_usage"]["new_risk_quote"]) == 0
 
 
 def test_polymarket_checks_fence_after_signing_before_broadcast(

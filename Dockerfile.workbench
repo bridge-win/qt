@@ -37,3 +37,19 @@ COPY deploy/workbench_health.py ./deploy/workbench_health.py
 USER 10001:10001
 STOPSIGNAL SIGTERM
 CMD ["python", "scripts/run_workbench_api.py", "--host", "0.0.0.0", "--port", "8877", "--parquet-root", "/parquet", "--state-root", "/state"]
+
+# Optional offline native bridge tests; the production runtime stays unchanged.
+FROM runtime AS hub-research-test
+USER root
+COPY requirements-agent-hub-test.lock /tmp/test-requirements.lock
+RUN python -m pip install --require-hashes -r /tmp/test-requirements.lock \
+    && python -m pip check \
+    && rm /tmp/test-requirements.lock
+COPY deploy/agent_hub_tests.py ./deploy/agent_hub_tests.py
+USER 10001:10001
+ENTRYPOINT ["python", "deploy/agent_hub_tests.py"]
+CMD ["--native"]
+
+# The existing workbench Compose does not specify a target. Preserve its default
+# filesystem, user and command even though an explicit test target was added.
+FROM runtime AS workbench

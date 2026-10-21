@@ -23,6 +23,7 @@ COPY src/qt/agent_hub ./src/qt/agent_hub
 COPY src/qt/prediction_markets ./src/qt/prediction_markets
 COPY src/qt/btc_agent ./src/qt/btc_agent
 COPY config/agent-hub.yaml ./config/agent-hub.yaml
+COPY config/skills ./config/skills
 USER 10001:10001
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["python", "-m", "qt.agent_hub"]
@@ -41,5 +42,7 @@ USER root
 COPY requirements-agent-hub-test.lock /tmp/test-requirements.lock
 RUN python -m pip install --require-hashes -r /tmp/test-requirements.lock \
     && rm /tmp/test-requirements.lock
+COPY deploy/agent_hub_tests.py ./deploy/agent_hub_tests.py
 USER 10001:10001
-ENTRYPOINT ["python", "-m", "pytest"]
+ENTRYPOINT ["python", "deploy/agent_hub_tests.py"]
+CMD []

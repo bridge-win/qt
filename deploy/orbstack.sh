@@ -26,12 +26,18 @@ if [[ "${1:-}" == hub-* ]]; then
     hub-up) "${HUB[@]}" up --build -d --wait --wait-timeout 240 ;;
     hub-status) "${HUB[@]}" ps ;;
     hub-check) "${HUB[@]}" exec -T api python -m qt.agent_hub.verify ;;
-    hub-test) "${HUB[@]}" --profile test build test; "${HUB[@]}" --profile test run --rm -T --no-deps test ;;
+    hub-test) shift; "${HUB[@]}" --profile test build test; "${HUB[@]}" --profile test run --rm -T --no-deps test "$@" ;;
+    hub-native-test) shift; "${HUB[@]}" --profile test build research-test; "${HUB[@]}" --profile test run --rm -T --no-deps research-test --native "$@" ;;
+    hub-ui-test) shift; "${HUB[@]}" --profile test build ui-test; "${HUB[@]}" --profile test run --rm -T --no-deps ui-test "$@" ;;
+    hub-build) shift; "${HUB[@]}" build "$@" ;;
+    hub-config) "${HUB[@]}" config --quiet ;;
     hub-exec) shift; "${HUB[@]}" exec -T "$@" ;;
     hub-logs) "${HUB[@]}" logs --tail 80 "${2:-worker-1}" ;;
     hub-restart) "${HUB[@]}" restart "${2:-worker-1}" ;;
+    hub-stop) shift; "${HUB[@]}" stop "$@" ;;
+    hub-start) shift; "${HUB[@]}" start "$@" ;;
     hub-down) "${HUB[@]}" down ;;
-    *) echo 'Use hub-init|hub-up|hub-status|hub-test|hub-check|hub-exec SERVICE COMMAND...|hub-logs [service]|hub-restart [service]|hub-down' >&2; exit 2 ;;
+    *) echo 'Use hub-init|hub-up|hub-status|hub-test [pytest args]|hub-native-test [pytest args]|hub-ui-test|hub-build [service...]|hub-config|hub-check|hub-exec SERVICE COMMAND...|hub-logs [service]|hub-restart [service]|hub-stop [service...]|hub-start [service...]|hub-down' >&2; exit 2 ;;
   esac
   exit
 fi

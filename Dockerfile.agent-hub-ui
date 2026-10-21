@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.7
+# Browser image and Python package must have the same upstream version.
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+ENV XDG_CACHE_HOME=/tmp/qt-cache XDG_CONFIG_HOME=/tmp/qt-config
+COPY requirements-agent-hub-ui.lock /tmp/requirements.lock
+RUN python -m pip install --require-hashes -r /tmp/requirements.lock \
+    && python -m pip check \
+    && rm /tmp/requirements.lock \
+    && useradd --uid 10001 --create-home qt \
+    && mkdir -p /app/deploy
+WORKDIR /app
+USER 10001:10001
+ENTRYPOINT ["python", "deploy/agent_hub_ui_test.py"]

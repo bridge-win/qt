@@ -271,9 +271,16 @@ def test_retrieval_is_tenant_scoped_point_in_time_and_supports_chinese(store: Co
         "企业长期记忆管理使用过期策略",
         valid_from="2026-09-01",
         valid_until="2026-10-01",
+        available_at="2026-09-01",
+        provenance="test historical archive",
     )
     new = store.ingest(
-        "alpha", "runbook:v2", "企业长期记忆管理更新为合并策略", valid_from="2026-10-01"
+        "alpha",
+        "runbook:v2",
+        "企业长期记忆管理更新为合并策略",
+        valid_from="2026-10-01",
+        available_at="2026-10-01",
+        provenance="test historical archive",
     )
     store.ingest("bravo", "private", "企业长期记忆管理密钥不可共享", valid_from="2026-09-01")
     september = store.search("alpha", "记忆管理", as_of="2026-09-20")
@@ -436,3 +443,17 @@ def test_sandbox_failure_never_becomes_success(
 def test_sandbox_rejects_code_unknown_fields_and_unbounded_numeric_inputs(payload: dict) -> None:
     with pytest.raises(ValueError):
         validate_request(payload)
+
+
+def test_codex_output_schema_binds_evidence_to_exact_supplied_ids(tmp_path: Path) -> None:
+    provider, record = fake_codex(
+        tmp_path,
+        behavior="schema = json.loads(pathlib.Path(sys.argv[sys.argv.index('--output-schema') + 1]).read_text())\n"
+        "assert schema['properties']['evidence']['items']['enum'] == ['document:one']\n",
+    )
+    result = provider.invoke("research", "Review", {"references": [{"id": "document:one"}]})
+    assert result == REPLY
+    assert "ONLY exact" in json.loads(record.read_text())["prompt"]
+    from qt.agent_hub.codex import RESPONSE_SCHEMA
+
+    assert "enum" not in RESPONSE_SCHEMA["properties"]["evidence"]["items"]

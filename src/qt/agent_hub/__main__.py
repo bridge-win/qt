@@ -18,7 +18,8 @@ from qt.agent_hub.config import files_root, load_config, state_root
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", choices=["api", "worker", "scheduler", "codex", "sandbox", "health", "once"]
+        "command",
+        choices=["api", "worker", "scheduler", "codex", "sandbox", "research", "health", "once"],
     )
     parser.add_argument("--worker-id", default="worker-1")
     parser.add_argument("--port", type=int)
@@ -30,7 +31,7 @@ def main() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.worker_id):
         parser.error("invalid worker id")
-    if args.command in {"api", "codex", "sandbox"}:
+    if args.command in {"api", "codex", "sandbox", "research"}:
         import uvicorn
 
         if args.command == "api":
@@ -48,6 +49,10 @@ def main() -> None:
             if source.is_file():
                 seed_oauth(home, source)
             app, port = create_codex_app(), args.port or 8091
+        elif args.command == "research":
+            from qt.agent_hub.research_service import create_research_app
+
+            app, port = create_research_app(), args.port or 8094
         else:
             from qt.agent_hub.sandbox_service import create_sandbox_app
 

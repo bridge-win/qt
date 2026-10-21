@@ -1,5 +1,7 @@
 # Agent Hub 本机验收记录
 
+本文是初版验收记录；本轮升级后的验证入口、范围和结果见 [Agent Hub v2](agent-hub-v2.md)。
+
 验收日期：2026-10-21，Asia/Singapore。范围是个人单宿主机 Docker 版；研究和架构决策见 [架构报告](agent-hub-architecture.md)。本文只保存去敏结果，认证文件、模型原始输出与运行数据库不进入 Git。
 
 ## 已执行结果

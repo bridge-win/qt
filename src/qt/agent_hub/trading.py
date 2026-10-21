@@ -54,6 +54,19 @@ _TERMINAL = {"FILLED", "EXPIRED", "CANCELED", "REJECTED"}
 _TOKEN = re.compile(r"[0-9]{1,78}")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_:.@-]{1,128}")
 _CURRENCIES = {"binance": "USDT", "polymarket": "pUSD"}
+_RISK_MODES = {"active": 0, "frozen": 1, "reduce_only": 2}
+_INTENT_FIELDS = frozenset(
+    {
+        "idempotency_key",
+        "venue",
+        "instrument",
+        "side",
+        "quantity",
+        "limit_price",
+        "quote_timestamp",
+        "expected_probability",
+    }
+)
 
 
 class TradingError(ValueError):
@@ -64,10 +77,16 @@ class LeaseLostError(TradingError):
     """The worker lost its execution lease before sending an order."""
 
 
+class _SendBlockedError(TradingError):
+    """A server-owned risk control changed before the exchange send."""
+
+
 def _assert_lease_guard(guard: Callable[[], bool] | None) -> None:
     if guard is not None:
         try:
             valid = guard() is True
+        except _SendBlockedError:
+            raise
         except Exception:
             valid = False
         if not valid:
@@ -1007,17 +1026,7 @@ class TradingService:
     def _intent(self, intent: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(intent, dict):
             raise TradingError("invalid_order_intent")
-        allowed = {
-            "idempotency_key",
-            "venue",
-            "instrument",
-            "side",
-            "quantity",
-            "limit_price",
-            "quote_timestamp",
-            "expected_probability",
-        }
-        if set(intent) - allowed:
+        if set(intent) - _INTENT_FIELDS:
             raise TradingError("unsupported_intent_fields")
         venue = intent.get("venue")
         if not isinstance(venue, str):
@@ -1042,6 +1051,59 @@ class TradingService:
             result["expected_probability"] = str(probability)
         return result
 
+    def _read_order(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Verify the immutable send intent, including pre-upgrade ledger rows.
+
+        Recovery reads the original decision instead of manufacturing a new
+        intent with a fresh quote. An integrity failure must never look like a
+        missing order: the caller must not send again under that key.
+        """
+        try:
+            record = json.loads(row["data"])
+            normalized = self._intent({k: v for k, v in record.items() if k in _INTENT_FIELDS})
+            fingerprint = hashlib.sha256(_json(normalized).encode()).hexdigest()
+            if (
+                fingerprint != row["fingerprint"]
+                or record.get("intent_sha256", fingerprint) != fingerprint
+                or record.get("execution_intent", normalized) != normalized
+            ):
+                raise TradingError("stored_execution_intent_integrity_error")
+        except (ValueError, TypeError, AttributeError, RecursionError):
+            raise TradingError("stored_execution_intent_integrity_error") from None
+        record["execution_intent"] = normalized
+        record["intent_sha256"] = fingerprint
+        record["risk_effect"] = "reduce_only" if normalized["side"] == "SELL" else "increase"
+        return cast(dict[str, Any], record)
+
+    def lookup_order(self, tenant_id: str, idempotency_key: str) -> dict[str, Any] | None:
+        """Recover this tenant/mode's persisted result without external calls.
+
+        Includes the immutable execution intent and its SHA-256. PREPARING,
+        SUBMITTING and UNKNOWN are recoverable states, never permission to send
+        again. Call ``reconcile`` to query those states, then read this method.
+        ``submit`` still rejects an explicitly different intent under this key.
+        """
+        tenant, key = _identifier(tenant_id), _identifier(idempotency_key)
+        with self._db() as db:
+            row = db.execute(
+                "SELECT fingerprint,data FROM hub_trade_orders WHERE tenant=? AND mode=? AND idem=?",
+                (tenant, self.mode, key),
+            ).fetchone()
+            return self._read_order(row) if row else None
+
+    def get_order(self, tenant_id: str, order_id: str) -> dict[str, Any] | None:
+        """Read an opaque public order ID inside the same tenant/mode boundary."""
+        tenant = _identifier(tenant_id)
+        if not isinstance(order_id, str) or not re.fullmatch(r"qth_[0-9a-f]{32}", order_id):
+            raise TradingError("invalid_order_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT fingerprint,data FROM hub_trade_orders "
+                "WHERE tenant=? AND mode=? AND json_extract(data,'$.order_id')=?",
+                (tenant, self.mode, order_id),
+            ).fetchone()
+            return self._read_order(row) if row else None
+
     def _existing(
         self, db: sqlite3.Connection, tenant: str, intent: dict[str, Any], fingerprint: str
     ) -> dict[str, Any] | None:
@@ -1052,7 +1114,7 @@ class TradingService:
         if row:
             if row[0] != fingerprint:
                 raise TradingError("idempotency_key_conflict")
-            return cast(dict[str, Any], json.loads(row[1]))
+            return self._read_order(row)
         return None
 
     def submit(
@@ -1096,6 +1158,9 @@ class TradingService:
         reserved = quantity * price + self._fee(normalized["venue"], quantity, price)
         record = {
             **normalized,
+            "execution_intent": normalized,
+            "intent_sha256": fingerprint,
+            "risk_effect": "reduce_only" if normalized["side"] == "SELL" else "increase",
             "mode": self.mode,
             "created_at": now,
             "updated_at": now,
@@ -1156,28 +1221,38 @@ class TradingService:
         assert adapter is not None
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            kill = db.execute(
-                "SELECT enabled FROM hub_trade_kill WHERE tenant=?", (tenant,)
-            ).fetchone()
-            if kill and kill[0]:
+            try:
+                self._check_risk_mode(db, tenant, normalized["side"])
+            except TradingError as exc:
+                record["rejection_reason"] = str(exc)
                 return self._finish(
                     db, tenant, record, {"status": "REJECTED", "filled_qty": 0, "quote_qty": 0}
                 )
             record["status"] = "SUBMITTING"
             self._save(db, tenant, record)
-        try:
+
+        def send_guard() -> bool:
             _assert_lease_guard(lease_guard)
+            try:
+                with self._db() as db:
+                    self._check_risk_mode(db, tenant, normalized["side"])
+            except TradingError as exc:
+                raise _SendBlockedError(str(exc)) from None
+            return True
+
+        try:
+            _assert_lease_guard(send_guard)
             execution_intent = {**normalized, "server_quote_timestamp": quote["timestamp"]}
             guarded_submit = getattr(adapter, "submit_guarded", None)
             result = (
-                guarded_submit(record["order_id"], execution_intent, lease_guard)
+                guarded_submit(record["order_id"], execution_intent, send_guard)
                 if callable(guarded_submit)
                 else adapter.submit(record["order_id"], execution_intent)
             )
             with self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 return self._finish(db, tenant, record, result)
-        except LeaseLostError:
+        except (LeaseLostError, _SendBlockedError) as exc:
             with self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 saved = db.execute(
@@ -1187,7 +1262,7 @@ class TradingService:
                 record = json.loads(saved[0])
                 if record.get("accounted") or record["status"] in _TERMINAL:
                     return cast(dict[str, Any], record)
-                record["rejection_reason"] = "execution_lease_lost_no_order_sent"
+                record["rejection_reason"] = str(exc)
                 return self._finish(
                     db, tenant, record, {"status": "REJECTED", "filled_qty": 0, "quote_qty": 0}
                 )
@@ -1245,20 +1320,27 @@ class TradingService:
         remote: dict[str, Any] | None,
         now: float,
     ) -> None:
-        kill = db.execute("SELECT enabled FROM hub_trade_kill WHERE tenant=?", (tenant,)).fetchone()
-        if kill and kill[0]:
-            raise TradingError("kill_switch_enabled")
+        self._check_risk_mode(db, tenant, intent["side"])
         scope = (tenant, self.mode)
         rows = db.execute(
-            "SELECT status,reserved,day FROM hub_trade_orders WHERE tenant=? AND mode=?", scope
+            "SELECT status,reserved,day,data FROM hub_trade_orders WHERE tenant=? AND mode=?", scope
         ).fetchall()
         if any(row["status"] in _OPEN for row in rows):
             raise TradingError("unresolved_order_reconcile_required")
         if reserved > self.max_order_quote:
             raise TradingError("max_order_quote_exceeded_including_fee_reserve")
         day = time.strftime("%Y-%m-%d", time.gmtime(now))
-        used = sum((Decimal(row["reserved"]) for row in rows if row["day"] == day), _ZERO)
-        if used + reserved > self.max_daily_quote:
+        # SELL is always a bounded spot inventory reduction. It does not spend
+        # the new-risk budget, nor refund an earlier BUY's consumption of it.
+        used = sum(
+            (
+                Decimal(row["reserved"])
+                for row in rows
+                if row["day"] == day and json.loads(row["data"])["side"] == "BUY"
+            ),
+            _ZERO,
+        )
+        if intent["side"] == "BUY" and used + reserved > self.max_daily_quote:
             raise TradingError("max_daily_quote_exceeded")
         venue = intent["venue"]
         if self.mode == "paper":
@@ -1445,12 +1527,35 @@ class TradingService:
         }
 
     def set_kill(self, tenant_id: str, enabled: bool) -> dict[str, Any]:
-        tenant = _identifier(tenant_id)
         if not isinstance(enabled, bool):
             raise TradingError("kill_requires_boolean")
+        return self.set_risk_mode(tenant_id, "frozen" if enabled else "active")
+
+    def set_risk_mode(self, tenant_id: str, mode: str) -> dict[str, Any]:
+        """Persist active / inventory reductions only / all new sends frozen.
+
+        Existing kill rows 0/1 remain active/frozen; value 2 adds reduce-only
+        without migrating or weakening the former full-stop semantics.
+        """
+        tenant = _identifier(tenant_id)
+        if not isinstance(mode, str) or mode not in _RISK_MODES:
+            raise TradingError("unsupported_risk_mode")
         with self._db() as db:
-            db.execute("INSERT OR REPLACE INTO hub_trade_kill VALUES(?,?)", (tenant, int(enabled)))
+            db.execute(
+                "INSERT OR REPLACE INTO hub_trade_kill VALUES(?,?)", (tenant, _RISK_MODES[mode])
+            )
         return self.status(tenant)
+
+    @staticmethod
+    def _check_risk_mode(db: sqlite3.Connection, tenant: str, side: str) -> None:
+        control = db.execute(
+            "SELECT enabled FROM hub_trade_kill WHERE tenant=?", (tenant,)
+        ).fetchone()
+        value = control[0] if control else 0
+        if value not in {0, 2}:
+            raise TradingError("kill_switch_enabled")
+        if value == 2 and side != "SELL":
+            raise TradingError("reduce_only_mode_new_risk_blocked")
 
     def status(self, tenant_id: str) -> dict[str, Any]:
         tenant = _identifier(tenant_id)
@@ -1464,9 +1569,23 @@ class TradingService:
                 + ")",
                 (tenant, self.mode, *_OPEN),
             ).fetchone()[0]
+            rows = db.execute(
+                "SELECT reserved,data FROM hub_trade_orders WHERE tenant=? AND mode=? AND day=?",
+                (tenant, self.mode, time.strftime("%Y-%m-%d", time.gmtime())),
+            ).fetchall()
+        risk_mode = next(
+            (name for name, value in _RISK_MODES.items() if value == (kill[0] if kill else 0)),
+            "frozen",
+        )
+        increase_used = sum(
+            (Decimal(row["reserved"]) for row in rows if json.loads(row["data"])["side"] == "BUY"),
+            _ZERO,
+        )
+        turnover = sum((Decimal(row["reserved"]) for row in rows), _ZERO)
         return {
             "mode": self.mode,
-            "kill_enabled": bool(kill and kill[0]),
+            "kill_enabled": risk_mode == "frozen",
+            "risk_mode": risk_mode,
             "unresolved_orders": unresolved,
             "readiness_kind": "configuration_only_not_live_acceptance",
             "execution_enabled": self.mode != "paper"
@@ -1487,13 +1606,22 @@ class TradingService:
                 "max_order_quote": str(self.max_order_quote),
                 "max_position_quote": str(self.max_position_quote),
                 "max_daily_quote": str(self.max_daily_quote),
+                "daily_limit_policy": "new_risk_buy_including_fees_sell_does_not_refund",
+            },
+            "daily_usage": {
+                "timezone": "UTC",
+                "new_risk_quote": str(increase_used),
+                "new_risk_remaining_quote": str(max(_ZERO, self.max_daily_quote - increase_used)),
+                "turnover_quote_including_fees_and_open_reservations": str(turnover),
+                "sell_reduce_only_quote": str(turnover - increase_used),
             },
             "limitations": [
                 "paper_is_not_live_acceptance",
                 "no_margin_shorting_redemption_or_withdrawal",
                 "dedicated_execution_account_required",
                 "unknown_orders_are_never_resent",
-                "daily_limit_counts_both_sides_including_fees",
+                "daily_new_risk_budget_counts_buy_including_fees",
+                "reduce_only_sell_still_requires_limits_inventory_market_and_no_unknown_orders",
             ],
         }
 

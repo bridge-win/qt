@@ -82,7 +82,28 @@ jobs:
         run: >-
           pytest tests/nautilus
           tests/lab/test_lab_service.py::test_strict_validation_and_compare_use_real_native_executor_payload
+          tests/test_agent_hub_research.py
           -q
+
+  agent-hub-image:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build hash-locked Agent Hub test image
+        run: >-
+          docker buildx build --load --platform linux/amd64
+          --file Dockerfile.agent-hub --target test --tag qt-agent-hub-tests:ci .
+      - name: Run all Hub fixtures and required production SDK contract without credentials
+        run: |
+          docker run --rm --network none --read-only \
+            --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges \
+            --memory 2g --cpus 2 --pids-limit 128 \
+            --tmpfs /tmp:size=256m,mode=1777,exec \
+            --mount "type=bind,source=${GITHUB_WORKSPACE}/tests,target=/tests,readonly" \
+            qt-agent-hub-tests:ci
 
   platform-postgresql:
     runs-on: ubuntu-latest

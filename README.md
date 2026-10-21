@@ -30,12 +30,16 @@ existing capabilities from proposed additions.
 
 ## Personal ResearchOps Agent Hub
 
+The [Agent Hub v2 architecture and release guide](docs/agent-hub-v2.md) describes
+the current native research integration, evidence/proposal gates, versioned
+memory and skills, MCP compatibility, telemetry, Docker tests and prelaunch checks.
+
 The [2026-10-21 project review](docs/project-review-2026-10-21.md) covers the
 actual architecture, usage, current enterprise agent practices, and prioritized
 gaps, including reproduced execution-recovery and protective-exit issues.
 
 The [Agent Hub architecture and operator guide](docs/agent-hub-architecture.md)
-documents the additive eight-service Docker stack and one-shot volume initializer:
+documents the original Docker baseline and one-shot volume initializer:
 six Codex roles, durable jobs, scheduled research, bounded RSS headlines,
 lexical evidence retrieval, expiring memory, a separate
 fixed-function backtest executor, and a bounded paper-trading ledger. Start with
