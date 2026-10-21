@@ -30,7 +30,9 @@ existing capabilities from proposed additions.
 
 ## Personal ResearchOps Agent Hub
 
-最新复核：[Agent Hub 2.1 企业架构、Trace、回测与机会发现](docs/agent-hub-enterprise-review-2026-10.md)。
+最新架构对照：[逐模块全栈选型、当前差距与演进建议](docs/agent-hub-full-stack-architecture-review-2026-10.md)。
+
+实现与验收记录：[Agent Hub 2.1 企业架构、Trace、回测与机会发现](docs/agent-hub-enterprise-review-2026-10.md)。
 
 The [Agent Hub v2 architecture and release guide](docs/agent-hub-v2.md) describes
 the original native research integration, evidence/proposal gates, versioned
