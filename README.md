@@ -30,6 +30,10 @@ existing capabilities from proposed additions.
 
 ## Personal ResearchOps Agent Hub
 
+The [2026-10-21 project review](docs/project-review-2026-10-21.md) covers the
+actual architecture, usage, current enterprise agent practices, and prioritized
+gaps, including reproduced execution-recovery and protective-exit issues.
+
 The [Agent Hub architecture and operator guide](docs/agent-hub-architecture.md)
 documents the additive eight-service Docker stack and one-shot volume initializer:
 six Codex roles, durable jobs, scheduled research, bounded RSS headlines,
