@@ -30,6 +30,8 @@ existing capabilities from proposed additions.
 
 ## Personal ResearchOps Agent Hub
 
+行业调研与优化方案（2026-10-21）：[同类金融 Agent 产品、企业 Agent 实践、专题调研、差距矩阵、目标架构与 UI 方案](docs/industry-research-and-optimization-plan-2026-10.md)。
+
 最新架构对照：[逐模块全栈选型、当前差距与演进建议](docs/agent-hub-full-stack-architecture-review-2026-10.md)。
 
 实现与验收记录：[Agent Hub 2.1 企业架构、Trace、回测与机会发现](docs/agent-hub-enterprise-review-2026-10.md)。
