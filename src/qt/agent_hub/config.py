@@ -11,7 +11,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ROLES = ("research", "analysis", "backtest", "forecast", "risk_review", "log_review")
-KINDS = (*ROLES, "pipeline", "monitor", "execute", "import_context")
+KINDS = (*ROLES, "pipeline", "discover", "monitor", "execute", "import_context")
 
 
 class Role(BaseModel):

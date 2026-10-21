@@ -12,7 +12,7 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from qt.agent_hub.config import ROLES, HubConfig
 from qt.agent_hub.context import _safe_path
@@ -23,6 +23,7 @@ class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal[
         "pipeline",
+        "discover",
         "research",
         "analysis",
         "backtest",
@@ -38,9 +39,17 @@ class JobRequest(BaseModel):
     outcome_token: str | None = Field(default=None, max_length=78)
     strategy: Literal["ma_trend"] = "ma_trend"
     auto_execute: bool = False
+    candidate_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_scan_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     idempotency_key: str = Field(
         default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=200
     )
+
+    @model_validator(mode="after")
+    def candidate_identity(self):
+        if (self.candidate_id is None) != (self.source_scan_id is None):
+            raise ValueError("candidate_id_and_source_scan_id_required_together")
+        return self
 
 
 class DocumentRequest(BaseModel):
@@ -73,11 +82,17 @@ class RiskModeRequest(BaseModel):
     mode: Literal["active", "reduce_only", "frozen"]
 
 
+class OpportunityReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["watching", "rejected", "archived"]
+    note: str = Field(default="", max_length=2000)
+
+
 def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> FastAPI:
     service = runtime or HubRuntime(config, root, files)
     tenant = config.tenant_id
     app = FastAPI(
-        title="QT Agent Hub", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None
+        title="QT Agent Hub", version="2.1.0", docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.runtime = service
 
@@ -152,16 +167,18 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
             },
             "retrieval": "SQLite FTS5/BM25 with CJK fallback; no embedding model",
             "sandbox": "isolated fixed-function numerical executor",
-            "version": "2.0.0",
+            "version": "2.1.0",
         }
 
     @app.get("/api/capabilities", dependencies=auth)
     def capabilities() -> dict:
         return {
-            "version": "2.0.0",
+            "version": "2.1.0",
             "deployment": "personal-single-host-docker",
             "provider": "local-codex-online-inference-serialized-shared-auth",
             "workflow": "durable-six-role-workflow-with-fenced-execution",
+            "opportunities": "public-btc-and-prediction-market-screens-with-immutable-snapshots-no-trading-approval",
+            "observability": "persistent-agent-model-tool-retrieval-spans-and-optional-langfuse-otlp",
             "evidence": "run-receipts-version-hash-tenant-and-time-validation",
             "memory": "versioned-short-long-with-ttl-and-historical-views",
             "retrieval": "lexical-fts5-cjk-and-authorized-bounded-chunk-readback",
@@ -202,6 +219,74 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
 
         return readiness(service)
 
+    @app.get("/api/runs/{run_id}", dependencies=auth)
+    def run_details(run_id: str) -> dict:
+        jobs = service.store.run_jobs(tenant, run_id)
+        if not jobs:
+            raise HTTPException(404, "run not found")
+        return {"run_id": run_id, "items": jobs[:1000], "truncated": len(jobs) > 1000}
+
+    @app.get("/api/runs/{run_id}/diagnostics", dependencies=auth)
+    def run_diagnostics(run_id: str) -> dict:
+        jobs = service.store.run_jobs(tenant, run_id)
+        if not jobs:
+            raise HTTPException(404, "run not found")
+        report = service.governance.diagnostics(tenant, run_id)
+        report["jobs_truncated"] = len(jobs) > 1000
+        report["steps"] = [
+            {
+                "id": item["id"],
+                "kind": item["kind"],
+                "status": item["status"],
+                "attempts": item["attempts"],
+                "error_type": item.get("error"),
+                "outcome": (item.get("result") or {}).get("status"),
+                "reason": (item.get("result") or {}).get("reason"),
+                "evidence_valid": (item.get("result") or {})
+                .get("evidence_validation", {})
+                .get("valid"),
+                "release_sha256": (item.get("result") or {}).get("release_sha256"),
+            }
+            for item in jobs[:1000]
+        ]
+        return report
+
+    @app.get("/api/spans", dependencies=auth)
+    def spans(
+        run_id: str | None = Query(default=None, min_length=1, max_length=128),
+        trace_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+        limit: int = Query(default=300, ge=1, le=1000),
+    ) -> dict:
+        if not run_id and not trace_id:
+            raise HTTPException(422, "run_id or trace_id required")
+        return {
+            "items": service.governance.spans(tenant, run_id=run_id, trace_id=trace_id, limit=limit)
+        }
+
+    @app.get("/api/trace/{trace_id}/diagnostics", dependencies=auth)
+    def trace_diagnostics(trace_id: str) -> dict:
+        run_id = service.governance.find_run_by_trace_id(tenant, trace_id)
+        if run_id is None:
+            raise HTTPException(404, "trace not found")
+        return run_diagnostics(run_id)
+
+    @app.get("/api/opportunities", dependencies=auth)
+    def opportunities() -> dict:
+        return service.opportunities.summary(tenant)
+
+    @app.get("/api/opportunities/scans/{scan_id}", dependencies=auth)
+    def opportunity_scan(scan_id: str) -> dict:
+        result = service.opportunities.scan_detail(tenant, scan_id)
+        if result is None:
+            raise HTTPException(404, "scan not found")
+        return result
+
+    @app.post("/api/opportunities/{candidate_id}/review", dependencies=auth)
+    def opportunity_review(candidate_id: str, body: OpportunityReviewRequest) -> dict:
+        if service.opportunities.get(tenant, candidate_id) is None:
+            raise HTTPException(404, "candidate not found")
+        return service.opportunities.review(tenant, candidate_id, **body.model_dump())
+
     @app.get("/api/roles", dependencies=auth)
     def roles() -> dict:
         return {"items": {name: value.model_dump() for name, value in config.roles.items()}}
@@ -213,6 +298,26 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
     @app.post("/api/jobs", dependencies=auth, status_code=202)
     def enqueue(body: JobRequest) -> dict:
         payload = body.model_dump(exclude={"kind", "idempotency_key"})
+        if body.candidate_id is not None:
+            snapshot = service.opportunities.scan_detail(tenant, body.source_scan_id)
+            selected = next(
+                (
+                    item
+                    for item in (snapshot or {}).get("candidates", [])
+                    if item["id"] == body.candidate_id
+                ),
+                None,
+            )
+            if selected is None:
+                raise HTTPException(404, "candidate observation not found")
+            target = body.outcome_token if body.venue == "polymarket" else body.instrument
+            if selected["venue"] != body.venue or selected["instrument"] != target:
+                raise HTTPException(422, "candidate does not match requested instrument")
+            payload["selected_candidate"] = {
+                **selected,
+                "source_scan_id": body.source_scan_id,
+                "source_scan_sha256": snapshot["sha256"],
+            }
         return service.store.enqueue(
             tenant, body.kind, payload, idempotency_key=body.idempotency_key
         )

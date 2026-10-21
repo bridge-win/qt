@@ -438,6 +438,20 @@ class HubStore:
             ).fetchone()
             return _job(row) if row is not None else None
 
+    def run_jobs(self, tenant_id: str, run_id: str) -> list[JsonDict]:
+        """Fetch a workflow directly; monitoring traffic cannot evict its history."""
+        tenant_id, run_id = _text(tenant_id, "tenant_id"), _text(run_id, "run_id")
+        with self._connection() as connection:
+            return [
+                _job(row)
+                for row in connection.execute(
+                    "SELECT * FROM hub_jobs WHERE tenant_id=? AND "
+                    "(id=? OR json_extract(payload_json,'$.pipeline_id')=?) "
+                    "ORDER BY created_at,rowid LIMIT 1001",
+                    (tenant_id, run_id, run_id),
+                ).fetchall()
+            ]
+
     def list_jobs(self, tenant_id: str, limit: int = 100) -> list[JsonDict]:
         tenant_id, limit = _text(tenant_id, "tenant_id"), _integer(limit, "limit", 1, 1000)
         with self._connection() as connection:

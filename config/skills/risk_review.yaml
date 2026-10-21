@@ -1,9 +1,10 @@
 # Server-owned manifest. Models cannot modify permissions.
 skill_id: qt-risk-review
-version: 1.0.0
+version: 1.1.0
 role: risk_review
 description: Review a specific immutable proposal against evidence and policy.
 allowed_tools:
+- opportunities.read
 - context.search
 - context.read_chunk
 - market.quote

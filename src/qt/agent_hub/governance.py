@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from qt.agent_hub.context import identifier
+from qt.agent_hub.observability import safe_fields
+from qt.agent_hub.tracing import InvocationLedger
 
 
 def digest(value: Any) -> str:
@@ -24,7 +26,7 @@ def digest(value: Any) -> str:
     ).hexdigest()
 
 
-class Governance:
+class Governance(InvocationLedger):
     def __init__(self, root: Path) -> None:
         self.path = root / "governance.sqlite3"
         root.mkdir(parents=True, exist_ok=True)
@@ -41,6 +43,7 @@ class Governance:
                     duration REAL NOT NULL, metadata TEXT NOT NULL, created_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS trace_run ON execution_traces(tenant,run_id,id);
             """)
+            self.initialize_spans(db)
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -113,23 +116,7 @@ class Governance:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         # Deliberate allowlist: no prompt, credential, raw exception, or reasoning.
-        fields = {
-            k: v
-            for k, v in (metadata or {}).items()
-            if k
-            in {
-                "model",
-                "provider",
-                "usage",
-                "error_type",
-                "accepted",
-                "lease_token",
-                "evidence_valid",
-                "proposal_hash",
-                "validation_status",
-                "reason",
-            }
-        }
+        fields = safe_fields(metadata)
         usage = fields.get("usage")
         if isinstance(usage, dict):
             fields["usage"] = {
@@ -167,7 +154,14 @@ class Governance:
         with suppress(Exception):
             from qt.agent_hub.observability import export_step
 
-            export_step(tenant, run_id, step_id, kind, status, duration, fields)
+            with self._db() as db:
+                instrumented = db.execute(
+                    "SELECT 1 FROM invocation_spans WHERE tenant=? AND run_id=? "
+                    "AND step_id=? LIMIT 1",
+                    (tenant, run_id, step_id),
+                ).fetchone()
+            if not instrumented:
+                export_step(tenant, run_id, step_id, kind, status, duration, fields)
 
     def traces(
         self, tenant: str, run_id: str | None = None, limit: int = 200
@@ -207,13 +201,21 @@ class Governance:
                 f"qt_agent_steps_total{{{labels}}} {row['n']}",
                 f"qt_agent_duration_seconds_sum{{{labels}}} {row['seconds']}",
             ]
-        return "\n".join(lines) + "\n"
+        return "\n".join(lines) + "\n" + self.span_metrics(tenant)
 
 
 def attach_tool_evidence(context: dict[str, Any]) -> None:
     """Give deterministic tool results content-addressed IDs that models can cite."""
     references = list(context.get("references", []))
-    for key in ("market", "market_history", "experiment", "verified_backtest", "public_sources"):
+    for key in (
+        "market",
+        "market_history",
+        "experiment",
+        "verified_backtest",
+        "public_sources",
+        "opportunities",
+        "selected_opportunity",
+    ):
         value = context.get(key)
         if not value or (isinstance(value, dict) and value.get("ready") is False):
             continue

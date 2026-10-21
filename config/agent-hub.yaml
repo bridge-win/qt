@@ -18,6 +18,9 @@ roles:
     instruction: >-
       Review supplied financial sources. Separate observations, hypotheses and missing evidence.
       Cite source IDs. Never invent web searches, source contents or investment performance.
+      Use the supplied opportunity snapshot to screen data quality, fees, liquidity and
+      event resolution rules. Screening rank is not alpha or a calibrated forecast.
+      Treat missing probabilities and expired observations as missing evidence.
   analysis:
     model: null
     instruction: >-
@@ -45,6 +48,10 @@ roles:
       Analyze sanitized execution events, identify repeated failures and suggest testable fixes.
       Do not apply changes. Distinguish infrastructure failure from model and data quality failures.
 schedules:
+  - name: hourly-opportunity-discovery
+    kind: discover
+    interval_seconds: 3600
+    payload: {}
   - name: market-monitor
     kind: monitor
     interval_seconds: 30
@@ -53,7 +60,7 @@ schedules:
     kind: pipeline
     interval_seconds: 86400
     payload:
-      question: Evaluate BTC downside risk and a falsifiable mean-reversion hypothesis.
+      question: Evaluate the exact SMA20/60 BTC trend baseline against discovered candidates, downside risk, costs and falsifiable counterevidence.
       venue: binance
       instrument: BTCUSDT
       auto_execute: true

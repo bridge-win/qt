@@ -23,6 +23,7 @@ if [[ "${1:-}" == hub-* ]]; then
   "${DOCKER[@]}" info --format '{{.OSType}}/{{.Architecture}}' >/dev/null
   "${HUB[@]}" config --quiet
   case "$1" in
+    hub-observability) shift; exec "$ROOT/deploy/hub-observability.sh" "$@" ;;
     hub-up) "${HUB[@]}" up --build -d --wait --wait-timeout 240 ;;
     hub-status) "${HUB[@]}" ps ;;
     hub-check) "${HUB[@]}" exec -T api python -m qt.agent_hub.verify ;;
@@ -37,7 +38,7 @@ if [[ "${1:-}" == hub-* ]]; then
     hub-stop) shift; "${HUB[@]}" stop "$@" ;;
     hub-start) shift; "${HUB[@]}" start "$@" ;;
     hub-down) "${HUB[@]}" down ;;
-    *) echo 'Use hub-init|hub-up|hub-status|hub-test [pytest args]|hub-native-test [pytest args]|hub-ui-test|hub-build [service...]|hub-config|hub-check|hub-exec SERVICE COMMAND...|hub-logs [service]|hub-restart [service]|hub-stop [service...]|hub-start [service...]|hub-down' >&2; exit 2 ;;
+    *) echo 'Use hub-init|hub-up|hub-status|hub-test [pytest args]|hub-native-test [pytest args]|hub-ui-test|hub-observability init/up/connect/status/check/stop|hub-build [service...]|hub-config|hub-check|hub-exec SERVICE COMMAND...|hub-logs [service]|hub-restart [service]|hub-stop [service...]|hub-start [service...]|hub-down' >&2; exit 2 ;;
   esac
   exit
 fi

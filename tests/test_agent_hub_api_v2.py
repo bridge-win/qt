@@ -53,7 +53,7 @@ def test_capabilities_report_real_boundaries_and_skill_contracts(client: TestCli
     response = client.get("/api/capabilities", headers=HEADERS)
     assert response.status_code == 200
     result = response.json()
-    assert result["version"] == "2.0.0"
+    assert result["version"] == "2.1.0"
     assert "funded-live-account-acceptance" in result["unverified_or_unimplemented"]
     assert result["mcp"]["protocol"] == "2026-07-28"
     skills = client.get("/api/skills", headers=HEADERS).json()["items"]
@@ -245,3 +245,24 @@ def test_custom_host_port_preserves_internal_loopback_origin(client, monkeypatch
     assert (
         client.get("/api/status", headers={"Origin": "https://attacker.invalid"}).status_code == 403
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/opportunities",
+        "/api/opportunities/scans/missing",
+        "/api/runs/missing",
+        "/api/runs/missing/diagnostics",
+        "/api/spans?run_id=missing",
+        "/api/trace/missing/diagnostics",
+    ],
+)
+def test_diagnostics_and_discovery_require_authentication(client: TestClient, path: str) -> None:
+    assert client.get(path).status_code == 401
+
+
+def test_span_query_requires_bounded_identifiers(client: TestClient) -> None:
+    for query in ("", "?trace_id=invalid", "?run_id=x&limit=1001"):
+        assert client.get("/api/spans" + query, headers=HEADERS).status_code == 422
+    assert client.get("/api/runs/absent/diagnostics", headers=HEADERS).status_code == 404

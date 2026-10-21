@@ -23,6 +23,7 @@ from qt.agent_hub.codex import CodexBusyError, _home_lock
 from qt.agent_hub.codex_service import create_codex_app
 from qt.agent_hub.config import ROLES, HubConfig, Role
 from qt.agent_hub.context import ContextStore
+from qt.agent_hub.evaluation import Discovery
 from qt.agent_hub.research import native_bridge_fingerprint
 from qt.agent_hub.runtime import HubRuntime, RemoteCodex
 from qt.agent_hub.sandbox import validate_request
@@ -131,6 +132,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
             "fixture": True,
         },
     )
+    monkeypatch.setattr("qt.agent_hub.opportunities.OpportunityScanner.scan", Discovery.scan)
     monkeypatch.setenv("QT_AGENT_HUB_SERVICE_TOKEN", TOKEN)
     monkeypatch.setenv("QT_AGENT_HUB_EXECUTOR_TOKEN", TOKEN)
 
@@ -313,7 +315,7 @@ def test_pipeline_runs_six_independent_roles_in_order_and_persists_links(
     )
     root_job = _enqueue(runtime, "pipeline", question="BTC evidence market", auto_execute=False)
     jobs = _drain(runtime)
-    assert [job["kind"] for job in jobs] == ["pipeline", *ROLES]
+    assert [job["kind"] for job in jobs] == ["pipeline", "discover", *ROLES]
     assert all(job["status"] == "succeeded" for job in jobs)
     provider = runtime.provider
     assert isinstance(provider, FixtureProvider)
@@ -347,8 +349,8 @@ def test_pipeline_continues_after_process_recreation_with_same_ledger(runtime: H
         sandbox=OfflineSandbox(),
     )
     jobs = _drain(recreated)
-    assert [job["kind"] for job in jobs] == list(ROLES)
-    assert len(recreated.store.list_jobs(TENANT)) == 7
+    assert [job["kind"] for job in jobs] == ["discover", *ROLES]
+    assert len(recreated.store.list_jobs(TENANT)) == 8
     assert recreated.run_once("third-worker") is None
 
 
@@ -788,7 +790,7 @@ def test_pipeline_bounds_accumulated_prior_answers_before_provider_input(
     runtime.provider = LargeValidAnswers()
     _enqueue(runtime, "pipeline", question="bounded context evidence", auto_execute=False)
     jobs = _drain(runtime)
-    assert [job["kind"] for job in jobs] == ["pipeline", *ROLES]
+    assert [job["kind"] for job in jobs] == ["pipeline", "discover", *ROLES]
     assert all(job["status"] == "succeeded" for job in jobs)
 
 
@@ -953,7 +955,7 @@ def test_repeated_executor_busy_does_not_deadletter_the_six_role_pipeline(
     else:
         raise AssertionError("pipeline failed to recover after admission became available")
     jobs = runtime.store.list_jobs(TENANT)
-    assert len(jobs) == 7
+    assert len(jobs) == 8
     assert all(job["status"] == "succeeded" for job in jobs)
     assert all(job["attempts"] == 1 for job in jobs)
     assert [call["role"] for call in runtime.provider.calls] == list(ROLES)
@@ -967,8 +969,8 @@ def _queue_reviewed_execution(runtime: HubRuntime) -> None:
     runtime.config = runtime.config.model_copy(update={"auto_execute": True})
     runtime.provider = FixtureProvider(decision="propose")
     _enqueue(runtime, "pipeline", auto_execute=True)
-    for _ in range(7):
-        if runtime.run_once("agent-worker", kinds=["pipeline", *ROLES]) is None:
+    for _ in range(8):
+        if runtime.run_once("agent-worker", kinds=["pipeline", "discover", *ROLES]) is None:
             break
     else:
         raise AssertionError("review did not finish")
@@ -1013,4 +1015,147 @@ def test_execution_rejects_changed_or_unavailable_native_engine(
     execution = runtime.run_once("market-worker", kinds=["execute"])
     assert execution and execution["status"] == "succeeded"
     assert execution["result"]["reason"] == "research_engine_changed_or_unavailable"
+    assert not runtime.trading.orders(TENANT)
+
+
+def test_complete_workflow_has_nested_model_tool_and_retrieval_spans(runtime: HubRuntime) -> None:
+    root = _enqueue(runtime, "pipeline", question="trace evidence", auto_execute=False)
+    steps = _drain(runtime)
+    assert all(item["status"] == "succeeded" for item in steps)
+    spans = runtime.governance.spans(TENANT, root["id"])
+    assert len({span["trace_id"] for span in spans}) == 1
+    models = [span for span in spans if span["operation"] == "model"]
+    assert len(models) == 6
+    by_id = {span["span_id"]: span for span in spans}
+    for span in models:
+        assert by_id[span["parent_span_id"]]["operation"] == "agent"
+        assert len(span["metadata"]["input_sha256"]) == 64
+        assert len(span["metadata"]["output_sha256"]) == 64
+    assert {
+        "opportunities.scan",
+        "market.history",
+        "sandbox.backtest",
+        "research.native_validation",
+    } <= {span["name"] for span in spans}
+    assert all(span["parent_span_id"] is None or span["parent_span_id"] in by_id for span in spans)
+    research = next(
+        span for span in spans if span["operation"] == "agent" and span["name"] == "research"
+    )
+    assert by_id[research["parent_span_id"]]["name"] == "discover"
+    assert "trace evidence" not in json.dumps(spans)
+    assert runtime.governance.diagnostics(TENANT, root["id"])["model_calls"] == 6
+
+
+def test_run_query_remains_complete_under_monitor_traffic_and_tenant_isolation(
+    runtime: HubRuntime,
+    client: TestClient,
+) -> None:
+    root = _enqueue(runtime, "pipeline", question="history", auto_execute=False)
+    _drain(runtime)
+    for number in range(220):
+        runtime.store.enqueue(TENANT, "monitor", {}, idempotency_key=f"churn-{number}")
+    assert {job["kind"] for job in runtime.store.list_jobs(TENANT)} == {"monitor"}
+    response = client.get(f"/api/runs/{root['id']}", headers=HEADERS)
+    assert response.status_code == 200 and len(response.json()["items"]) == 8
+    assert not response.json()["truncated"]
+    diagnosis = client.get(f"/api/runs/{root['id']}/diagnostics", headers=HEADERS).json()
+    trace = diagnosis["trace_id"]
+    assert diagnosis["model_calls"] == 6 and len(diagnosis["steps"]) == 8
+    assert client.get(f"/api/spans?trace_id={trace}", headers=HEADERS).json()["items"]
+    assert (
+        client.get(f"/api/trace/{trace}/diagnostics", headers=HEADERS).json()["run_id"]
+        == root["id"]
+    )
+    foreign = runtime.store.enqueue("bravo", "research", {}, idempotency_key="foreign-diagnostic")
+    with runtime.governance.invocation("bravo", foreign["id"], foreign["id"], "research"):
+        pass
+    foreign_trace = runtime.governance.diagnostics("bravo", foreign["id"])["trace_id"]
+    assert client.get(f"/api/runs/{foreign['id']}", headers=HEADERS).status_code == 404
+    assert client.get(f"/api/trace/{foreign_trace}/diagnostics", headers=HEADERS).status_code == 404
+    assert client.get(f"/api/spans?trace_id={foreign_trace}", headers=HEADERS).json()["items"] == []
+
+
+def test_discovery_is_persisted_and_cannot_directly_enqueue_orders(
+    runtime: HubRuntime,
+    client: TestClient,
+) -> None:
+    job = client.post(
+        "/api/jobs", headers=HEADERS, json={"kind": "discover", "auto_execute": True}
+    ).json()
+    completed = runtime.run_once("discovery-worker", kinds=["discover"])
+    assert completed and completed["id"] == job["id"] and completed["status"] == "succeeded"
+    summary = client.get("/api/opportunities", headers=HEADERS).json()
+    assert summary["scan_count"] == 1 and summary["execution_authorized"] is False
+    snapshot = client.get(
+        f"/api/opportunities/scans/{summary['latest_scan']['id']}", headers=HEADERS
+    ).json()
+    assert snapshot["sha256"] == completed["result"]["sha256"]
+    assert not runtime.trading.orders(TENANT)
+    assert runtime.run_once("another-worker") is None
+
+
+def test_selected_candidate_binds_original_observation_even_when_new_scan_omits_it(
+    runtime: HubRuntime,
+    client: TestClient,
+) -> None:
+    from qt.agent_hub.opportunities import _hash
+
+    candidate = {
+        "id": "a" * 64,
+        "venue": "binance",
+        "instrument": "BTCUSDT",
+        "observed_at": time.time() - 600,
+        "expires_at": time.time() - 540,
+        "title": "Original BTC candidate",
+        "execution_authorized": False,
+        "net_edge": None,
+    }
+    candidate["observation_id"] = _hash(candidate)
+    snapshot = {
+        "id": "b" * 32,
+        "tenant_id": TENANT,
+        "generated_at": time.time() - 600,
+        "status": "complete",
+        "candidates": [candidate],
+        "sources": [],
+        "errors": [],
+        "execution_authorized": False,
+    }
+    snapshot["sha256"] = _hash(snapshot)
+    runtime.opportunities.record(TENANT, snapshot)
+    request = {
+        "candidate_id": candidate["id"],
+        "source_scan_id": snapshot["id"],
+        "auto_execute": False,
+    }
+    assert (
+        client.post(
+            "/api/jobs", headers=HEADERS, json={**request, "instrument": "ETHUSDT"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/jobs", headers=HEADERS, json={"candidate_id": candidate["id"]}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/jobs", headers=HEADERS, json={**request, "source_scan_id": "c" * 32}
+        ).status_code
+        == 404
+    )
+    accepted = client.post("/api/jobs", headers=HEADERS, json=request)
+    assert accepted.status_code == 202
+    steps = _drain(runtime)
+    assert all(step["status"] == "succeeded" for step in steps)
+    research_context = runtime.provider.calls[0]["context"]
+    selected = research_context["selected_opportunity"]
+    assert selected["observation"]["observation_id"] == candidate["observation_id"]
+    assert selected["observation"]["source_scan_sha256"] == snapshot["sha256"]
+    assert selected["is_historical_observation"] is True
+    assert selected["execution_authorized"] is False
+    assert research_context["opportunities"]["candidates"] == []
+    assert any(ref["source"] == "selected_opportunity" for ref in research_context["references"])
     assert not runtime.trading.orders(TENANT)

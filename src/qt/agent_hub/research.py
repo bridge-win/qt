@@ -21,6 +21,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from qt.agent_hub.context import identifier
+from qt.agent_hub.tracing import traceparent
 
 _DAY_MS = 86_400_000
 
@@ -34,7 +35,7 @@ def digest(value: Any) -> str:
 def native_bridge_fingerprint() -> str:
     """Same lightweight source identity in the Hub and native worker images."""
     checksum = hashlib.sha256()
-    for name in ("research.py", "research_service.py"):
+    for name in ("research.py", "research_service.py", "quant_validation.py"):
         checksum.update(Path(__file__).with_name(name).read_bytes())
     return checksum.hexdigest()
 
@@ -187,6 +188,24 @@ class ValidationReport(Contract):
             self.verdict == "paper_research_candidate" and not self.failed_gates
         ):
             raise ValueError("validation report eligibility is inconsistent")
+        delayed = self.costs.get("execution_stress_oos")
+        if (
+            self.eligible_for_paper and delayed is not None
+            and (
+                not isinstance(delayed, dict)
+                or delayed.get("status") != "verified"
+                or not isinstance(delayed.get("metrics"), dict)
+                or delayed["metrics"].get("total_return", 0) <= 0
+            )
+        ):
+            raise ValueError("eligible report does not pass delayed execution stress")
+        bootstrap = self.statistics.get("fold_bootstrap")
+        if (
+            self.eligible_for_paper
+            and bootstrap is not None
+            and (not isinstance(bootstrap, dict) or bootstrap.get("worst_return_p05", 0) <= 0)
+        ):
+            raise ValueError("eligible report does not pass OOS bootstrap lower bound")
         if (
             self.engine.get("name") != "nautilus_trader"
             or self.integrity.get("account_invariants") != "verified"
@@ -243,6 +262,13 @@ class RemoteResearch:
         self.url = (url or os.environ.get("QT_AGENT_HUB_RESEARCH_URL", "")).rstrip("/")
         self.token = token or os.environ.get("QT_AGENT_HUB_EXECUTOR_TOKEN", "")
 
+    def _headers(self) -> dict[str, str]:
+        headers = {"Authorization": "Bearer " + self.token}
+        current = traceparent()
+        if current is not None:
+            headers["traceparent"] = current
+        return headers
+
     def health(self) -> dict[str, Any]:
         parsed = urlsplit(self.url)
         if (
@@ -259,7 +285,7 @@ class RemoteResearch:
         with (
             httpx.Client(timeout=5, trust_env=False, follow_redirects=False) as client,
             client.stream(
-                "GET", self.url + "/healthz", headers={"Authorization": "Bearer " + self.token}
+                "GET", self.url + "/healthz", headers=self._headers()
             ) as response,
         ):
             response.raise_for_status()
@@ -296,7 +322,7 @@ class RemoteResearch:
             tenant_id=identifier(tenant_id),
             job_id=identifier(job_id),
             spec=spec,
-            bars=history,
+            bars=[Bar.model_validate(row) for row in history],
         )
         parsed = urlsplit(self.url)
         if (
@@ -316,7 +342,7 @@ class RemoteResearch:
                 "POST",
                 self.url + "/internal/validate",
                 json=request.model_dump(),
-                headers={"Authorization": "Bearer " + self.token},
+                headers=self._headers(),
             ) as response,
         ):
             response.raise_for_status()

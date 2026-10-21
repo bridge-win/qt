@@ -88,6 +88,37 @@ def main() -> None:
             expect(page.locator("#traces")).to_contain_text("trace_id")
             checks.append("browser_submission_worker_completion_and_trace")
 
+            page.locator("#traceSearch").fill(job["id"])
+            page.locator("#traceSearchForm button").click()
+            expect(page.locator("#diagnostics")).to_contain_text('"span_count"')
+            expect(page.locator("#spanRows")).to_contain_text("market.quote")
+            diagnostics = api.get("/api/runs/" + job["id"] + "/diagnostics").json()
+            page.locator("#traceSearchKind").select_option("trace")
+            page.locator("#traceSearch").fill(diagnostics["trace_id"])
+            page.locator("#traceSearchForm button").click()
+            expect(page.locator("#diagnostics")).to_contain_text(diagnostics["trace_id"])
+            checks.append("run_and_trace_id_nested_call_diagnostics")
+
+            with page.expect_response(
+                lambda response: (
+                    response.url.endswith("/api/jobs") and response.request.method == "POST"
+                )
+            ) as scan_queued:
+                page.locator("#scanOpportunities").click()
+            scan_job = scan_queued.value.json()
+            for _ in range(70):
+                saved_scan = api.get("/api/jobs/" + scan_job["id"]).json()
+                if saved_scan["status"] in {"succeeded", "deadletter"}:
+                    break
+                time.sleep(1)
+            assert saved_scan["status"] == "succeeded", "bounded discovery did not complete"
+            assert saved_scan["result"]["execution_authorized"] is False
+            page.locator("#refreshOpportunities").click()
+            expect(page.locator("#opportunityResult")).to_contain_text(
+                '"execution_authorized": false'
+            )
+            checks.append("browser_discovery_job_and_read_only_candidates")
+
             page.locator("#readiness").click()
             expect(page.locator("#releaseResult")).to_contain_text('"live_ready": false')
             page.locator("#portfolio").click()

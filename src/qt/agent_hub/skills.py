@@ -26,11 +26,11 @@ CONTEXT_SCHEMA = {
 }
 _COMMON = {"context.search", "context.read_chunk", "market.quote"}
 ROLE_TOOLS = {
-    "research": _COMMON | {"research.collect"},
-    "analysis": _COMMON | {"market.history"},
+    "research": _COMMON | {"research.collect", "opportunities.read"},
+    "analysis": _COMMON | {"market.history", "opportunities.read"},
     "backtest": _COMMON | {"experiment.run", "market.history"},
-    "forecast": _COMMON | {"market.history"},
-    "risk_review": _COMMON | {"proposal.verify"},
+    "forecast": _COMMON | {"market.history", "opportunities.read"},
+    "risk_review": _COMMON | {"proposal.verify", "opportunities.read"},
     "log_review": {"context.search", "context.read_chunk", "events.read"},
 }
 

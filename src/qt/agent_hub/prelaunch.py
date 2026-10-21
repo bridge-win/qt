@@ -48,12 +48,7 @@ def main() -> None:
         print(json.dumps({"event": "prelaunch_started", "run_id": run_id}), flush=True)
         steps: list[dict[str, Any]] = []
         while time.time() - started < 1200:
-            jobs = client.get("/api/jobs").raise_for_status().json()["items"]
-            steps = [
-                item
-                for item in jobs
-                if item["id"] == run_id or item["payload"].get("pipeline_id") == run_id
-            ]
+            steps = client.get(f"/api/runs/{run_id}").raise_for_status().json()["items"]
             if any(item["status"] == "deadletter" for item in steps):
                 break
             if any(
@@ -71,6 +66,22 @@ def main() -> None:
             {},
         )
         execution = next((item.get("result") for item in steps if item["kind"] == "execute"), None)
+        diagnostics = client.get(f"/api/runs/{run_id}/diagnostics").raise_for_status().json()
+        # The queue commit precedes span finalization by a few milliseconds.
+        # Wait for diagnostics to catch up without rerunning the business work.
+        for _ in range(10):
+            if not diagnostics.get("incomplete", True):
+                break
+            time.sleep(0.2)
+            diagnostics = client.get(f"/api/runs/{run_id}/diagnostics").raise_for_status().json()
+        discovery = next(
+            (item.get("result") or {} for item in steps if item["kind"] == "discover"), {}
+        )
+        discovery_verified = (
+            discovery.get("status") in {"complete", "partial"}
+            and bool(discovery.get("candidates"))
+            and discovery.get("execution_authorized") is False
+        )
         report = {
             "created_at": time.time(),
             "run_id": run_id,
@@ -97,13 +108,33 @@ def main() -> None:
             / max(1, len(role_steps)),
             "native_engine": validation.get("engine"),
             "native_metrics": validation.get("metrics"),
+            "native_integrity": validation.get("integrity"),
+            "native_cost_stress": validation.get("costs"),
+            "native_statistics": validation.get("statistics"),
             "strategy_verdict": validation.get("verdict"),
             "eligible_for_paper": validation.get("eligible_for_paper"),
             "execution": execution,
+            "diagnostics": diagnostics,
+            "opportunity_discovery_verified": discovery_verified,
+            "discovery": {
+                "id": discovery.get("id"),
+                "status": discovery.get("status"),
+                "candidate_count": len(discovery.get("candidates", [])),
+                "errors": discovery.get("errors", []),
+                "scope": "bounded public sample; not complete universe or demonstrated alpha",
+            },
             "real_money_orders_sent": False,
             "limits": "One real Codex workflow; source membership is not factual entailment or forecast calibration.",
         }
-        report["passed"] = report["passed"] and report["registered_evidence_rate"] == 1.0
+        report["passed"] = (
+            report["passed"]
+            and report["registered_evidence_rate"] == 1.0
+            and diagnostics.get("model_calls", 0) >= 6
+            and diagnostics.get("tool_calls", 0) > 0
+            and not diagnostics.get("incomplete", True)
+            and not diagnostics.get("truncated", True)
+            and discovery_verified
+        )
         (state_root() / "prelaunch-report.json").write_text(json.dumps(report, indent=2))
         print(json.dumps(report, indent=2), flush=True)
         raise SystemExit(0 if report["passed"] else 1)

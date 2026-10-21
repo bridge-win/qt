@@ -60,6 +60,11 @@ describe("served Agent Hub v2 UI interaction contracts", () => {
       }
       if (path.startsWith("/api/jobs/")) return json(jobs.find(job => path.endsWith(job.id)));
       if (path === "/api/risk-mode") { riskMode = body.mode; return json({ risk_mode: riskMode }); }
+      if (path === "/api/opportunities") return json({ scan_count: 1, generated_at: 1, latest_scan: { status: "partial" }, candidates: [{ id: "candidate-one", source_scan_id: "source-scan", venue: "polymarket", instrument: "1234", slug: "btc-outcome", title: "BTC outcome screen", outcome: "Yes", status: "research_required", expires_at: 1, reasons: ["missing_calibrated_forecast"] }] });
+      if (path.startsWith("/api/opportunities/") && path.endsWith("/review")) return json({ status: "watching" });
+      if (path.startsWith("/api/runs/") && path.endsWith("/diagnostics")) return json({ run_id: "root-run", trace_id: "fixture-trace", model_calls: 6, errors: [] });
+      if (path.startsWith("/api/trace/") && path.endsWith("/diagnostics")) return json({ run_id: "root-run", trace_id: "fixture-trace", model_calls: 6 });
+      if (path.startsWith("/api/spans?")) return json({ items: [{ name: "codex.invoke", operation: "model", status: "succeeded", attempt: 1, duration: 2.5, span_id: "child-span", parent_span_id: "agent-span", metadata: {} }] });
       if (path.startsWith("/api/traces?")) return json({ items: [{ trace_id: "fixture-trace", run_id: "root-run", metadata: { evidence_valid: true } }] });
       if (["/api/schedules", "/api/events", "/api/skills", "/api/memories"].includes(path)) return json({ items: [] });
       if (path === "/api/capabilities") return json({ version: "2.0.0", mode: "paper" });
@@ -131,6 +136,33 @@ describe("served Agent Hub v2 UI interaction contracts", () => {
     await waitFor(() => expect(element("runEvidence").textContent).toContain("bound-hash"));
     expect(element("jobDetailPanel").hidden).toBe(false);
     await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path.includes("run_id=root-run"))).toBe(true));
+  });
+
+
+  it("queues discovery without authorizing trades and prepares a candidate-specific research task", async () => {
+    await login();
+    await waitFor(() => expect(element("opportunityRows").textContent).toContain("BTC outcome screen"));
+    fireEvent.click(element("scanOpportunities"));
+    await waitFor(() => expect(calls("/api/jobs").some(call => call.body.kind === "discover")).toBe(true));
+    expect(calls("/api/jobs").find(call => call.body.kind === "discover")!.body.auto_execute).toBe(false);
+    element("jobForm").scrollIntoView = vi.fn();
+    fireEvent.click(within(element("opportunityRows")).getByRole("button", { name: "加入研究" }));
+    expect(element<HTMLSelectElement>("venue").value).toBe("polymarket");
+    expect(element<HTMLInputElement>("instrument").value).toBe("btc-outcome");
+    expect(element<HTMLInputElement>("outcome").value).toBe("1234");
+    expect(element<HTMLInputElement>("auto").checked).toBe(false);
+    expect(element<HTMLTextAreaElement>("question").value).toContain("candidate-one");
+    fireEvent.submit(element("jobForm"));
+    await waitFor(() => expect(calls("/api/jobs").some(call => call.body.candidate_id === "candidate-one" && call.body.source_scan_id === "source-scan")).toBe(true));
+  });
+
+  it("finds a trace by ID and shows its nested invocation timings", async () => {
+    await login(); fill("traceSearch", "fixture-trace");
+    element<HTMLSelectElement>("traceSearchKind").value = "trace";
+    fireEvent.submit(element("traceSearchForm"));
+    await waitFor(() => expect(element("spanRows").textContent).toContain("child-span ← agent-span"));
+    expect(element("spanRows").textContent).toContain("2.500 s");
+    expect(element("diagnostics").textContent).toContain('"model_calls": 6');
   });
 
   it("passes explicit historical availability with provenance and renders source content as text", async () => {

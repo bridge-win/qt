@@ -34,6 +34,8 @@ def main() -> int:
             raise RuntimeError("The pinned production OpenTelemetry SDK must be installed")
         pattern = "test_agent_hub_*.py"
     selected = sorted(args.tests_root.glob(pattern))
+    if args.native:
+        selected += sorted(args.tests_root.glob("test_agent_hub_quant_validation.py"))
     if not selected or any(not path.is_file() or path.is_symlink() for path in selected):
         raise RuntimeError("Hub tests must be regular files in the mounted test directory")
     import pytest

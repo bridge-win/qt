@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -40,6 +41,24 @@ class Model:
             "probability": 0.65 if role == "forecast" else None,
             "horizon_seconds": 3600 if role == "forecast" else None,
         }
+
+
+class Discovery:
+    def scan(self, tenant_id: str, **kwargs: Any) -> dict[str, Any]:
+        from qt.agent_hub.opportunities import _hash
+
+        snapshot = {
+            "id": uuid.uuid4().hex,
+            "tenant_id": tenant_id,
+            "generated_at": time.time(),
+            "status": "complete",
+            "candidates": [],
+            "sources": [],
+            "errors": [],
+            "execution_authorized": False,
+            "fixture": True,
+        }
+        return {**snapshot, "sha256": _hash(snapshot)}
 
 
 class Market:
@@ -122,6 +141,7 @@ def evaluate(base_config: HubConfig | None = None) -> dict[str, Any]:
                 market=Market(),
                 sandbox=Sandbox(),
                 research=Research(scenario),
+                opportunity_scanner=Discovery(),
             )
             quote = {
                 "symbol": "BTCUSDT",

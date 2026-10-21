@@ -28,6 +28,8 @@ x-environment: &environment
   QT_AGENT_HUB_RESEARCH_URL: http://research:8094
   QT_AGENT_HUB_SKILLS_DIR: /app/config/skills
   OTEL_EXPORTER_OTLP_ENDPOINT: ${QT_AGENT_HUB_OTLP_ENDPOINT:-${OTEL_EXPORTER_OTLP_ENDPOINT:-}}
+  QT_AGENT_HUB_LANGFUSE_PUBLIC_KEY: ${QT_AGENT_HUB_LANGFUSE_PUBLIC_KEY:-}
+  QT_AGENT_HUB_LANGFUSE_SECRET_KEY: ${QT_AGENT_HUB_LANGFUSE_SECRET_KEY:-}
   QT_AGENT_HUB_PORT: ${QT_AGENT_HUB_PORT:-8878}
 
 x-volumes: &volumes
@@ -181,7 +183,7 @@ services:
 
   worker-1:
     <<: *runtime
-    command: [worker, --worker-id, worker-1, --kinds, "pipeline,research,analysis,backtest,forecast,risk_review,log_review"]
+    command: [worker, --worker-id, worker-1, --kinds, "pipeline,discover,research,analysis,backtest,forecast,risk_review,log_review"]
     environment: *environment
     volumes: *volumes
     networks: [control, outbound]
@@ -194,7 +196,7 @@ services:
 
   worker-2:
     <<: *runtime
-    command: [worker, --worker-id, worker-2, --kinds, "pipeline,research,analysis,backtest,forecast,risk_review,log_review"]
+    command: [worker, --worker-id, worker-2, --kinds, "pipeline,discover,research,analysis,backtest,forecast,risk_review,log_review"]
     environment:
       <<: *environment
       QT_AGENT_HUB_CODEX_URL: http://codex-2:8091

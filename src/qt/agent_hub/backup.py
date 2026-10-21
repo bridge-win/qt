@@ -18,7 +18,13 @@ from typing import Any
 
 from qt.agent_hub.config import files_root, state_root
 
-DATABASES = ("hub.sqlite3", "context.sqlite3", "trading.sqlite3", "governance.sqlite3")
+DATABASES = (
+    "hub.sqlite3",
+    "context.sqlite3",
+    "trading.sqlite3",
+    "governance.sqlite3",
+    "opportunities.sqlite3",
+)
 
 
 def create_backup(state: Path, files: Path, destination: Path) -> dict[str, Any]:

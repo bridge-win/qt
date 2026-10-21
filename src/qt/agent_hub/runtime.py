@@ -20,13 +20,24 @@ from qt.agent_hub.codex import CodexBusyError
 from qt.agent_hub.config import ROLES, HubConfig
 from qt.agent_hub.context import ContextStore, _safe_path
 from qt.agent_hub.governance import Governance, attach_tool_evidence, proposal
+from qt.agent_hub.opportunities import OpportunityScanner, OpportunityStore
 from qt.agent_hub.sandbox import SandboxRunner
 from qt.agent_hub.skills import SkillRegistry
 from qt.agent_hub.store import HubStore
+from qt.agent_hub.tracing import traceparent
 from qt.agent_hub.trading import TradingService, trading_from_env
 
 LOG = logging.getLogger(__name__)
-FLOW = ("research", "analysis", "backtest", "forecast", "risk_review", "execute", "log_review")
+FLOW = (
+    "discover",
+    "research",
+    "analysis",
+    "backtest",
+    "forecast",
+    "risk_review",
+    "execute",
+    "log_review",
+)
 
 
 class ModelProvider(Protocol):
@@ -47,6 +58,7 @@ class RemoteCodex:
         self.url = os.environ.get("QT_AGENT_HUB_CODEX_URL", "http://codex:8091").rstrip("/")
 
     def invoke(self, role: str, task: str, context: dict[str, Any]) -> dict[str, Any]:
+        propagation = traceparent()
         with httpx.Client(timeout=self.config.codex_timeout + 10, trust_env=False) as client:
             response = client.post(
                 f"{self.url}/invoke",
@@ -57,7 +69,8 @@ class RemoteCodex:
                     "model": self.config.roles[role].model,
                 },
                 headers={
-                    "Authorization": f"Bearer {os.environ.get('QT_AGENT_HUB_EXECUTOR_TOKEN', '')}"
+                    "Authorization": f"Bearer {os.environ.get('QT_AGENT_HUB_EXECUTOR_TOKEN', '')}",
+                    **({"traceparent": propagation} if propagation else {}),
                 },
             )
             if response.status_code == 429:
@@ -127,12 +140,15 @@ class HubRuntime:
         trading: TradingService | None = None,
         sandbox: ExperimentRunner | None = None,
         research: Any = None,
+        opportunity_scanner: Any = None,
     ) -> None:
         self.config, self.root, self.files = config, root, files
         root.mkdir(parents=True, exist_ok=True)
         self.store = HubStore(root / "hub.sqlite3")
         self.context = ContextStore(root / "context.sqlite3", files)
         self.governance = Governance(root)
+        self.opportunities = OpportunityStore(root / "opportunities.sqlite3")
+        self.opportunity_scanner = opportunity_scanner or OpportunityScanner()
         self.skills = SkillRegistry()
         if trading is not None:
             self.trading = trading
@@ -195,7 +211,13 @@ class HubRuntime:
         instrument = payload.get("instrument", "BTCUSDT")
         if payload.get("venue") == "polymarket" and payload.get("outcome_token"):
             instrument = payload["outcome_token"]
-        return self.trading.quote(payload.get("venue", "binance"), instrument)
+        return self.governance.call(
+            "tool",
+            "market.quote",
+            self.trading.quote,
+            payload.get("venue", "binance"),
+            instrument,
+        )
 
     def _artifact(self, tenant: str, job_id: str, value: dict[str, Any]) -> dict[str, Any]:
         destination = _safe_path(self.files.resolve(), tenant, "artifacts", f"{job_id}.json")
@@ -284,14 +306,31 @@ class HubRuntime:
         tenant, kind, payload = job["tenant_id"], job["kind"], job["payload"]
         if kind == "pipeline":
             return (
-                {"flow": list(FLOW), "version": 2, "strategy": payload.get("strategy", "ma_trend")},
-                "research",
+                {"flow": list(FLOW), "version": 3, "strategy": payload.get("strategy", "ma_trend")},
+                "discover",
                 {**payload, "pipeline_id": job["id"]},
+            )
+        if kind == "discover":
+            snapshot = self.governance.call(
+                "tool",
+                "opportunities.scan",
+                self.opportunity_scanner.scan,
+                tenant,
+                limit=5,
+                deadline_seconds=45,
+            )
+            discovery_result = self.opportunities.record(tenant, snapshot)
+            return (
+                discovery_result,
+                "research" if payload.get("pipeline_id") else None,
+                dict(payload) if payload.get("pipeline_id") else None,
             )
         if kind == "import_context":
             return self._import_context(tenant), None, None
         if kind == "monitor":
-            reconciliation = self.trading.reconcile(tenant)
+            reconciliation = self.governance.call(
+                "tool", "orders.reconcile", self.trading.reconcile, tenant
+            )
             if reconciliation["unresolved_orders"]:
                 reconciliation["error"] = "unresolved_orders_reconcile_required"
             quote = self._quote(payload)
@@ -320,7 +359,10 @@ class HubRuntime:
                     )
                     try:
                         protection.append(
-                            self.trading.submit(
+                            self.governance.call(
+                                "tool",
+                                "orders.protective_exit",
+                                self.trading.submit,
                                 tenant,
                                 {
                                     "idempotency_key": f"protect:{job['id']}:{position['instrument']}",
@@ -361,15 +403,25 @@ class HubRuntime:
         if kind not in ROLES:
             raise ValueError("unknown_job_kind")
         query = str(payload.get("question", "Assess BTC market evidence and uncertainty."))[:8000]
-        context: dict[str, Any] = self.context.assemble(
-            tenant, query[:4000], budget_chars=self.config.context_budget_chars
+        context: dict[str, Any] = self.governance.call(
+            "retrieval",
+            "context.assemble",
+            self.context.assemble,
+            tenant,
+            query[:4000],
+            budget_chars=self.config.context_budget_chars,
         )
         self.skills.require_tool(kind, "context.search")
         context["skill"] = self.skills.summary(kind)
         if context.get("references"):
             self.skills.require_tool(kind, "context.read_chunk")
-            context["retrieved_chunks"] = self.context.retrieve_chunks(
-                tenant, query[:4000], context["references"]
+            context["retrieved_chunks"] = self.governance.call(
+                "retrieval",
+                "context.read_chunks",
+                self.context.retrieve_chunks,
+                tenant,
+                query[:4000],
+                context["references"],
             )
         context["previous_steps"] = {
             key: {
@@ -386,6 +438,45 @@ class HubRuntime:
             "venue": payload.get("venue", "binance"),
             "outcome_token": payload.get("outcome_token"),
         }
+        if kind in {"research", "analysis", "forecast", "risk_review"}:
+            self.skills.require_tool(kind, "opportunities.read")
+            # A workflow consumes its immutable discovery snapshot. Standalone
+            # roles may inspect the latest snapshot with explicit age, not silently
+            # treat an old candidate as a current executable opportunity.
+            discovered = previous.get("discover")
+            if discovered is None:
+                discovered = self.governance.call(
+                    "retrieval", "opportunities.latest", self.opportunities.latest_scan, tenant
+                )
+            if discovered:
+                context["opportunities"] = {
+                    key: discovered[key]
+                    for key in ("id", "sha256", "generated_at", "status", "candidates", "errors")
+                    if key in discovered
+                }
+                context["opportunities"]["age_seconds"] = max(
+                    0, time.time() - discovered.get("generated_at", 0)
+                )
+                context["opportunities"]["execution_authorized"] = False
+                target = (
+                    payload.get("outcome_token")
+                    if payload.get("venue") == "polymarket"
+                    else payload.get("instrument", "BTCUSDT")
+                )
+                context["opportunities"]["candidates"] = [
+                    item
+                    for item in discovered.get("candidates", [])
+                    if item.get("venue") == payload.get("venue", "binance")
+                    and item.get("instrument") == target
+                ]
+                context["opportunities"]["scope"] = "requested_venue_and_instrument_only"
+            if payload.get("selected_candidate"):
+                context["selected_opportunity"] = {
+                    "observation": payload["selected_candidate"],
+                    "is_historical_observation": True,
+                    "execution_authorized": False,
+                    "policy": "Original owner-selected evidence; current scan may have no matching candidate. Revalidate price, fees, resolution rules and forecast before any proposal.",
+                }
         backtest = previous.get("backtest", {}).get("experiment")
         if isinstance(backtest, dict):
             context["verified_backtest"] = {
@@ -405,8 +496,13 @@ class HubRuntime:
             from qt.agent_hub.sources import collect
 
             self.skills.require_tool(kind, "research.collect")
-            context["public_sources"] = collect(
-                self.context, tenant, self.root / "source-cache" / tenant
+            context["public_sources"] = self.governance.call(
+                "tool",
+                "research.collect",
+                collect,
+                self.context,
+                tenant,
+                self.root / "source-cache" / tenant,
             )
         if kind in {"research", "forecast", "risk_review"}:
             self.skills.require_tool(kind, "market.quote")
@@ -417,7 +513,7 @@ class HubRuntime:
         if kind in {"analysis", "backtest", "forecast"}:
             self.skills.require_tool(kind, "market.history")
             try:
-                history = self.market.history()
+                history = self.governance.call("tool", "market.history", self.market.history)
                 context["market_history"] = {
                     "source": "binance-public-closed-daily-candles",
                     "bars": len(history),
@@ -445,7 +541,14 @@ class HubRuntime:
                             "closed_bars_only": True,
                         },
                     )
-                    experiment = self.sandbox.run(tenant, job["id"], experiment_request)
+                    experiment = self.governance.call(
+                        "tool",
+                        "sandbox.backtest",
+                        self.sandbox.run,
+                        tenant,
+                        job["id"],
+                        experiment_request,
+                    )
                     experiment["input_artifact"] = input_artifact
                     if experiment.get("status") not in {"completed", "succeeded"}:
                         raise RuntimeError("isolated_experiment_not_completed")
@@ -456,7 +559,10 @@ class HubRuntime:
                     }
                     if self.research is not None:
                         if payload.get("venue", "binance") == "binance":
-                            validation = self.research.run(
+                            validation = self.governance.call(
+                                "tool",
+                                "research.native_validation",
+                                self.research.run,
                                 tenant,
                                 job["id"],
                                 history,
@@ -488,7 +594,19 @@ class HubRuntime:
         receipt = self.governance.receipt(
             tenant, payload.get("pipeline_id", job["id"]), job["id"], context
         )
-        answer = self.provider.invoke(kind, task, context)
+        answer = self.governance.call(
+            "model",
+            "codex.invoke",
+            self.provider.invoke,
+            kind,
+            task,
+            context,
+            metadata={
+                "model": self.config.roles[kind].model or "codex-account-default",
+                "provider": "local-codex",
+                "skill_sha256": self.skills.summary(kind)["sha256"],
+            },
+        )
         runtime_metadata = answer.pop("_runtime", {})
         result: dict[str, Any] = {
             "agent": kind,
@@ -650,7 +768,9 @@ class HubRuntime:
             instrument = forecast.get("outcome_token")
             if not instrument:
                 return {"status": "held", "reason": "prediction_requires_explicit_outcome_intent"}
-        current = self.trading.quote(venue, instrument)
+        current = self.governance.call(
+            "tool", "market.execution_quote", self.trading.quote, venue, instrument
+        )
         if venue == "polymarket":
             probability = answer.get("probability")
             if probability is None or not 0 <= probability <= 1:
@@ -693,7 +813,14 @@ class HubRuntime:
             "limit_price": price,
             "quote_timestamp": current["timestamp"],
         }
-        return self.trading.submit(tenant, intent, lease_guard=lease_guard)
+        return self.governance.call(
+            "tool",
+            "orders.submit",
+            self.trading.submit,
+            tenant,
+            intent,
+            lease_guard=lease_guard,
+        )
 
     def run_once(self, worker_id: str, kinds: list[str] | None = None) -> dict[str, Any] | None:
         tenant = self.config.tenant_id
@@ -731,22 +858,39 @@ class HubRuntime:
         heartbeat.start()
         started = time.monotonic()
         try:
-            result, next_kind, next_payload = self.handle(job, lease_guard=lease_guard)
-            from qt.agent_hub.release import release_fingerprint
-
-            result["release_sha256"] = release_fingerprint(self)
-            if next_payload is not None:
-                next_payload["parent_id"] = job["id"]
-            accepted = self.store.complete_and_enqueue(
+            with self.governance.invocation(
                 tenant,
+                job["payload"].get("pipeline_id", job["id"]),
                 job["id"],
-                worker_id,
-                job["lease_token"],
-                result,
-                next_kind=next_kind,
-                next_payload=next_payload,
-                idempotency_key=f"{job['id']}:{next_kind}" if next_kind else None,
-            )
+                job["kind"],
+                attempt=job["lease_token"],
+                worker_id=worker_id,
+                parent_step_id=job["payload"].get("parent_id"),
+            ) as invocation:
+                result, next_kind, next_payload = self.handle(job, lease_guard=lease_guard)
+                from qt.agent_hub.release import release_fingerprint
+
+                result["release_sha256"] = release_fingerprint(self)
+                if next_payload is not None:
+                    next_payload["parent_id"] = job["id"]
+                accepted = self.store.complete_and_enqueue(
+                    tenant,
+                    job["id"],
+                    worker_id,
+                    job["lease_token"],
+                    result,
+                    next_kind=next_kind,
+                    next_payload=next_payload,
+                    idempotency_key=f"{job['id']}:{next_kind}" if next_kind else None,
+                )
+                invocation["status"] = "succeeded" if accepted else "fenced"
+                invocation["metadata"].update(
+                    {
+                        "accepted": accepted,
+                        "reason": result.get("reason"),
+                        "evidence_valid": result.get("evidence_validation", {}).get("valid"),
+                    }
+                )
             self.governance.trace(
                 tenant,
                 job["payload"].get("pipeline_id", job["id"]),

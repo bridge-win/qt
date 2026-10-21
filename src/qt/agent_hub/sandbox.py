@@ -14,14 +14,16 @@ import json
 import math
 import os
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
 from qt.agent_hub.context import identifier
+from qt.agent_hub.tracing import traceparent
 
 
-def validate_request(request: dict) -> dict:
+def validate_request(request: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "task",
         "prices",
@@ -94,7 +96,7 @@ class SandboxRunner:
             "QT_AGENT_HUB_EXECUTOR_TOKEN", os.environ.get("QT_AGENT_HUB_SERVICE_TOKEN", "")
         )
 
-    def run(self, tenant_id: str, job_id: str, request: dict) -> dict:
+    def run(self, tenant_id: str, job_id: str, request: dict[str, Any]) -> dict[str, Any]:
         tenant_id, job_id = identifier(tenant_id), identifier(job_id)
         clean = validate_request(request)
         parsed = urlsplit(self.url)
@@ -114,13 +116,17 @@ class SandboxRunner:
                 "job_id": job_id,
             }
         try:
+            propagation = traceparent()
             with (
                 httpx.Client(timeout=30, trust_env=False, follow_redirects=False) as client,
                 client.stream(
                     "POST",
                     self.url + "/run",
                     json=clean,
-                    headers={"Authorization": "Bearer " + self.token},
+                    headers={
+                        "Authorization": "Bearer " + self.token,
+                        **({"traceparent": propagation} if propagation else {}),
+                    },
                 ) as response,
             ):
                 response.raise_for_status()
@@ -149,6 +155,6 @@ class SandboxRunner:
             return {"status": "failed", "reason": "isolated_executor_failed", "job_id": job_id}
 
 
-def request_hash(request: dict) -> str:
+def request_hash(request: dict[str, Any]) -> str:
     """Canonical input identity shared with the fixed executor implementation."""
     return hashlib.sha256(json.dumps(request, sort_keys=True, allow_nan=False).encode()).hexdigest()

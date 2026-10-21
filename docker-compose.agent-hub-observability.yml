@@ -1,0 +1,194 @@
+name: qt-agent-hub-observability
+
+x-env: &env
+  HOSTNAME: 0.0.0.0
+  NEXTAUTH_URL: http://127.0.0.1:${QT_LANGFUSE_PORT:-3080}
+  DATABASE_URL: postgresql://langfuse:${QT_LANGFUSE_POSTGRES_PASSWORD:?Run observability init}@postgres:5432/langfuse
+  SALT: ${QT_LANGFUSE_SALT:?Run observability init}
+  ENCRYPTION_KEY: ${QT_LANGFUSE_ENCRYPTION_KEY:?Run observability init}
+  TELEMETRY_ENABLED: "false"
+  LANGFUSE_IN_APP_AGENT_ENABLED: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${QT_LANGFUSE_CLICKHOUSE_PASSWORD:?Run observability init}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${QT_LANGFUSE_MINIO_PASSWORD:?Run observability init}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${QT_LANGFUSE_MINIO_PASSWORD:?Run observability init}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_AUTH: ${QT_LANGFUSE_REDIS_PASSWORD:?Run observability init}
+  REDIS_TLS_ENABLED: "false"
+  LANGFUSE_MIGRATION_V4_WRITE_MODE: events_only
+  LANGFUSE_MIGRATION_V4_ALLOW_PREVIEW_OPT_IN: "true"
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 10m, max-file: "3"}
+
+x-depends: &depends
+  postgres: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  clickhouse: {condition: service_healthy}
+  minio: {condition: service_healthy}
+
+services:
+  ui-test:
+    profiles: [test]
+    image: qt-agent-hub-ui-tests:local
+    build: {context: ., dockerfile: Dockerfile.agent-hub-ui}
+    restart: "no"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Use the configured NextAuth loopback origin, including its published port.
+    network_mode: host
+    tmpfs: ["/tmp:size=512m,mode=1777,exec"]
+    shm_size: 1g
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    entrypoint: [python, deploy/hub_observability_ui.py]
+    environment:
+      QT_LANGFUSE_USER_EMAIL: ${QT_LANGFUSE_USER_EMAIL:-owner@qt.local}
+      QT_LANGFUSE_USER_PASSWORD: ${QT_LANGFUSE_USER_PASSWORD:?Run observability init}
+      QT_LANGFUSE_UI_URL: http://127.0.0.1:${QT_LANGFUSE_PORT:-3080}
+      QT_LANGFUSE_UI_REPORTS: /state/langfuse-ui-acceptance
+    volumes:
+      - hub-state:/state
+      - ./deploy/hub_observability_ui.py:/app/deploy/hub_observability_ui.py:ro
+
+  langfuse-web:
+    image: ghcr.io/langfuse/langfuse:4.66.0@sha256:704cb67e75030a9979165ee8e9a9b33917b12dbf055a0490667fcc1e4de4a3ab
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: 1.5
+    logging: *logging
+    depends_on: *depends
+    ports: ["127.0.0.1:${QT_LANGFUSE_PORT:-3080}:3000"]
+    networks: [default, hub]
+    environment:
+      <<: *env
+      NEXTAUTH_SECRET: ${QT_LANGFUSE_AUTH_SECRET:?Run observability init}
+      AUTH_DISABLE_SIGNUP: "true"
+      LANGFUSE_INIT_ORG_ID: qt-personal
+      LANGFUSE_INIT_ORG_NAME: QT Personal
+      LANGFUSE_INIT_PROJECT_ID: qt-agent-hub
+      LANGFUSE_INIT_PROJECT_NAME: QT Agent Hub
+      LANGFUSE_INIT_PROJECT_RETENTION: 30
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${QT_AGENT_HUB_LANGFUSE_PUBLIC_KEY:?Run observability init}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${QT_AGENT_HUB_LANGFUSE_SECRET_KEY:?Run observability init}
+      LANGFUSE_INIT_USER_EMAIL: ${QT_LANGFUSE_USER_EMAIL:-owner@qt.local}
+      LANGFUSE_INIT_USER_NAME: QT Owner
+      LANGFUSE_INIT_USER_PASSWORD: ${QT_LANGFUSE_USER_PASSWORD:?Run observability init}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:3000/api/public/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  langfuse-worker:
+    image: ghcr.io/langfuse/langfuse-worker:4.66.0@sha256:f55435acdd26596f37a3a98ad8d5ae93604925ff2d22c3cb70b154e63fe7513b
+    restart: unless-stopped
+    mem_limit: 1024m
+    cpus: 1
+    logging: *logging
+    depends_on: *depends
+    environment: *env
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:3030/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  postgres:
+    # Verified cached upstream PostgreSQL 17.11; keep its multi-architecture digest.
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *logging
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_DB: langfuse
+      POSTGRES_PASSWORD: ${QT_LANGFUSE_POSTGRES_PASSWORD:?Run observability init}
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, langfuse]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *logging
+    environment: {REDISCLI_AUTH: "${QT_LANGFUSE_REDIS_PASSWORD:?Run observability init}"}
+    command: [redis-server, --requirepass, "${QT_LANGFUSE_REDIS_PASSWORD:?Run observability init}", --maxmemory-policy, noeviction, --appendonly, "yes"]
+    volumes: [redis:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    # Public Google Docker Hub mirror, pinned to the upstream image index.
+    image: mirror.gcr.io/clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
+    restart: unless-stopped
+    user: "101:101"
+    mem_limit: 1536m
+    logging: *logging
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${QT_LANGFUSE_CLICKHOUSE_PASSWORD:?Run observability init}
+    volumes: [clickhouse:/var/lib/clickhouse, clickhouse-logs:/var/log/clickhouse-server]
+    healthcheck:
+      test: [CMD, wget, --no-verbose, --tries=1, --spider, http://localhost:8123/ping]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:32c504bea4574d8f29d719b37bc0dad920ecf3e22b81dc5cea0bb105af2ce10f
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *logging
+    entrypoint: sh
+    command: [-c, 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data']
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: ${QT_LANGFUSE_MINIO_PASSWORD:?Run observability init}
+    volumes: [minio:/data]
+    healthcheck:
+      test: [CMD, mc, ready, local]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+networks:
+  hub: {external: true, name: qt-agent-hub_control}
+
+volumes:
+  hub-state: {external: true, name: qt-agent-hub_hub-state}
+  postgres:
+  redis:
+  clickhouse:
+  clickhouse-logs:
+  minio:

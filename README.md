@@ -30,8 +30,10 @@ existing capabilities from proposed additions.
 
 ## Personal ResearchOps Agent Hub
 
+最新复核：[Agent Hub 2.1 企业架构、Trace、回测与机会发现](docs/agent-hub-enterprise-review-2026-10.md)。
+
 The [Agent Hub v2 architecture and release guide](docs/agent-hub-v2.md) describes
-the current native research integration, evidence/proposal gates, versioned
+the original native research integration, evidence/proposal gates, versioned
 memory and skills, MCP compatibility, telemetry, Docker tests and prelaunch checks.
 
 The [2026-10-21 project review](docs/project-review-2026-10-21.md) covers the
