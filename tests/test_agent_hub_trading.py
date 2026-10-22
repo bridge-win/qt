@@ -249,6 +249,20 @@ def test_exhausted_new_risk_budget_allows_stop_loss_but_sell_does_not_refund_it(
     assert Decimal(usage["turnover_quote_including_fees_and_open_reservations"]) > 21
 
 
+def test_frozen_kill_allows_configured_protective_exit_without_new_risk(
+    tmp_path: Path, public: dict[str, Any]
+) -> None:
+    service = TradingService(tmp_path / "ledger.sqlite", frozen_allows_protective_exit=True)
+    service.submit("alice", intent())
+    service.set_risk_mode("alice", "frozen")
+    with pytest.raises(TradingError, match="kill_switch"):
+        service.submit("alice", intent(key="blocked"))
+    exit_order = service.submit(
+        "alice", intent(key="protect", side="SELL", quantity="0.0002", limit_price="50000")
+    )
+    assert exit_order["status"] == "FILLED" and exit_order["risk_effect"] == "reduce_only"
+
+
 def test_reduce_only_control_persists_and_frozen_kill_retains_full_stop_semantics(
     tmp_path: Path, public: dict[str, Any]
 ) -> None:

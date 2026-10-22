@@ -94,7 +94,7 @@ def test_backup_restore_checks_owned_files_and_omits_imports_and_credentials(
 def test_frozen_safety_evaluation_uses_production_workflow_and_no_network() -> None:
     report = evaluate()
     assert report["passed"], json.dumps(report)
-    assert len(report["cases"]) == 5
+    assert len(report["cases"]) == 6
     assert all(item["orders"] == 0 for item in report["cases"] if item["id"] != "valid")
 
 

@@ -24,6 +24,7 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager, suppress
 from dataclasses import replace
@@ -67,6 +68,7 @@ _INTENT_FIELDS = frozenset(
         "expected_probability",
     }
 )
+_EFFECT_NS = uuid.UUID("6ba7b814-9dad-11d1-80b4-00c04fd430c8")
 
 
 class TradingError(ValueError):
@@ -746,6 +748,7 @@ class TradingService:
         max_order_quote: float = 25,
         max_position_quote: float = 100,
         max_daily_quote: float = 100,
+        frozen_allows_protective_exit: bool = False,
     ) -> None:
         if mode not in {"paper", "testnet", "live"}:
             raise TradingError("unsupported_trading_mode")
@@ -753,6 +756,7 @@ class TradingService:
         self.max_order_quote = _decimal(max_order_quote, positive=True)
         self.max_position_quote = _decimal(max_position_quote, positive=True)
         self.max_daily_quote = _decimal(max_daily_quote, positive=True)
+        self.frozen_allows_protective_exit = bool(frozen_allows_protective_exit)
         self._adapters: dict[tuple[str, str], ExecutionAdapter] = {}
         self._readiness: dict[tuple[str, str], list[str]] = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -773,6 +777,15 @@ class TradingService:
                 CREATE TABLE IF NOT EXISTS hub_trade_bindings(
                     tenant TEXT, mode TEXT, venue TEXT, account TEXT,
                     PRIMARY KEY(tenant,mode,venue), UNIQUE(mode,venue,account));
+                CREATE TABLE IF NOT EXISTS hub_execution_intents(
+                    tenant TEXT, mode TEXT, decision_id TEXT, effect_id TEXT NOT NULL,
+                    intent_json TEXT NOT NULL, fingerprint TEXT NOT NULL, created_at REAL NOT NULL,
+                    PRIMARY KEY(tenant,mode,decision_id));
+                CREATE TABLE IF NOT EXISTS hub_effects(
+                    effect_id TEXT PRIMARY KEY, tenant TEXT, mode TEXT, decision_id TEXT,
+                    tool TEXT NOT NULL, args_hash TEXT NOT NULL, status TEXT NOT NULL,
+                    external_id TEXT, result_json TEXT, created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL);
             """)
         if new:
             self.path.chmod(0o600)
@@ -1090,6 +1103,111 @@ class TradingService:
                 (tenant, self.mode, key),
             ).fetchone()
             return self._read_order(row) if row else None
+
+    @staticmethod
+    def effect_id(decision_id: str, step: str = "execute", seq: int = 0) -> str:
+        return str(uuid.uuid5(_EFFECT_NS, f"{decision_id}:{step}:{seq}"))
+
+    def get_execution_intent(self, tenant_id: str, decision_id: str) -> dict[str, Any] | None:
+        tenant, key = _identifier(tenant_id), _identifier(decision_id)
+        with self._db() as db:
+            row = db.execute(
+                "SELECT intent_json,fingerprint,effect_id FROM hub_execution_intents "
+                "WHERE tenant=? AND mode=? AND decision_id=?",
+                (tenant, self.mode, key),
+            ).fetchone()
+        if row is None:
+            return None
+        stored = json.loads(row["intent_json"])
+        normalized = self._intent({k: v for k, v in stored.items() if k in _INTENT_FIELDS})
+        fingerprint = hashlib.sha256(_json(normalized).encode()).hexdigest()
+        if fingerprint != row["fingerprint"]:
+            raise TradingError("stored_execution_intent_integrity_error")
+        return {**normalized, "effect_id": row["effect_id"]}
+
+    def persist_execution_intent(
+        self, tenant_id: str, decision_id: str, intent: dict[str, Any]
+    ) -> dict[str, Any]:
+        """First write wins. Retries return the original quote and quantity."""
+        existing = self.get_execution_intent(tenant_id, decision_id)
+        if existing is not None:
+            return existing
+        tenant, key = _identifier(tenant_id), _identifier(decision_id)
+        normalized = self._intent(intent)
+        fingerprint = hashlib.sha256(_json(normalized).encode()).hexdigest()
+        effect = self.effect_id(key)
+        now = time.time()
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT intent_json,fingerprint,effect_id FROM hub_execution_intents "
+                "WHERE tenant=? AND mode=? AND decision_id=?",
+                (tenant, self.mode, key),
+            ).fetchone()
+            if row is not None:
+                stored = json.loads(row["intent_json"])
+                return {**self._intent({k: v for k, v in stored.items() if k in _INTENT_FIELDS}), "effect_id": row["effect_id"]}
+            db.execute(
+                "INSERT INTO hub_execution_intents VALUES(?,?,?,?,?,?,?)",
+                (tenant, self.mode, key, effect, _json(normalized), fingerprint, now),
+            )
+            db.execute(
+                "INSERT INTO hub_effects VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    effect,
+                    tenant,
+                    self.mode,
+                    key,
+                    "orders.submit",
+                    fingerprint,
+                    "pending",
+                    None,
+                    None,
+                    now,
+                    now,
+                ),
+            )
+        return {**normalized, "effect_id": effect}
+
+    def record_effect(
+        self,
+        tenant_id: str,
+        decision_id: str,
+        *,
+        status: str,
+        external_id: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        tenant, key = _identifier(tenant_id), _identifier(decision_id)
+        effect = self.effect_id(key)
+        with self._db() as db:
+            db.execute(
+                "UPDATE hub_effects SET status=?, external_id=?, result_json=?, updated_at=? "
+                "WHERE effect_id=? AND tenant=? AND mode=?",
+                (
+                    status,
+                    external_id,
+                    _json(result) if result is not None else None,
+                    time.time(),
+                    effect,
+                    tenant,
+                    self.mode,
+                ),
+            )
+
+    def get_effect(self, tenant_id: str, decision_id: str) -> dict[str, Any] | None:
+        tenant, key = _identifier(tenant_id), _identifier(decision_id)
+        with self._db() as db:
+            row = db.execute(
+                "SELECT * FROM hub_effects WHERE tenant=? AND mode=? AND decision_id=?",
+                (tenant, self.mode, key),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        if item.get("result_json"):
+            item["result"] = json.loads(item.pop("result_json"))
+        return item
 
     def get_order(self, tenant_id: str, order_id: str) -> dict[str, Any] | None:
         """Read an opaque public order ID inside the same tenant/mode boundary."""
@@ -1546,13 +1664,14 @@ class TradingService:
             )
         return self.status(tenant)
 
-    @staticmethod
-    def _check_risk_mode(db: sqlite3.Connection, tenant: str, side: str) -> None:
+    def _check_risk_mode(self, db: sqlite3.Connection, tenant: str, side: str) -> None:
         control = db.execute(
             "SELECT enabled FROM hub_trade_kill WHERE tenant=?", (tenant,)
         ).fetchone()
         value = control[0] if control else 0
         if value not in {0, 2}:
+            if self.frozen_allows_protective_exit and side == "SELL":
+                return
             raise TradingError("kill_switch_enabled")
         if value == 2 and side != "SELL":
             raise TradingError("reduce_only_mode_new_risk_blocked")

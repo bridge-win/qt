@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from qt.agent_hub.config import ROLES, HubConfig
@@ -77,6 +77,11 @@ class KillRequest(BaseModel):
     enabled: bool
 
 
+class ApprovalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["once", "class", "reject"]
+
+
 class RiskModeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["active", "reduce_only", "frozen"]
@@ -106,16 +111,28 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
     @app.middleware("http")
     async def request_boundary(request: Request, call_next):
         origin = request.headers.get("origin")
+        hub_port = os.environ.get("QT_AGENT_HUB_PORT", "8878")
         allowed = {
-            f"http://127.0.0.1:{os.environ.get('QT_AGENT_HUB_PORT', '8878')}",
-            f"http://localhost:{os.environ.get('QT_AGENT_HUB_PORT', '8878')}",
+            f"http://127.0.0.1:{hub_port}",
+            f"http://localhost:{hub_port}",
             # The container always listens on 8878, independently of the host
             # published port. Internal same-network browser acceptance uses it.
             "http://127.0.0.1:8878",
             "http://localhost:8878",
+            "http://127.0.0.1:8877",
+            "http://localhost:8877",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
         }
         if origin and origin not in allowed:
             return JSONResponse({"detail": "untrusted origin"}, status_code=403)
+        if request.method == "OPTIONS" and origin in allowed:
+            preflight = Response(status_code=204)
+            preflight.headers["Access-Control-Allow-Origin"] = origin
+            preflight.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Last-Event-ID"
+            preflight.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+            preflight.headers["Access-Control-Max-Age"] = "600"
+            return preflight
         try:
             size = int(request.headers.get("content-length", "0"))
         except ValueError:
@@ -126,6 +143,11 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Cache-Control"] = "no-store"
+        if origin in allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type, Last-Event-ID"
+            )
         return response
 
     @app.exception_handler(ValueError)
@@ -347,8 +369,69 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
         return {"items": service.store.list_schedules(tenant)}
 
     @app.get("/api/events", dependencies=auth)
-    def events() -> dict:
-        return {"items": service.store.events(tenant, limit=100)}
+    def events(
+        after_id: int | None = Query(default=None, ge=0),
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> dict:
+        cursor = after_id
+        if cursor is None and last_event_id and last_event_id.isdigit():
+            cursor = int(last_event_id)
+        return {"items": service.store.events(tenant, limit=100, after_id=cursor)}
+
+    @app.get("/api/inbox", dependencies=auth)
+    def inbox() -> dict:
+        schedules = service.store.list_schedules(tenant)
+        due = min((item["next_run_at"] for item in schedules if item.get("enabled")), default=None)
+        failed = [
+            item
+            for item in service.store.list_jobs(tenant, limit=50)
+            if item["status"] == "deadletter"
+        ]
+        now = time.time()
+        return {
+            "approvals": service.approvals.pending(tenant),
+            "failed_jobs": failed[:20],
+            "next_run_at": due,
+            "next_run_in_seconds": None if due is None else max(0, due - now),
+            "timezone": "UTC",
+            "empty_reason": None
+            if due is None or failed or service.approvals.pending(tenant)
+            else f"下次运行 {max(0, int(due - now))} 秒后",
+        }
+
+    @app.get("/api/approvals", dependencies=auth)
+    def approvals() -> dict:
+        return {"items": service.approvals.pending(tenant)}
+
+    @app.post("/api/approvals/{approval_id}", dependencies=auth)
+    def decide_approval(approval_id: str, body: ApprovalDecision) -> dict:
+        try:
+            item = service.approvals.decide(tenant, approval_id, body.decision)
+        except KeyError:
+            raise HTTPException(404, "approval not found") from None
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        if body.decision != "reject" and isinstance(item.get("payload"), dict):
+            intent = item["payload"]
+            if intent.get("idempotency_key"):
+                submitted = service.trading.submit(tenant, intent)
+                service.trading.record_effect(
+                    tenant,
+                    str(intent["idempotency_key"]),
+                    status=str(submitted.get("status") or "submitted"),
+                    external_id=submitted.get("order_id") or submitted.get("exchange_id"),
+                    result={"status": submitted.get("status")},
+                )
+                item["order"] = submitted
+        return item
+
+    @app.get("/api/forecasts", dependencies=auth)
+    def forecasts() -> dict:
+        return service.forecasts.score(tenant)
+
+    @app.get("/api/trials", dependencies=auth)
+    def trials() -> dict:
+        return {"count": service.trials.count(tenant)}
 
     @app.post("/api/documents", dependencies=auth)
     def documents(body: DocumentRequest) -> dict:
@@ -456,10 +539,17 @@ def create_app(config: HubConfig, root: Path, files: Path, *, runtime=None) -> F
     @app.get("/metrics", dependencies=auth)
     def metrics():
         summary = service.store.summary(tenant)
+        trading = service.trading.status(tenant)
         lines = ["# TYPE qt_agent_hub_jobs gauge"]
         lines += [
             f'qt_agent_hub_jobs{{status="{key}"}} {value}'
             for key, value in summary["counts"].items()
+        ]
+        lines += [
+            "# TYPE qt_agent_hub_unknown_orders gauge",
+            f"qt_agent_hub_unknown_orders {trading.get('unresolved_orders', 0)}",
+            "# TYPE qt_agent_hub_kill_enabled gauge",
+            f"qt_agent_hub_kill_enabled {int(bool(trading.get('kill_enabled')))}",
         ]
         return PlainTextResponse(
             "\n".join(lines) + "\n" + service.governance.metrics(tenant),

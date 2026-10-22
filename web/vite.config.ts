@@ -10,6 +10,11 @@ export default defineConfig({
         target: process.env.QT_WORKBENCH_API_ORIGIN ?? "http://127.0.0.1:8877",
         changeOrigin: true,
       },
+      "/hub-api": {
+        target: process.env.QT_AGENT_HUB_ORIGIN ?? "http://127.0.0.1:8878",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/hub-api/, "/api"),
+      },
     },
   },
 });

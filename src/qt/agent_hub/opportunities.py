@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from qt.agent_hub.context import identifier
+from qt.agent_hub.forecast_ledger import net_edge_payload
 from qt.prediction_markets.polymarket import PublicDataError, parse_book, parse_market
 
 BINANCE = "https://data-api.binance.vision"
@@ -338,8 +339,13 @@ class OpportunityScanner:
                     "features": features,
                     "liquidity": liquidity,
                     "costs": {"known": False, "reason": "account_tier_fee_not_publicly_verified"},
-                    "estimated_probability": None,
-                    "net_edge": None,
+                    **net_edge_payload(
+                        {
+                            "estimated_probability": None,
+                            "best_ask": None,
+                            "fee_at_p": None,
+                        }
+                    ),
                     "execution_authorized": False,
                     "research_requirements": [
                         "registered_strategy",
@@ -469,8 +475,13 @@ class OpportunityScanner:
                     "liquidity": liquidity,
                     "costs": costs,
                     "market_probability": quote.midpoint,
-                    "estimated_probability": None,
-                    "net_edge": None,
+                    **net_edge_payload(
+                        {
+                            "estimated_probability": None,
+                            "best_ask": quote.ask,
+                            "fee_at_p": costs.get("fee_per_share"),
+                        }
+                    ),
                     "execution_authorized": False,
                     "resolution": {
                         "source": str(row.get("resolutionSource", ""))[:2000],

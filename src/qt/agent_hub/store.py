@@ -98,6 +98,12 @@ class HubStore:
                 );
                 CREATE INDEX IF NOT EXISTS hub_schedules_due
                     ON hub_schedules(tenant_id, enabled, next_run_at);
+                CREATE TABLE IF NOT EXISTS hub_schedule_state (
+                    tenant_id TEXT NOT NULL,
+                    schedule_id TEXT NOT NULL,
+                    last_seen_state_hash TEXT,
+                    PRIMARY KEY(tenant_id, schedule_id)
+                );
                 CREATE TABLE IF NOT EXISTS hub_cancellations (
                     tenant_id TEXT NOT NULL, run_id TEXT NOT NULL, created_at REAL NOT NULL,
                     PRIMARY KEY(tenant_id,run_id)
@@ -105,8 +111,30 @@ class HubStore:
                 COMMIT;
                 """
             )
+            self._migrate_schedules(connection)
         finally:
             connection.close()
+
+    @staticmethod
+    def _migrate_schedules(connection: sqlite3.Connection) -> None:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(hub_schedules)")}
+        for name, declaration in {
+            "overlap_policy": "TEXT NOT NULL DEFAULT 'skip'",
+            "catchup_window_s": "INTEGER NOT NULL DEFAULT 900",
+            "debounce_key": "TEXT",
+            "debounce_period_s": "INTEGER",
+            "priority": "TEXT NOT NULL DEFAULT 'scheduled'",
+            "pause_on_failure": "INTEGER NOT NULL DEFAULT 0",
+            "notify_only_on_change": "INTEGER NOT NULL DEFAULT 1",
+        }.items():
+            if name not in columns:
+                connection.execute(f"ALTER TABLE hub_schedules ADD COLUMN {name} {declaration}")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS hub_schedule_state ("
+            "tenant_id TEXT NOT NULL, schedule_id TEXT NOT NULL, last_seen_state_hash TEXT, "
+            "PRIMARY KEY(tenant_id, schedule_id))"
+        )
+        connection.commit()
 
     def enqueue(
         self,
@@ -510,6 +538,8 @@ class HubStore:
         tenant_id: str,
         job_id: str | None = None,
         limit: int = 100,
+        *,
+        after_id: int | None = None,
     ) -> list[JsonDict]:
         tenant_id, limit = _text(tenant_id, "tenant_id"), _integer(limit, "limit", 1, 1000)
         clause = ""
@@ -517,6 +547,9 @@ class HubStore:
         if job_id is not None:
             clause = " AND job_id=?"
             params.append(_text(job_id, "job_id"))
+        if after_id is not None:
+            clause += " AND id>?"
+            params.append(_integer(after_id, "after_id", 0, 10**12))
         params.append(limit)
         with self._connection() as connection:
             rows = connection.execute(
@@ -534,6 +567,13 @@ class HubStore:
         interval_seconds: float,
         *,
         enabled: bool = True,
+        overlap_policy: str = "skip",
+        catchup_window_s: float = 900,
+        debounce_key: str | None = None,
+        debounce_period_s: float | None = None,
+        priority: str = "scheduled",
+        pause_on_failure: bool = False,
+        notify_only_on_change: bool = True,
     ) -> JsonDict:
         tenant_id = _text(tenant_id, "tenant_id")
         name, kind = _text(name, "name"), _text(kind, "kind")
@@ -541,6 +581,18 @@ class HubStore:
         interval = _number(interval_seconds, "interval_seconds", 1, 31_536_000)
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
+        if overlap_policy not in {"skip", "skip_if_running", "buffer_one", "allow"}:
+            raise ValueError("invalid overlap_policy")
+        if priority not in {"interactive", "scheduled", "backfill"}:
+            raise ValueError("invalid priority")
+        catchup = _number(catchup_window_s, "catchup_window_s", 0, 86_400)
+        debounce_period = (
+            None
+            if debounce_period_s is None
+            else _number(debounce_period_s, "debounce_period_s", 1, 86_400)
+        )
+        if debounce_key is not None:
+            debounce_key = _text(debounce_key, "debounce_key", maximum=64)
         with self._connection(write=True) as connection:
             now = _now()
             row = connection.execute(
@@ -551,7 +603,9 @@ class HubStore:
                 schedule_id = uuid.uuid4().hex
                 connection.execute(
                     "INSERT INTO hub_schedules(id,tenant_id,name,kind,payload_json,interval_seconds,"
-                    "enabled,next_run_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "enabled,next_run_at,created_at,updated_at,overlap_policy,catchup_window_s,"
+                    "debounce_key,debounce_period_s,priority,pause_on_failure,notify_only_on_change) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         schedule_id,
                         tenant_id,
@@ -563,6 +617,13 @@ class HubStore:
                         now,
                         now,
                         now,
+                        overlap_policy,
+                        catchup,
+                        debounce_key,
+                        debounce_period,
+                        priority,
+                        int(pause_on_failure),
+                        int(notify_only_on_change),
                     ),
                 )
             else:
@@ -575,8 +636,26 @@ class HubStore:
                 )
                 connection.execute(
                     "UPDATE hub_schedules SET kind=?,payload_json=?,interval_seconds=?,enabled=?,"
-                    "next_run_at=?,updated_at=? WHERE tenant_id=? AND id=?",
-                    (kind, encoded, interval, int(enabled), due, now, tenant_id, schedule_id),
+                    "next_run_at=?,updated_at=?,overlap_policy=?,catchup_window_s=?,"
+                    "debounce_key=?,debounce_period_s=?,priority=?,pause_on_failure=?,"
+                    "notify_only_on_change=? WHERE tenant_id=? AND id=?",
+                    (
+                        kind,
+                        encoded,
+                        interval,
+                        int(enabled),
+                        due,
+                        now,
+                        overlap_policy,
+                        catchup,
+                        debounce_key,
+                        debounce_period,
+                        priority,
+                        int(pause_on_failure),
+                        int(notify_only_on_change),
+                        tenant_id,
+                        schedule_id,
+                    ),
                 )
             self._append_event(
                 connection,
@@ -608,11 +687,34 @@ class HubStore:
                 # Include the interval in the bucket identity so interval edits do not
                 # collide with unrelated historical bucket numbers.
                 key = f"schedule:{schedule['id']}:{schedule['interval_seconds']}:{bucket}"
+                missed = None
+                catchup = float(schedule["catchup_window_s"] or 0)
+                if catchup and timestamp - float(schedule["next_run_at"]) > catchup:
+                    missed = "catchup_window"
+                overlap = schedule["overlap_policy"] or "skip"
+                running = connection.execute(
+                    "SELECT 1 FROM hub_jobs WHERE tenant_id=? AND status IN ('queued','running') "
+                    "AND idempotency_key LIKE ?",
+                    (tenant_id, f"schedule:{schedule['id']}:%"),
+                ).fetchone()
+                if missed is None and overlap == "skip_if_running" and running is not None:
+                    missed = "skip_if_running"
+                if missed is None and overlap == "buffer_one" and running is not None:
+                    continue
                 exists = connection.execute(
                     "SELECT 1 FROM hub_jobs WHERE tenant_id=? AND idempotency_key=?",
                     (tenant_id, key),
                 ).fetchone()
-                if exists is None:
+                if missed is not None:
+                    self._append_event(
+                        connection,
+                        tenant_id,
+                        None,
+                        "schedule.missed",
+                        {"schedule_id": schedule["id"], "reason": missed, "bucket": bucket},
+                        timestamp,
+                    )
+                elif exists is None:
                     job = self._enqueue(
                         connection,
                         tenant_id,
@@ -647,6 +749,25 @@ class HubStore:
                     ),
                 )
         return created
+
+    def note_schedule_state(self, tenant_id: str, schedule_id: str, state_hash: str) -> bool:
+        """Return True when the observed state changed and a notification is due."""
+        tenant_id = _text(tenant_id, "tenant_id")
+        schedule_id = _text(schedule_id, "schedule_id")
+        state_hash = _text(state_hash, "state_hash", maximum=128)
+        with self._connection(write=True) as connection:
+            previous = connection.execute(
+                "SELECT last_seen_state_hash FROM hub_schedule_state "
+                "WHERE tenant_id=? AND schedule_id=?",
+                (tenant_id, schedule_id),
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO hub_schedule_state(tenant_id,schedule_id,last_seen_state_hash) "
+                "VALUES(?,?,?) ON CONFLICT(tenant_id,schedule_id) DO UPDATE SET "
+                "last_seen_state_hash=excluded.last_seen_state_hash",
+                (tenant_id, schedule_id, state_hash),
+            )
+            return previous is None or previous["last_seen_state_hash"] != state_hash
 
     def list_schedules(self, tenant_id: str) -> list[JsonDict]:
         tenant_id = _text(tenant_id, "tenant_id")
@@ -951,4 +1072,8 @@ def _schedule(row: sqlite3.Row) -> JsonDict:
     result = dict(row)
     result["payload"] = json.loads(result.pop("payload_json"))
     result["enabled"] = bool(result["enabled"])
+    if "pause_on_failure" in result:
+        result["pause_on_failure"] = bool(result["pause_on_failure"])
+    if "notify_only_on_change" in result:
+        result["notify_only_on_change"] = bool(result["notify_only_on_change"])
     return cast(JsonDict, result)

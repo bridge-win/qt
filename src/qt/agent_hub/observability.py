@@ -290,6 +290,7 @@ def export_span(record: dict[str, Any]) -> bool:
             "qt.attempt": record["attempt"],
             "qt.status": record["status"],
             "gen_ai.operation.name": semantic,
+            "gen_ai.conversation.id": f"{record['tenant']}:{record['run_id']}",
             "langfuse.observation.type": observation,
             "langfuse.session.id": f"{record['tenant']}:{record['run_id']}",
             "langfuse.user.id": record["tenant"],
@@ -409,6 +410,8 @@ def export_step(
                 "qt.step_id": step_id,
                 "qt.kind": kind,
                 "qt.status": status,
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.conversation.id": f"{tenant}:{run_id}",
                 **safe_metadata(metadata),
             },
         )

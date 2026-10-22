@@ -27,6 +27,13 @@ class Schedule(BaseModel):
     interval_seconds: int = Field(ge=15, le=604800)
     payload: dict = Field(default_factory=dict)
     enabled: bool = True
+    overlap_policy: Literal["skip", "skip_if_running", "buffer_one", "allow"] = "skip"
+    catchup_window_s: int = Field(default=900, ge=0, le=86400)
+    debounce_key: str | None = Field(default=None, max_length=64)
+    debounce_period_s: int | None = Field(default=None, ge=1, le=86400)
+    priority: Literal["interactive", "scheduled", "backfill"] = "scheduled"
+    pause_on_failure: bool = False
+    notify_only_on_change: bool = True
 
 
 class HubConfig(BaseModel):
@@ -43,6 +50,10 @@ class HubConfig(BaseModel):
     lease_seconds: int = Field(default=240, ge=60, le=1800)
     codex_timeout: int = Field(default=150, ge=10, le=600)
     context_budget_chars: int = Field(default=16000, ge=2000, le=65536)
+    require_execution_approval: bool = False
+    frozen_allows_protective_exit: bool = False
+    planner_max_rounds: int = Field(default=4, ge=1, le=8)
+    planner_max_tool_calls: int = Field(default=12, ge=1, le=32)
     roles: dict[str, Role]
     schedules: list[Schedule] = Field(default_factory=list)
 

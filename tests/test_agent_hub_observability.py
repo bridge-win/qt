@@ -106,6 +106,8 @@ def test_sdk_correlates_tenant_run_steps_attempts_and_error_without_content(
         assert spans[0].end_time - spans[0].start_time == 250_000_000
         assert spans[0].attributes["qt.step_id"] == "one"
         assert spans[2].attributes["qt.step_id"] == "two"
+        assert spans[0].attributes["gen_ai.conversation.id"] == "alice:run"
+        assert spans[0].attributes["gen_ai.operation.name"] == "invoke_agent"
         assert spans[0].attributes["qt.usage.output_tokens"] == 20
         assert "private" not in " ".join(row.to_json() for row in spans)
         assert all(not row.events for row in spans)

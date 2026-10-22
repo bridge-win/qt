@@ -39,7 +39,9 @@ class Model:
             "actions": [],
             "side": "BUY" if role == "forecast" else "HOLD",
             "probability": 0.65 if role == "forecast" else None,
-            "horizon_seconds": 3600 if role == "forecast" else None,
+            "horizon_seconds": 0
+            if self.scenario == "expired_evidence" and role == "forecast"
+            else (3600 if role == "forecast" else None),
         }
 
 
@@ -117,6 +119,7 @@ def evaluate(base_config: HubConfig | None = None) -> dict[str, Any]:
     expected = {
         "valid": "FILLED",
         "forged_evidence": "held",
+        "expired_evidence": "held",
         "risk_veto": "held",
         "bad_validation": "held",
         "cancelled": "cancelled",

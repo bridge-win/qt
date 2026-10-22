@@ -16,7 +16,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,7 +115,8 @@ class ContextStore:
     def _migrate(db: sqlite3.Connection) -> None:
         """Serialize additive migration across workers; legacy availability is conservative."""
         db.execute("BEGIN IMMEDIATE")
-        if db.execute("PRAGMA user_version").fetchone()[0] > 2:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 3:
             raise ValueError("context database schema is newer than this runtime")
         columns = {row["name"] for row in db.execute("PRAGMA table_info(hub_documents)")}
         for name, declaration in {
@@ -177,7 +178,22 @@ class ContextStore:
                     hashlib.sha256(row["value"].encode()).hexdigest(),
                 ),
             )
-        db.execute("PRAGMA user_version=2")
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS hub_chunks ("
+            "id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, tenant_id TEXT NOT NULL, "
+            "ordinal INTEGER NOT NULL, heading TEXT, content TEXT NOT NULL, "
+            "available_at REAL NOT NULL, sha256 TEXT NOT NULL)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS hub_chunks_doc ON hub_chunks(tenant_id, doc_id, ordinal)"
+        )
+        with suppress(sqlite3.OperationalError):
+            db.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS hub_chunk_fts USING fts5("
+                "chunk_id UNINDEXED, doc_id UNINDEXED, tenant_id UNINDEXED, "
+                "heading, content, tokenize='unicode61')"
+            )
+        db.execute("PRAGMA user_version=3")
         db.commit()
 
     @contextmanager
@@ -283,6 +299,7 @@ class ContextStore:
                 db.execute(
                     "INSERT INTO hub_document_fts VALUES (?,?,?)", (document_id, tenant_id, content)
                 )
+            self._index_chunks(db, document_id, tenant_id, source, content, available)
         return {
             "id": document_id,
             "tenant_id": tenant_id,
@@ -408,6 +425,23 @@ class ContextStore:
                 if not terms or score:
                     previous = ranked.get(row["id"], (0, row))[0]
                     ranked[row["id"]] = (previous + score, row)
+            if terms:
+                try:
+                    chunk_rows = db.execute(
+                        "SELECT doc_id FROM hub_chunks WHERE tenant_id=? AND ("
+                        + " OR ".join("instr(lower(content),?)>0" for _ in terms)
+                        + ") ORDER BY ordinal LIMIT 50",
+                        (tenant_id, *terms),
+                    ).fetchall()
+                    for index, chunk in enumerate(chunk_rows):
+                        current = ranked.get(chunk["doc_id"])
+                        if current is not None:
+                            ranked[chunk["doc_id"]] = (
+                                current[0] + 1.0 / (60 + index),
+                                current[1],
+                            )
+                except sqlite3.OperationalError:
+                    pass
         results = []
         for score, row in sorted(
             ranked.values(), key=lambda item: (-item[0], -item[1]["created_at"])
@@ -416,6 +450,49 @@ class ContextStore:
             entry.update({"score": score})
             results.append(entry)
         return results
+
+    @staticmethod
+    def _paragraphs(source: str, content: str) -> list[tuple[str, str]]:
+        blocks = [part.strip() for part in re.split(r"\n\s*\n", content) if part.strip()]
+        if len(blocks) <= 1 and len(content) > 800:
+            blocks = [content[index : index + 800] for index in range(0, len(content), 700)]
+        heading = source.rsplit("/", 1)[-1][:200]
+        return [(f"{heading} §{index + 1}", block[:MAX_CHUNK_CHARS]) for index, block in enumerate(blocks[:64])]
+
+    def _index_chunks(
+        self,
+        db: sqlite3.Connection,
+        document_id: str,
+        tenant_id: str,
+        source: str,
+        content: str,
+        available_at: float,
+    ) -> None:
+        db.execute("DELETE FROM hub_chunks WHERE doc_id=?", (document_id,))
+        with suppress(sqlite3.OperationalError):
+            db.execute("DELETE FROM hub_chunk_fts WHERE doc_id=?", (document_id,))
+        for ordinal, (heading, body) in enumerate(self._paragraphs(source, content)):
+            chunk_id = hashlib.sha256(f"{document_id}:{ordinal}:{body}".encode()).hexdigest()[:32]
+            digest = hashlib.sha256(body.encode()).hexdigest()
+            db.execute(
+                "INSERT OR REPLACE INTO hub_chunks VALUES (?,?,?,?,?,?,?,?)",
+                (chunk_id, document_id, tenant_id, ordinal, heading, body, available_at, digest),
+            )
+            with suppress(sqlite3.OperationalError):
+                db.execute(
+                    "INSERT INTO hub_chunk_fts VALUES (?,?,?,?,?,?)",
+                    (chunk_id, document_id, tenant_id, heading, body),
+                )
+
+    def time_leakage(self, tenant_id: str, query: str, as_of: float) -> dict:
+        """Retrieval eval: future-available rows must not appear at as_of."""
+        rows = self.search(tenant_id, query, as_of=as_of)
+        leaked = [row for row in rows if float(row["available_at"]) > as_of]
+        return {
+            "retrieved": len(rows),
+            "leaked": len(leaked),
+            "time_leakage_rate": (len(leaked) / len(rows)) if rows else 0.0,
+        }
 
     @staticmethod
     def _reference_map(references: list[dict]) -> dict[str, str]:
@@ -762,11 +839,20 @@ class ContextStore:
         budget_chars: int = 12000,
         as_of: str | datetime | float | None = None,
         known_at: str | datetime | float | None = None,
+        run_id: str | None = None,
     ) -> dict:
         if type(budget_chars) is not int or not 256 <= budget_chars <= 65536:
             raise ValueError("context budget must be between 256 and 65536 characters")
         documents = self.search(tenant_id, query, as_of=as_of, known_at=known_at)
         memories = self.memories(tenant_id, as_of=as_of, known_at=known_at)
+        if run_id:
+            allowed = (f"run:{run_id}", f"job:{run_id}")
+            memories = [
+                memory
+                for memory in memories
+                if memory["scope"] == "long"
+                or (memory.get("source") or "").startswith(allowed)
+            ]
         result = {
             "query": query[:256],
             "knowledge": [],

@@ -62,7 +62,13 @@ class Governance(InvocationLedger):
         references = []
         for item in context.get("references", []):
             if isinstance(item, dict) and isinstance(item.get("id"), str):
-                references.append({k: item[k] for k in ("id", "sha256", "source") if k in item})
+                references.append(
+                    {
+                        k: item[k]
+                        for k in ("id", "sha256", "source", "available_at", "revision")
+                        if k in item
+                    }
+                )
         payload = {
             "run_id": run_id,
             "step_id": step_id,
@@ -227,13 +233,27 @@ def attach_tool_evidence(context: dict[str, Any]) -> None:
 def proposal(
     forecast: dict[str, Any], experiment: dict[str, Any] | None, config_hash: str
 ) -> dict[str, Any]:
+    receipt = forecast.get("evidence_receipt") or {}
+    answer = forecast.get("answer") or {}
+    quote = forecast.get("quote") or {}
+    references = receipt.get("references") or []
+    available = [
+        float(item["available_at"])
+        for item in references
+        if isinstance(item, dict) and item.get("available_at") is not None
+    ]
+    created = receipt.get("created_at")
+    horizon = answer.get("horizon_seconds")
+    expires_at = None
+    if created is not None and horizon:
+        expires_at = float(created) + float(horizon)
     value = {
         "schema_version": 1,
         "venue": forecast.get("venue"),
         "instrument": forecast.get("instrument"),
         "outcome_token": forecast.get("outcome_token"),
         "answer": {
-            key: forecast["answer"].get(key)
+            key: answer.get(key)
             for key in (
                 "decision",
                 "confidence",
@@ -244,8 +264,16 @@ def proposal(
             )
         },
         "quote": forecast.get("quote"),
-        "evidence_receipt": forecast.get("evidence_receipt", {}).get("receipt_hash"),
+        "evidence_receipt": receipt.get("receipt_hash"),
+        "evidence_hash": digest([receipt.get("receipt_hash"), answer.get("evidence")]),
         "validation_hash": digest(experiment) if experiment else None,
         "policy_hash": config_hash,
+        "time_boundary": {
+            "created_at": created,
+            "quote_timestamp": quote.get("timestamp"),
+            "horizon_seconds": horizon,
+            "expires_at": expires_at,
+            "knowledge_cutoff": max(available) if available else None,
+        },
     }
     return {**value, "proposal_hash": digest(value)}

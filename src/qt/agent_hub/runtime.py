@@ -16,16 +16,20 @@ from typing import Any, Protocol, cast
 
 import httpx
 
+from qt.agent_hub.approvals import ApprovalStore
 from qt.agent_hub.codex import CodexBusyError
 from qt.agent_hub.config import ROLES, HubConfig
 from qt.agent_hub.context import ContextStore, _safe_path
+from qt.agent_hub.forecast_ledger import ForecastLedger
 from qt.agent_hub.governance import Governance, attach_tool_evidence, proposal
 from qt.agent_hub.opportunities import OpportunityScanner, OpportunityStore
+from qt.agent_hub.planner import ResearchLoop, critic_context
 from qt.agent_hub.sandbox import SandboxRunner
 from qt.agent_hub.skills import SkillRegistry
 from qt.agent_hub.store import HubStore
 from qt.agent_hub.tracing import traceparent
 from qt.agent_hub.trading import TradingService, trading_from_env
+from qt.agent_hub.trial_ledger import TrialLedger
 
 LOG = logging.getLogger(__name__)
 FLOW = (
@@ -159,6 +163,7 @@ class HubRuntime:
                 max_order_quote=config.max_order_quote,
                 max_position_quote=config.max_position_quote,
                 max_daily_quote=config.max_daily_quote,
+                frozen_allows_protective_exit=config.frozen_allows_protective_exit,
             )
         else:
             self.trading = trading_from_env(
@@ -182,6 +187,14 @@ class HubRuntime:
             from qt.agent_hub.research import RemoteResearch
 
             self.research = RemoteResearch()
+        self.trials = TrialLedger(root / "trials.sqlite3")
+        self.forecasts = ForecastLedger(root / "forecasts.sqlite3")
+        self.approvals = ApprovalStore(root / "approvals.sqlite3")
+        self.planner = ResearchLoop(
+            max_rounds=config.planner_max_rounds,
+            max_tool_calls=config.planner_max_tool_calls,
+        )
+        self.crash_after: str | None = None
 
     def install_schedules(self) -> None:
         for item in self.config.schedules:
@@ -192,6 +205,13 @@ class HubRuntime:
                 item.payload,
                 item.interval_seconds,
                 enabled=item.enabled,
+                overlap_policy=item.overlap_policy,
+                catchup_window_s=item.catchup_window_s,
+                debounce_key=item.debounce_key,
+                debounce_period_s=item.debounce_period_s,
+                priority=item.priority,
+                pause_on_failure=item.pause_on_failure,
+                notify_only_on_change=item.notify_only_on_change,
             )
 
     def _ancestors(self, tenant: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -383,16 +403,27 @@ class HubRuntime:
                                 "reason": "protective_exit_risk_or_liquidity_block",
                             }
                         )
-            return (
-                {
-                    "reconciliation": reconciliation,
-                    "quote": quote,
-                    "portfolio": self.trading.portfolio(tenant),
-                    "protection": protection,
-                },
-                None,
-                None,
-            )
+            snapshot = {
+                "reconciliation": reconciliation,
+                "quote": quote,
+                "portfolio": self.trading.portfolio(tenant),
+                "protection": protection,
+            }
+            schedule_id = payload.get("schedule_id")
+            if payload.get("notify_only_on_change") and schedule_id:
+                changed = self.store.note_schedule_state(
+                    tenant,
+                    str(schedule_id),
+                    hashlib.sha256(
+                        json.dumps(
+                            {"quote": quote, "unresolved": reconciliation.get("unresolved_orders")},
+                            sort_keys=True,
+                            default=str,
+                        ).encode()
+                    ).hexdigest(),
+                )
+                snapshot["notify"] = changed
+            return (snapshot, None, None)
         previous = self._ancestors(tenant, payload)
         if kind == "execute":
             return (
@@ -410,6 +441,7 @@ class HubRuntime:
             tenant,
             query[:4000],
             budget_chars=self.config.context_budget_chars,
+            run_id=str(payload.get("pipeline_id") or job["id"]),
         )
         self.skills.require_tool(kind, "context.search")
         context["skill"] = self.skills.summary(kind)
@@ -587,6 +619,14 @@ class HubRuntime:
         if kind == "risk_review" and reviewed_proposal:
             self.skills.require_tool(kind, "proposal.verify")
             context["trade_proposal"] = reviewed_proposal
+            context["previous_steps"] = {
+                key: value
+                for key, value in context["previous_steps"].items()
+                if key in {"forecast", "backtest"}
+            }
+            context.update(
+                critic_context(reviewed_proposal, list(context.get("references") or []))
+            )
         instruction = self.config.roles[kind].instruction + "\nTask: "
         task = instruction + query[: max(0, 8192 - len(instruction))]
         context = self._fit_context(job, task, context)
@@ -594,20 +634,35 @@ class HubRuntime:
         receipt = self.governance.receipt(
             tenant, payload.get("pipeline_id", job["id"]), job["id"], context
         )
-        answer = self.governance.call(
-            "model",
-            "codex.invoke",
-            self.provider.invoke,
-            kind,
-            task,
-            context,
-            metadata={
-                "model": self.config.roles[kind].model or "codex-account-default",
-                "provider": "local-codex",
-                "skill_sha256": self.skills.summary(kind)["sha256"],
-            },
-        )
+        model_meta = {
+            "model": self.config.roles[kind].model or "codex-account-default",
+            "provider": "local-codex",
+            "skill_sha256": self.skills.summary(kind)["sha256"],
+        }
+
+        def invoke_model(role: str, prompt: str, working: dict[str, Any]) -> dict[str, Any]:
+            return self.governance.call(
+                "model",
+                "codex.invoke",
+                self.provider.invoke,
+                role,
+                prompt,
+                working,
+                metadata=model_meta,
+            )
+
+        if kind in {"research", "analysis"}:
+            answer = self.planner.run(
+                invoke=invoke_model,
+                execute_tool=lambda tool, args: self._planner_tool(tenant, job, tool, args),
+                role=kind,
+                task=task,
+                context=context,
+            )
+        else:
+            answer = invoke_model(kind, task, context)
         runtime_metadata = answer.pop("_runtime", {})
+        planner_trace = answer.pop("planner", None)
         result: dict[str, Any] = {
             "agent": kind,
             "model": self.config.roles[kind].model or "codex-account-default",
@@ -619,14 +674,54 @@ class HubRuntime:
             "evidence_validation": self._validate_evidence(tenant, receipt, answer.get("evidence")),
             "skill": self.skills.summary(kind),
         }
+        if planner_trace:
+            result["planner"] = planner_trace
         if kind == "backtest":
             result["experiment"] = experiment
+            validation = experiment.get("validation") if isinstance(experiment, dict) else {}
+            snapshot_id = str((experiment or {}).get("input_hash") or job["id"])
+            oos = []
+            if isinstance(validation, dict):
+                metrics = validation.get("metrics") or {}
+                if isinstance(metrics, dict) and metrics.get("sharpe") is not None:
+                    oos.append(float(metrics["sharpe"]))
+            self.trials.record(
+                tenant,
+                {
+                    "trial_id": job["id"],
+                    "snapshot_id": snapshot_id,
+                    "strategy_spec_hash": str((validation or {}).get("strategy_sha256") or ""),
+                    "params_hash": str((validation or {}).get("strategy_version_id") or ""),
+                    "cost_model_hash": str((experiment or {}).get("input_hash") or ""),
+                    "arm": payload.get("strategy", "ma_trend"),
+                    "oos_sharpe": oos[0] if oos else None,
+                    "proposer": kind,
+                },
+            )
+            experiment["search_accounting"] = self.trials.summary(tenant, snapshot_id, oos)
         if kind == "forecast":
             result["quote"] = context.get("market")
             result["venue"] = payload.get("venue", "binance")
             result["instrument"] = payload.get("instrument", "BTCUSDT")
             result["outcome_token"] = payload.get("outcome_token")
             result["proposal"] = proposal(result, backtest, result["config_sha256"])
+            quote = result.get("quote") or {}
+            self.forecasts.record_forecast(
+                tenant,
+                {
+                    "forecast_id": job["id"],
+                    "run_id": payload.get("pipeline_id", job["id"]),
+                    "market_id": result["instrument"],
+                    "token_id": result.get("outcome_token"),
+                    "p_model": answer.get("probability"),
+                    "p_market_mid": quote.get("mid") or quote.get("ask"),
+                    "best_bid": quote.get("bid"),
+                    "best_ask": quote.get("ask"),
+                    "horizon_s": answer.get("horizon_seconds"),
+                    "evidence_receipt": receipt.get("receipt_hash"),
+                    "net_edge_reason": "missing_independent_calibrated_probability",
+                },
+            )
         if kind == "risk_review":
             result["reviewed_proposal_hash"] = context.get("trade_proposal", {}).get(
                 "proposal_hash"
@@ -646,6 +741,39 @@ class HubRuntime:
                 next_kind = "log_review"
             return result, next_kind, dict(payload) if next_kind else None
         return result, None, None
+
+    def _planner_tool(self, tenant: str, job: dict[str, Any], tool: str, args: dict[str, Any]) -> Any:
+        try:
+            if tool == "search_evidence":
+                return self.context.search(tenant, str(args.get("query") or "")[:4000])[:8]
+            if tool == "read_chunk":
+                doc_id = str(args.get("document_id") or args.get("id") or "")
+                rows = self.context.search(tenant, str(args.get("query") or "BTC")[:400])
+                match = next((row for row in rows if row["id"] == doc_id), rows[0] if rows else None)
+                if match is None:
+                    return {"error": "evidence_unavailable"}
+                return self.context.read_chunk(
+                    tenant,
+                    match["id"],
+                    match["sha256"],
+                    [{"id": match["id"], "sha256": match["sha256"]}],
+                    offset=int(args.get("offset") or 0),
+                    limit_chars=min(1200, int(args.get("limit_chars") or 800)),
+                )
+            if tool == "market_history":
+                history = self.market.history()
+                return {"bars": len(history), "recent": history[-10:]}
+            if tool == "fee_schedule":
+                return {"known": False, "reason": "account_tier_fee_not_publicly_verified"}
+            if tool == "validate_strategy":
+                if self.research is None:
+                    return {"status": "not_evaluated", "eligible_for_paper": False}
+                return {"status": "deferred_to_backtest_role"}
+            if tool == "forecast_ledger_lookup":
+                return self.forecasts.lookup(tenant, str(args.get("market_id") or "BTCUSDT"))
+            return {"error": "unknown_planner_tool"}
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            return {"error": type(error).__name__}
 
     def _validate_evidence(
         self, tenant: str, receipt: dict[str, Any], citations: object
@@ -675,7 +803,15 @@ class HubRuntime:
         execution_key = f"pipeline:{job['payload'].get('pipeline_id', job['id'])}"
         existing = self.trading.lookup_order(tenant, execution_key)
         if existing is not None:
+            self.trading.record_effect(
+                tenant, execution_key, status=str(existing.get("status") or "recovered"),
+                external_id=existing.get("order_id") or existing.get("exchange_id"),
+                result={"status": existing.get("status")},
+            )
             return existing
+        stored_intent = self.trading.get_execution_intent(tenant, execution_key)
+        if stored_intent is not None:
+            return self._submit_persisted_intent(tenant, stored_intent, job, lease_guard)
         forecast = previous.get("forecast", {})
         review = previous.get("risk_review", {}).get("answer", {})
         answer, quote = forecast.get("answer", {}), forecast.get("quote", {})
@@ -714,12 +850,29 @@ class HubRuntime:
             previous.get("backtest", {}).get("experiment"),
             hashlib.sha256(self.config.model_dump_json().encode()).hexdigest(),
         )
+        for boundary in (
+            (forecast.get("proposal") or {}).get("time_boundary") or {},
+            expected.get("time_boundary") or {},
+        ):
+            expires_at = boundary.get("expires_at")
+            if expires_at is not None and time.time() > float(expires_at):
+                return {"status": "held", "reason": "evidence_expired"}
+            cutoff, created = boundary.get("knowledge_cutoff"), boundary.get("created_at")
+            if (
+                cutoff is not None
+                and created is not None
+                and float(cutoff) > float(created) + 1
+            ):
+                return {"status": "held", "reason": "evidence_outside_time_boundary"}
         if (
             forecast.get("proposal") != expected
             or previous.get("risk_review", {}).get("reviewed_proposal_hash")
             != expected["proposal_hash"]
         ):
             return {"status": "held", "reason": "proposal_or_policy_changed"}
+        stored_hash = (forecast.get("proposal") or {}).get("evidence_hash")
+        if stored_hash and stored_hash != expected.get("evidence_hash"):
+            return {"status": "held", "reason": "evidence_hash_mismatch"}
         validation = previous.get("backtest", {}).get("experiment", {}).get("validation", {})
         if validation.get("eligible_for_paper") is not True:
             return {"status": "held", "reason": "strategy_validation_not_eligible"}
@@ -792,6 +945,8 @@ class HubRuntime:
         if abs(price / float(quote.get("ask", price)) - 1) > 0.02:
             return {"status": "held", "reason": "forecast_price_drift"}
         quantity = self.config.max_order_quote / price * 0.99
+        if self.crash_after == "quote_ready":
+            raise RuntimeError("injected_crash_after_quote")
         if side == "SELL":
             held = next(
                 (
@@ -804,16 +959,77 @@ class HubRuntime:
             quantity = min(quantity, held)
             if quantity <= 0:
                 return {"status": "held", "reason": "no_position_to_sell"}
+        intent = self.trading.persist_execution_intent(
+            tenant,
+            execution_key,
+            {
+                "idempotency_key": execution_key,
+                "venue": venue,
+                "instrument": instrument,
+                "side": side,
+                "quantity": quantity,
+                "limit_price": price,
+                "quote_timestamp": current["timestamp"],
+            },
+        )
+        return self._submit_persisted_intent(tenant, intent, job, lease_guard)
+
+    def _submit_persisted_intent(
+        self,
+        tenant: str,
+        stored: dict[str, Any],
+        job: dict[str, Any],
+        lease_guard: Callable[[], bool] | None,
+    ) -> dict[str, Any]:
         intent = {
-            "idempotency_key": execution_key,
-            "venue": venue,
-            "instrument": instrument,
-            "side": side,
-            "quantity": quantity,
-            "limit_price": price,
-            "quote_timestamp": current["timestamp"],
+            key: stored[key]
+            for key in (
+                "idempotency_key",
+                "venue",
+                "instrument",
+                "side",
+                "quantity",
+                "limit_price",
+                "quote_timestamp",
+            )
+            if key in stored
         }
-        return self.governance.call(
+        execution_key = intent["idempotency_key"]
+        if self.crash_after == "intent_persisted":
+            raise RuntimeError("injected_crash_after_intent")
+        if self.config.require_execution_approval:
+            effect = self.trading.effect_id(execution_key)
+            open_approval = next(
+                (
+                    item
+                    for item in self.approvals.pending(tenant)
+                    if item.get("effect_id") == effect and not item.get("expired")
+                ),
+                None,
+            )
+            if open_approval:
+                return {
+                    "status": "awaiting_approval",
+                    "reason": "execution_requires_owner_approval",
+                    "approval_id": open_approval["id"],
+                    "effect_id": effect,
+                    "expires_at": open_approval["expires_at"],
+                }
+            approval = self.approvals.request(
+                tenant,
+                job["payload"].get("pipeline_id", job["id"]),
+                intent,
+                risk_tier="funds",
+                effect_id=self.trading.effect_id(execution_key),
+            )
+            return {
+                "status": "awaiting_approval",
+                "reason": "execution_requires_owner_approval",
+                "approval_id": approval["id"],
+                "effect_id": approval["effect_id"],
+                "expires_at": approval["expires_at"],
+            }
+        submitted = self.governance.call(
             "tool",
             "orders.submit",
             self.trading.submit,
@@ -821,6 +1037,16 @@ class HubRuntime:
             intent,
             lease_guard=lease_guard,
         )
+        self.trading.record_effect(
+            tenant,
+            execution_key,
+            status=str(submitted.get("status") or "submitted"),
+            external_id=submitted.get("order_id") or submitted.get("exchange_id"),
+            result={"status": submitted.get("status")},
+        )
+        if self.crash_after == "order_submitted":
+            raise RuntimeError("injected_crash_after_submit")
+        return submitted
 
     def run_once(self, worker_id: str, kinds: list[str] | None = None) -> dict[str, Any] | None:
         tenant = self.config.tenant_id
@@ -868,6 +1094,8 @@ class HubRuntime:
                 parent_step_id=job["payload"].get("parent_id"),
             ) as invocation:
                 result, next_kind, next_payload = self.handle(job, lease_guard=lease_guard)
+                if self.crash_after == "before_complete":
+                    raise RuntimeError("injected_crash_before_complete")
                 from qt.agent_hub.release import release_fingerprint
 
                 result["release_sha256"] = release_fingerprint(self)
@@ -916,7 +1144,7 @@ class HubRuntime:
                         json.dumps(result["answer"], ensure_ascii=False),
                         scope="short",
                         ttl_seconds=86400,
-                        source=f"job:{job['id']}",
+                        source=f"run:{job['payload'].get('pipeline_id', job['id'])}",
                     )
                 except (ValueError, OSError):
                     LOG.warning("derived_memory_unavailable job=%s", job["id"])
@@ -952,6 +1180,8 @@ class HubRuntime:
                 "job_deferred kind=%s job=%s reason=codex_executor_busy", job["kind"], job["id"]
             )
         except Exception as error:
+            if isinstance(error, RuntimeError) and str(error).startswith("injected_crash"):
+                raise
             # Provider/upstream bodies may contain credentials or private document contents.
             code = type(error).__name__
             self.governance.trace(
