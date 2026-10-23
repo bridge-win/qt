@@ -706,22 +706,30 @@ class HubRuntime:
             result["outcome_token"] = payload.get("outcome_token")
             result["proposal"] = proposal(result, backtest, result["config_sha256"])
             quote = result.get("quote") or {}
-            self.forecasts.record_forecast(
-                tenant,
-                {
-                    "forecast_id": job["id"],
-                    "run_id": payload.get("pipeline_id", job["id"]),
-                    "market_id": result["instrument"],
-                    "token_id": result.get("outcome_token"),
-                    "p_model": answer.get("probability"),
-                    "p_market_mid": quote.get("mid") or quote.get("ask"),
-                    "best_bid": quote.get("bid"),
-                    "best_ask": quote.get("ask"),
-                    "horizon_s": answer.get("horizon_seconds"),
-                    "evidence_receipt": receipt.get("receipt_hash"),
-                    "net_edge_reason": "missing_independent_calibrated_probability",
-                },
-            )
+            horizon = answer.get("horizon_seconds")
+            if not isinstance(horizon, (int, float)) or not 0 < horizon < float("inf"):
+                # Expired/invalid proposals remain auditable research results,
+                # but are never admitted to the forward-scoring population.
+                result["forecast_recording"] = {
+                    "status": "held", "reason": "positive_finite_forecast_horizon_required",
+                }
+            else:
+                self.forecasts.record_forecast(
+                    tenant,
+                    {
+                        "forecast_id": job["id"],
+                        "run_id": payload.get("pipeline_id", job["id"]),
+                        "market_id": result["instrument"],
+                        "token_id": result.get("outcome_token"),
+                        "p_model": answer.get("probability"),
+                        "p_market_mid": quote.get("mid") if result["venue"] == "polymarket" else None,
+                        "best_bid": quote.get("bid") if result["venue"] == "polymarket" else None,
+                        "best_ask": quote.get("ask") if result["venue"] == "polymarket" else None,
+                        "horizon_s": answer.get("horizon_seconds"),
+                        "evidence_receipt": receipt.get("receipt_hash"),
+                        "net_edge_reason": "missing_independent_calibrated_probability",
+                    },
+                )
         if kind == "risk_review":
             result["reviewed_proposal_hash"] = context.get("trade_proposal", {}).get(
                 "proposal_hash"

@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1.7
+# Immutable baseline; the optional rc7 candidate has its own Dockerfile/image.
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS wheels
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+COPY requirements-production.lock /download/requirements.lock
+RUN python -m pip download --require-hashes --only-binary=:all: --dest /wheels -r /download/requirements.lock
+
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/src:/app/packages/btc-backtest/src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+COPY --from=wheels /wheels /wheels
+COPY requirements-production.lock /tmp/requirements.lock
+RUN --network=none python -m pip install --no-index --no-compile --require-hashes --find-links=/wheels -r /tmp/requirements.lock \
+    && python -m pip check && rm -rf /wheels /tmp/requirements.lock \
+    && useradd --uid 10001 --create-home qt \
+    && mkdir /state && chown qt:qt /state
+WORKDIR /app
+COPY src/qt ./src/qt
+COPY packages/btc-backtest/src/btc_backtest ./packages/btc-backtest/src/btc_backtest
+COPY deploy/v4-entrypoint.sh ./deploy/v4-entrypoint.sh
+COPY deploy/v4_native_compare.py ./deploy/v4_native_compare.py
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
+USER 10001:10001
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/bin/sh", "/app/deploy/v4-entrypoint.sh"]
+CMD ["api"]
+
+FROM wheels AS native-wheels
+COPY requirements-native-baseline.lock /download/native.lock
+RUN python -m pip download --require-hashes --only-binary=:all: --dest /native-wheels -r /download/native.lock
+
+FROM runtime AS native
+USER root
+COPY --from=native-wheels /native-wheels /native-wheels
+COPY requirements-native-baseline.lock /tmp/native.lock
+RUN --network=none python -m pip install --no-index --no-compile --require-hashes --find-links=/native-wheels -r /tmp/native.lock \
+    && python -m pip check \
+    && python -c "import nautilus_trader; assert nautilus_trader.__version__ == '2.0.0rc4'" \
+    && rm -rf /native-wheels /tmp/native.lock
+USER 10001:10001
+CMD ["experiment-worker"]
+
+FROM native AS test
+USER root
+COPY pyproject.toml /app/pyproject.toml
+COPY requirements-production-test.lock /tmp/test.lock
+RUN python -m pip install --require-hashes -r /tmp/test.lock && python -m pip check && rm /tmp/test.lock
+USER 10001:10001
+ENV PYTEST_ADDOPTS="-p no:cacheprovider -c /app/pyproject.toml"
+ENTRYPOINT ["python", "-m", "pytest"]
+CMD ["-q", "/tests/test_production_contracts.py", "/tests/test_production_datasets.py", "/tests/test_production_marketdata.py", "/tests/test_production_control.py", "/tests/test_production_event_strategies.py", "/tests/test_production_postgres.py", "/tests/test_experiment_statistics.py", "/tests/test_experiment_native.py", "/tests/test_production_review.py", "/tests/test_deployment_lifecycle.py", "/tests/test_execution_oms.py", "/tests/test_trading_runtime.py", "/tests/test_forecasting_repository.py", "/tests/test_operations_watchdog.py", "/tests/test_marketdata_collector.py"]

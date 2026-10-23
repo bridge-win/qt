@@ -37,6 +37,7 @@ from qt.workbench.capabilities import coverage_summary, manifest
 from qt.workbench.catalog import catalog_summary, legacy_catalog, profile
 from qt.workbench.inventory import capability_matrix, capability_summary, source_audit
 from qt.workbench.operations import OperationsService, build_operations_router
+from qt.workbench.production_proxy import build_production_router
 from qt.workbench.resources import CapacityBlockedError, ResourcePolicy, available_memory_mib
 from qt.workbench.source_research import RESEARCH_CONTRACT, build_source_research_report
 
@@ -147,6 +148,7 @@ def create_workbench_app(settings: WorkbenchSettings) -> FastAPI:
     app.include_router(build_btc_monitor_router(settings.btc_monitor_state_dir or settings.state_root / "btc-monitor"), prefix="/api/v3")
     app.include_router(build_alerts_router(settings.btc_alerts_state_dir), prefix="/api/v3")
     app.include_router(build_prediction_market_router(), prefix="/api/v3")
+    app.include_router(build_production_router(), prefix="/api/v3")
 
     @app.get("/api/v3/provenance")
     def provenance_report(method: str | None = None) -> dict[str, object]:

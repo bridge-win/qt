@@ -193,9 +193,15 @@ def test_trial_and_forecast_ledgers_record_search_and_scores(tmp_path) -> None:
     )
     summary = trials.summary("alpha", "snap", [0.4, 0.2])
     assert summary["n_trials"] == 1
-    assert summary["cpcv"]["paths"] == 2
+    assert summary["walk_forward"]["folds"] == 2
+    assert summary["cpcv"]["paths"] == 0
+    assert summary["cpcv"]["status"] == "not_applicable"
+    assert summary["search_accounting"]["global_selection_bias_corrected"] is False
     assert summary["holdout"]["sealed"] is True
-    assert trials.unlock_holdout("alpha", row["trial_id"])["once"] is True
+    assert trials.unlock_holdout(
+        "alpha", row["trial_id"], actor_id="validator",
+        permissions=frozenset({"holdout:unlock"}), reason="frozen candidate final evaluation",
+    )["once"] is True
     now = time.time()
     forecasts.record_forecast(
         "alpha",

@@ -1,0 +1,4 @@
+# Additional locked tooling for the isolated production verification image.
+-c requirements-production.lock
+-r requirements-agent-hub-test.in
+pytest-asyncio==1.4.0

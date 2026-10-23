@@ -65,6 +65,13 @@ agent-hub = [
     "opentelemetry-sdk==1.45.1",
     "opentelemetry-exporter-otlp-proto-http==1.45.1",
 ]
+production = [
+    "sqlalchemy>=2.0.51,<2.1",
+    "alembic>=1.18.5,<2",
+    "psycopg[binary,pool]>=3.3.4,<4",
+    "langgraph==1.2.16; python_version >= '3.12'",
+    "langgraph-checkpoint-postgres==3.2.0; python_version >= '3.12'",
+]
 
 [project.scripts]
 qt = "qt.cli:app"
@@ -76,6 +83,7 @@ where = ["src"]
 "qt.dashboard" = ["static/*.js", "static/LICENSE.*"]
 "qt.workbench" = ["assets/*.json"]
 "qt.agent_hub" = ["static/*.html"]
+"qt.persistence" = ["migrations/*.py", "migrations/versions/*.py", "migrations/versions/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -480,3 +480,7 @@ mypy src tests scripts
 ```
 
 Multi-venue monitoring, isolated Binance/OKX test execution, and separate Polymarket public outcome books: [operator guide](docs/multi-venue.md).
+
+## QT V4 实现
+
+生产架构、代码导航、阶段门禁、运行和恢复说明见 [V4 实现与验收说明](docs/production-v4-implementation.md)。新运行时支持受门禁约束的 Paper／Shadow；资金交易保持阻断，浏览器手工验收暂缓。

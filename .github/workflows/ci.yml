@@ -85,6 +85,42 @@ jobs:
           tests/test_agent_hub_research.py
           -q
 
+  production-v4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
+        env:
+          POSTGRES_DB: qt_v4_test
+          POSTGRES_USER: qt_v4_test
+          POSTGRES_PASSWORD: qt_v4_ci_fixture_only
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U qt_v4_test -d qt_v4_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PYTHONPATH: src:packages/btc-backtest/src
+      QT_V4_TEST_DATABASE_URL: postgresql+psycopg://qt_v4_test:qt_v4_ci_fixture_only@127.0.0.1:5432/qt_v4_test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-native-baseline.lock
+      - name: Install exact production and native dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-native-baseline.lock
+          python -m pip install --require-hashes -r requirements-production-test.lock
+          python -m pip check
+      - name: Verify real database, graph, native experiment and deterministic execution
+        run: >-
+          pytest -q tests/test_production_*.py tests/test_experiment_*.py
+          tests/test_execution_oms.py tests/test_trading_runtime.py
+          tests/test_forecasting_repository.py tests/test_operations_watchdog.py
+          tests/test_marketdata_collector.py
+
   agent-hub-image:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest

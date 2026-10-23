@@ -18,6 +18,7 @@ import { BtcMonitorPage } from "./pages/BtcMonitorPage";
 import { HubInboxPage } from "./pages/HubInboxPage";
 import { HubRunPage } from "./pages/HubRunPage";
 import { HubSchedulesPage } from "./pages/HubSchedulesPage";
+import { ProductionReadinessPage } from "./pages/ProductionReadinessPage";
 
 const { Content, Sider } = Layout;
 const { Paragraph, Text } = Typography;
@@ -46,6 +47,7 @@ const navItems: { key: string; label: string }[] = [
   { key: "/btc-monitor", label: "BTC 实时监测" }, { key: "/traces", label: "历史决策" }, { key: "/wicks", label: "插针事件" }, { key: "/portfolio", label: "机会与组合" },
   { key: "/validation", label: "搜索与验证" }, { key: "/runtime", label: "模拟与运行" }, { key: "/archive", label: "研究档案" },
   { key: "/hub", label: "Agent 收件箱" }, { key: "/hub/schedules", label: "Agent 调度" },
+  { key: "/production", label: "生产验收" },
 ];
 
 
@@ -70,6 +72,7 @@ function AppShell(): ReactElement {
     <Route path="/runtime" element={<RuntimePage />} /><Route path="/archive" element={<ArchivePage />} />
     <Route path="/hub" element={<HubInboxPage />} /><Route path="/hub/schedules" element={<HubSchedulesPage />} />
     <Route path="/hub/runs/:runId" element={<HubRunPage />} />
+    <Route path="/production" element={<ProductionReadinessPage />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></Content></Layout></Layout>;
 }

@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+# This image is NEVER used by production services. Installability is not acceptance.
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS wheels
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+COPY requirements-native-candidate.lock /download/candidate.lock
+RUN python -m pip download --require-hashes --only-binary=:all: --dest /wheels -r /download/candidate.lock
+
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/src:/app/packages/btc-backtest/src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+COPY --from=wheels /wheels /wheels
+COPY requirements-native-candidate.lock /tmp/candidate.lock
+RUN --network=none python -m pip install --no-index --no-compile --require-hashes --find-links=/wheels -r /tmp/candidate.lock \
+    && python -m pip check \
+    && python -c "import nautilus_trader; assert nautilus_trader.__version__ == '2.0.0rc7'" \
+    && rm -rf /wheels /tmp/candidate.lock \
+    && useradd --uid 10001 --create-home qt
+WORKDIR /app
+COPY src/qt ./src/qt
+COPY packages/btc-backtest/src/btc_backtest ./packages/btc-backtest/src/btc_backtest
+COPY deploy/v4_native_compare.py ./deploy/v4_native_compare.py
+USER 10001:10001
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["python", "/app/deploy/v4_native_compare.py"]
+CMD ["--expected-version", "2.0.0rc7", "--output", "/tmp/candidate.json"]

@@ -1,0 +1,5 @@
+# Accepted baseline only: Python 3.12 + Nautilus rc4. Do not upgrade in place.
+-r requirements-production.in
+nautilus_trader==2.0.0rc4
+optuna==4.5.0
+TA-Lib==0.7.1

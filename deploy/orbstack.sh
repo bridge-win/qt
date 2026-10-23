@@ -10,6 +10,64 @@ PYTHON="${PYTHON:-python3}"
 DOCKER=(docker --context "$CONTEXT")
 COMPOSE=("${DOCKER[@]}" compose --project-name "$PROJECT" --project-directory "$ROOT" --env-file "$PRIVATE_ENV" -f "$ROOT/docker-compose.orbstack.yml")
 
+# Production V4 owns separate database/data volumes and a separate Compose
+# project. This branch never restarts the existing workbench or Agent Hub.
+if [[ "${1:-}" == v4-* ]]; then
+  V4_ENV="${QT_V4_ENV_FILE:-${ROOT}/.env.production-v4}"
+  # Compose gives exported shell values precedence over --env-file. Run only
+  # with the inspected private settings, including the database destination.
+  while IFS= read -r v4_setting; do
+    case "$v4_setting" in
+      QT_V4_*|QT_EXPERIMENT_IMAGE_DIGEST) unset "$v4_setting" ;;
+    esac
+  done < <(compgen -e)
+  if [[ "$1" == v4-init ]]; then
+    "$PYTHON" "$ROOT/deploy/v4_config.py" init --env-file "$V4_ENV"
+    exit
+  fi
+  "$PYTHON" "$ROOT/deploy/v4_config.py" check --env-file "$V4_ENV"
+  V4=("${DOCKER[@]}" compose --project-name qt-production-v4 --project-directory "$ROOT" --env-file "$V4_ENV" -f "$ROOT/deploy/v4-compose.yml")
+  V4_TEST_DB=("${DOCKER[@]}" compose --project-name qt-v4-test-db --project-directory "$ROOT" --env-file "$V4_ENV" -f "$ROOT/deploy/v4-test-db.yml")
+  case "$1" in
+    v4-config) "${V4[@]}" --profile test --profile candidate config --quiet ;;
+    v4-up) "${V4[@]}" config --quiet; "${V4[@]}" up --build -d --wait --wait-timeout 240 ;;
+    v4-build) shift; "${V4[@]}" build "$@" ;;
+    v4-status) "${V4[@]}" ps ;;
+    v4-check) "${V4[@]}" exec -T control-api python -m qt.control check ;;
+    v4-exec) shift; "${V4[@]}" exec -T "$@" ;;
+    v4-logs) "${V4[@]}" logs --tail 80 "${2:-control-api}" ;;
+    v4-stop) shift; "${V4[@]}" stop "$@" ;;
+    v4-start) shift; "${V4[@]}" start "$@" ;;
+    v4-down) "${V4[@]}" down ;;
+    v4-test)
+      shift
+      "${V4[@]}" --profile test build test
+      "${V4[@]}" --profile test run --rm -T --no-deps test "$@"
+      ;;
+    v4-test-db-up) "${V4_TEST_DB[@]}" up -d --wait --wait-timeout 120 ;;
+    v4-test-db-down) "${V4_TEST_DB[@]}" down ;;
+    v4-test-postgres)
+      shift
+      "${V4_TEST_DB[@]}" up -d --wait --wait-timeout 120
+      V4_TEST_PYTHON="$PYTHON"
+      [[ ! -x "$ROOT/.venv/bin/python" ]] || V4_TEST_PYTHON="$ROOT/.venv/bin/python"
+      "$V4_TEST_PYTHON" "$ROOT/deploy/v4_postgres_tests.py" --env-file "$V4_ENV" -- "$@"
+      ;;
+    v4-backup) "$PYTHON" "$ROOT/deploy/v4_backup.py" backup --root "$ROOT" --env-file "$V4_ENV" ;;
+    v4-restore-check)
+      [[ -n "${2:-}" ]] || { echo 'Provide a trusted local V4 .dump backup path.' >&2; exit 2; }
+      "${V4_TEST_DB[@]}" up -d --wait --wait-timeout 120
+      "$PYTHON" "$ROOT/deploy/v4_backup.py" restore-check --root "$ROOT" --env-file "$V4_ENV" --path "$2"
+      ;;
+    v4-native-compare)
+      "${V4[@]}" --profile candidate build native-baseline-check native-candidate
+      "$PYTHON" "$ROOT/deploy/v4_native_upgrade.py" --root "$ROOT" --env-file "$V4_ENV"
+      ;;
+    *) echo 'Use v4-init|v4-config|v4-up|v4-build|v4-status|v4-check|v4-exec|v4-logs|v4-stop|v4-start|v4-down|v4-test|v4-test-db-up|v4-test-db-down|v4-test-postgres [pytest args]|v4-backup|v4-restore-check PATH|v4-native-compare' >&2; exit 2 ;;
+  esac
+  exit
+fi
+
 # The additive Agent Hub has independent volumes, credentials and lifecycle.
 # It never restarts the existing workbench or another project's containers.
 if [[ "${1:-}" == hub-* ]]; then

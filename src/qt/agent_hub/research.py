@@ -367,7 +367,7 @@ class ResolvedForecast(Contract):
 
     market_id: str = Field(min_length=1, max_length=160)
     prediction: float = Field(ge=0, le=1)
-    market_probability: float = Field(ge=0, le=1)
+    market_probability: float | None = Field(default=None, ge=0, le=1)
     outcome: Literal[0, 1]
     predicted_at: float = Field(gt=0)
     resolved_at: float = Field(gt=0)
@@ -386,7 +386,15 @@ def evaluate_forecasts(rows: list[ResolvedForecast]) -> dict[str, Any]:
     if len({row.market_id for row in rows}) != len(rows):
         raise ValueError("duplicate market outcomes would inflate the evaluation sample")
     brier = sum((row.prediction - row.outcome) ** 2 for row in rows) / len(rows)
-    baseline = sum((row.market_probability - row.outcome) ** 2 for row in rows) / len(rows)
+    paired = [row for row in rows if row.market_probability is not None]
+    baseline = (
+        sum((row.market_probability - row.outcome) ** 2 for row in paired) / len(paired)
+        if paired else None
+    )
+    paired_brier = (
+        sum((row.prediction - row.outcome) ** 2 for row in paired) / len(paired)
+        if paired else None
+    )
     log_loss = -sum(
         row.outcome * math.log(max(1e-12, min(1 - 1e-12, row.prediction)))
         + (1 - row.outcome) * math.log(max(1e-12, min(1 - 1e-12, 1 - row.prediction)))
@@ -410,7 +418,11 @@ def evaluate_forecasts(rows: list[ResolvedForecast]) -> dict[str, Any]:
         "samples": len(rows),
         "brier_score": brier,
         "market_baseline_brier": baseline,
-        "brier_skill": 1 - brier / baseline if baseline else None,
+        "paired_model_brier": paired_brier,
+        "paired_comparison_samples": len(paired),
+        "market_baseline_coverage": len(paired) / len(rows),
+        "brier_skill": 1 - paired_brier / baseline if baseline else None,
+        "comparison_status": "comparable" if paired else "missing_market_baseline",
         "log_loss": log_loss,
         "calibration_bins": bins,
         "live_ready": False,

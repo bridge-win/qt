@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -29,6 +30,34 @@ MIGRATION_SUBPROCESS_ENVIRONMENT = {
     "QT_COMMAND_LEASE_SECONDS": "30",
     "QT_WORKER_STALE_SECONDS": "60",
 }
+
+
+@pytest.fixture(autouse=True)
+def isolate_migration_logging() -> Iterator[None]:
+    """Alembic's standalone fileConfig must not leak into the shared test process.
+
+    The legacy migration environment intentionally configures its own loggers.
+    fileConfig disables existing application loggers by default, including
+    HTTPX, so in-process migration tests must restore the exact prior state.
+    This does not enable or change transport logging in production.
+    """
+    registered = [logging.getLogger(), *(
+        value for value in logging.Logger.manager.loggerDict.values()
+        if isinstance(value, logging.Logger)
+    )]
+    previous = [(logger, logger.level, logger.disabled, logger.propagate,
+                 list(logger.handlers), list(logger.filters)) for logger in registered]
+    disabled_level = logging.Logger.manager.disable
+    try:
+        yield
+    finally:
+        for logger, level, disabled, propagate, handlers, filters in previous:
+            logger.setLevel(level)
+            logger.disabled = disabled
+            logger.propagate = propagate
+            logger.handlers[:] = handlers
+            logger.filters[:] = filters
+        logging.disable(disabled_level)
 
 
 def _schema_url(database_url: str, schema_name: str) -> URL:

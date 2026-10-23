@@ -1,0 +1,200 @@
+name: qt-production-v4
+
+x-runtime: &runtime
+  image: ${QT_V4_RUNTIME_IMAGE:-qt-production-v4:local}
+  build: {context: ., dockerfile: Dockerfile.production, target: runtime}
+  restart: unless-stopped
+  init: true
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=256m,mode=1777"]
+  stop_grace_period: 60s
+  mem_limit: 1g
+  cpus: 1.0
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+x-environment: &environment
+  QT_V4_DATABASE_URL: ${QT_V4_DATABASE_URL:?Run v4-init}
+  QT_V4_DATA_ROOT: /state/datasets
+  QT_V4_TENANT: ${QT_V4_TENANT:-personal}
+  QT_V4_PORT: "8890"
+  QT_V4_TRADING_MODE: paper
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+
+x-ready: &ready
+  postgres: {condition: service_healthy}
+  initialize: {condition: service_completed_successfully}
+  migrate: {condition: service_completed_successfully}
+
+services:
+  postgres:
+    image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qt_v4_app
+      POSTGRES_DB: qt_v4
+      POSTGRES_PASSWORD: ${QT_V4_POSTGRES_PASSWORD:?Run v4-init}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    command: [postgres, -c, synchronous_commit=on, -c, fsync=on, -c, full_page_writes=on]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [control]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U qt_v4_app -d qt_v4"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 60s
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+
+  initialize:
+    <<: *runtime
+    restart: "no"
+    user: "0:0"
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    entrypoint: [python, -c]
+    command:
+      - "import os; from pathlib import Path; root=Path('/state/datasets'); assert root.is_dir() and not root.is_symlink(); [(p.mkdir(parents=True,exist_ok=True),os.chmod(p,0o750),os.chown(p,10001,10001)) for p in (root,root/'objects',root/'manifests',root/'staging')]"
+    volumes: [datasets:/state/datasets]
+    network_mode: none
+
+  migrate:
+    <<: *runtime
+    restart: "no"
+    command: [migrate]
+    environment: *environment
+    volumes: [datasets:/state/datasets:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+      initialize: {condition: service_completed_successfully}
+    networks: [control]
+
+  control-api:
+    <<: *runtime
+    command: [api]
+    environment:
+      <<: *environment
+      QT_V4_SERVICE_TOKEN: ${QT_V4_SERVICE_TOKEN:?Run v4-init}
+      QT_V4_SIGNING_KEY: ${QT_V4_SIGNING_KEY:?Run v4-init}
+      QT_V4_MODEL_ID: ${QT_V4_MODEL_ID:-}
+    volumes: [datasets:/state/datasets:ro]
+    depends_on: *ready
+    networks: [control]
+    ports: ["127.0.0.1:${QT_V4_PORT:-8890}:8890"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8890/healthz',timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  research-worker:
+    <<: *runtime
+    command: [research-worker]
+    environment:
+      <<: *environment
+      QT_V4_MODEL_PROVIDER: llama_cpp_local
+      QT_V4_MODEL_ID: ${QT_V4_MODEL_ID:-}
+      QT_V4_MODEL_ORIGIN: ${QT_V4_MODEL_ORIGIN:-http://host.docker.internal:8080}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: [datasets:/state/datasets:ro]
+    depends_on: *ready
+    networks: [control, outbound]
+    mem_limit: 2g
+
+  experiment-worker:
+    <<: *runtime
+    image: ${QT_V4_NATIVE_IMAGE:-qt-production-v4-native:rc4}
+    build: {context: ., dockerfile: Dockerfile.production, target: native}
+    command: [experiment-worker]
+    environment:
+      <<: *environment
+      QT_EXPERIMENT_IMAGE_DIGEST: ${QT_EXPERIMENT_IMAGE_DIGEST:-}
+    volumes: [datasets:/state/datasets:ro]
+    depends_on: *ready
+    networks: [control]
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 256
+
+  data-worker:
+    <<: *runtime
+    command: [data-worker]
+    environment:
+      <<: *environment
+      QT_V4_SYMBOL: ${QT_V4_SYMBOL:-BTCUSDT}
+      QT_V4_BAR_INTERVAL: ${QT_V4_BAR_INTERVAL:-1m}
+    volumes: [datasets:/state/datasets]
+    depends_on: *ready
+    networks: [control, outbound]
+    mem_limit: 2g
+
+  trading-runtime:
+    <<: *runtime
+    command: [trading-runtime]
+    environment:
+      <<: *environment
+      QT_V4_SIGNING_KEY: ${QT_V4_SIGNING_KEY:?Run v4-init}
+      QT_V4_DEPLOYMENT_ID: ${QT_V4_DEPLOYMENT_ID:-}
+    volumes: [datasets:/state/datasets]
+    depends_on: *ready
+    networks: [control, outbound]
+    mem_limit: 1g
+
+  watchdog:
+    <<: *runtime
+    command: [watchdog]
+    environment:
+      <<: *environment
+      QT_V4_SIGNING_KEY: ${QT_V4_SIGNING_KEY:?Run v4-init}
+    volumes: [datasets:/state/datasets:ro]
+    depends_on: *ready
+    networks: [control]
+    mem_limit: 512m
+
+  test:
+    <<: *runtime
+    profiles: [test]
+    restart: "no"
+    image: qt-production-v4-tests:local
+    build: {context: ., dockerfile: Dockerfile.production, target: test}
+    network_mode: none
+    volumes: ["./tests:/tests:ro"]
+    mem_limit: 4g
+    cpus: 2.0
+
+  native-candidate:
+    <<: *runtime
+    profiles: [candidate]
+    restart: "no"
+    image: qt-nautilus-candidate:rc7
+    build: {context: ., dockerfile: Dockerfile.nautilus-candidate}
+    network_mode: none
+    mem_limit: 4g
+    cpus: 2.0
+
+  native-baseline-check:
+    <<: *runtime
+    profiles: [candidate]
+    restart: "no"
+    image: ${QT_V4_NATIVE_IMAGE:-qt-production-v4-native:rc4}
+    build: {context: ., dockerfile: Dockerfile.production, target: native}
+    network_mode: none
+    entrypoint: [python, /app/deploy/v4_native_compare.py]
+    command: [--expected-version, 2.0.0rc4, --output, /tmp/baseline.json]
+    mem_limit: 4g
+    cpus: 2.0
+
+networks:
+  control: {internal: true}
+  outbound: {}
+volumes:
+  postgres-data: {}
+  datasets: {}
