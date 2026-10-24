@@ -89,6 +89,13 @@ class ExecutionAssumptions:
             return DataRequirement.ORDER_BOOK
         return DataRequirement.BARS
 
+    @property
+    def effective_slippage_probability(self) -> float:
+        # Legacy callers enable a forced one-tick model without supplying its
+        # probability. Explicit positive probabilities control a single native
+        # tick; they must not compound with a second synthetic-book shift.
+        return 1.0 if self.one_tick_slippage and self.slippage_probability == 0 else self.slippage_probability
+
 
 @dataclass(frozen=True)
 class DecisionTrace:

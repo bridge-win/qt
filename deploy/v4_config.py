@@ -44,6 +44,7 @@ def initialize(path: Path) -> None:
         "QT_V4_MODEL_ID": "", "QT_V4_MODEL_ORIGIN": "http://host.docker.internal:8080",
         "QT_V4_DEPLOYMENT_ID": "", "QT_EXPERIMENT_IMAGE_DIGEST": "",
         "QT_V4_SYMBOL": "BTCUSDT", "QT_V4_BAR_INTERVAL": "1m",
+        "QT_V4_EXPERIMENT_TIMEOUT_SECONDS": "7200",
     }
     validate(values)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -70,6 +71,9 @@ def validate(values: dict[str, str]) -> None:
             raise ValueError("V4 loopback service ports are invalid")
     if values["QT_V4_PORT"] == values["QT_V4_TEST_DB_PORT"]:
         raise ValueError("V4 service ports must be distinct")
+    timeout = values.get("QT_V4_EXPERIMENT_TIMEOUT_SECONDS", "7200")
+    if not timeout.isdigit() or not 60 <= int(timeout) <= 86400:
+        raise ValueError("V4 experiment timeout must be between 60 and 86400 seconds")
 
 
 def main() -> None:

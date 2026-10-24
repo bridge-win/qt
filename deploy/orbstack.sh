@@ -32,6 +32,11 @@ if [[ "${1:-}" == v4-* ]]; then
     v4-config) "${V4[@]}" --profile test --profile candidate config --quiet ;;
     v4-up) "${V4[@]}" config --quiet; "${V4[@]}" up --build -d --wait --wait-timeout 240 ;;
     v4-build) shift; "${V4[@]}" build "$@" ;;
+    v4-run)
+      shift
+      [[ $# -gt 0 ]] || { echo 'Provide a V4 service and optional command.' >&2; exit 2; }
+      "${V4[@]}" run --rm -T --no-deps "$@"
+      ;;
     v4-status) "${V4[@]}" ps ;;
     v4-check) "${V4[@]}" exec -T control-api python -m qt.control check ;;
     v4-exec) shift; "${V4[@]}" exec -T "$@" ;;
@@ -63,7 +68,12 @@ if [[ "${1:-}" == v4-* ]]; then
       "${V4[@]}" --profile candidate build native-baseline-check native-candidate
       "$PYTHON" "$ROOT/deploy/v4_native_upgrade.py" --root "$ROOT" --env-file "$V4_ENV"
       ;;
-    *) echo 'Use v4-init|v4-config|v4-up|v4-build|v4-status|v4-check|v4-exec|v4-logs|v4-stop|v4-start|v4-down|v4-test|v4-test-db-up|v4-test-db-down|v4-test-postgres [pytest args]|v4-backup|v4-restore-check PATH|v4-native-compare' >&2; exit 2 ;;
+    v4-native-candidate-test)
+      shift
+      "${V4[@]}" --profile candidate build native-candidate-test
+      "${V4[@]}" --profile candidate run --rm -T --no-deps native-candidate-test "$@"
+      ;;
+    *) echo 'Use v4-init|v4-config|v4-up|v4-build|v4-run [options] SERVICE [command...]|v4-status|v4-check|v4-exec|v4-logs|v4-stop|v4-start|v4-down|v4-test|v4-test-db-up|v4-test-db-down|v4-test-postgres [pytest args]|v4-backup|v4-restore-check PATH|v4-native-compare|v4-native-candidate-test [pytest args]' >&2; exit 2 ;;
   esac
   exit
 fi

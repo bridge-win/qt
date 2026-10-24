@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 
 import pytest
@@ -76,9 +77,14 @@ async def test_slow_storage_does_not_block_ingest_or_event_loop(tmp_path):
     store = SnapshotStore(tmp_path)
     original = store._atomic_export
     entered = asyncio.Event()
+    release_export = threading.Event()
 
     def slow_export(*args):
-        time.sleep(0.2)
+        # Keep storage blocked until ingestion proves progress. A fixed sleep
+        # races CPU scheduling under container/test load and can finish first
+        # even when the event loop is correctly independent of the writer.
+        if not release_export.wait(timeout=5):
+            raise TimeoutError("test did not release the blocked writer")
         return original(*args)
 
     store._atomic_export = slow_export
@@ -102,15 +108,18 @@ async def test_slow_storage_does_not_block_ingest_or_event_loop(tmp_path):
 
     service = MonitorService(MonitorConfig(state_dir=tmp_path), feed_runner=feed, store=store)
     task = asyncio.create_task(service.run())
-    await asyncio.wait_for(entered.wait(), timeout=1)
-    assert (
-        service.engine.micro.buckets[-1].count
-        + sum(x.count for x in list(service.engine.micro.buckets)[:-1])
-        == 50
-    )
-    assert store.health()["writes"] == 0
-    service.stop_event.set()
-    await asyncio.wait_for(task, timeout=2)
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        assert (
+            service.engine.micro.buckets[-1].count
+            + sum(x.count for x in list(service.engine.micro.buckets)[:-1])
+            == 50
+        )
+        assert store.health()["writes"] == 0
+    finally:
+        release_export.set()
+        service.stop_event.set()
+        await asyncio.wait_for(task, timeout=2)
 
 
 @pytest.mark.asyncio

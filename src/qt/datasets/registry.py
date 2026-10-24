@@ -31,15 +31,23 @@ from qt.contracts import (
     content_hash,
     decimal_string,
 )
-from qt.contracts.base import NonNegativeDecimal, PositiveDecimal
+from qt.contracts.base import NonNegativeDecimal, PositiveDecimal, TimestampNS
 from qt.contracts.models import MarketEventType
 
 _PRICE = TypeAdapter(PositiveDecimal)
 _SIZE = TypeAdapter(NonNegativeDecimal)
+_TIMESTAMP = TypeAdapter(TimestampNS)
 
 
 class DatasetIntegrityError(ValueError):
     """An immutable object, manifest or its measured contents disagree."""
+
+
+def _timestamp(value: object, name: str) -> int:
+    try:
+        return _TIMESTAMP.validate_python(value, strict=True)
+    except ValueError as exc:
+        raise DatasetIntegrityError(f"invalid integer nanosecond timestamp: {name}") from exc
 
 
 def _sha256(path: Path) -> str:
@@ -150,6 +158,8 @@ class DatasetRegistry:
         measured = self._inspect(
             temporary, metadata["timestamp_column"], metadata["expected_interval_ns"],
             availability=metadata["availability"],
+            event_identity=((metadata["venue"], metadata["instrument"])
+                            if metadata["data_type"] == "market_events" else None),
         )
         digest = _sha256(temporary)
         relative_path = f"objects/{digest}.parquet"
@@ -157,7 +167,9 @@ class DatasetRegistry:
             relative_path=relative_path, sha256=digest, bytes=temporary.stat().st_size,
             rows=measured["rows"], start_ns=measured["start_ns"], end_ns=measured["end_ns"],
         )
-        payload = {**metadata, **measured, "schema_version": "2.0", "files": (part,)}
+        payload = {**metadata, **{key: measured[key] for key in (
+            "rows", "start_ns", "end_ns", "gaps", "columns", "arrow_schema",
+        )}, "schema_version": "2.0", "files": (part,)}
         draft = DatasetManifest(dataset_id="0" * 64, **payload)
         manifest = DatasetManifest.model_validate({
             **draft.model_dump(mode="python"), "dataset_id": manifest_identity(draft),
@@ -216,6 +228,7 @@ class DatasetRegistry:
         observed_rows = 0
         observed_gaps: list[DataGap] = []
         previous_end: int | None = None
+        previous_received: int | None = None
         for part in manifest.files:
             path = self._rooted(part.relative_path)
             try:
@@ -224,6 +237,8 @@ class DatasetRegistry:
                 measured = self._inspect(
                     path, manifest.timestamp_column, manifest.expected_interval_ns,
                     availability=manifest.availability,
+                    event_identity=((manifest.venue, manifest.instrument)
+                                    if manifest.data_type == "market_events" else None),
                 )
             except OSError as exc:
                 raise DatasetIntegrityError("dataset object is missing or unreadable") from exc
@@ -236,6 +251,11 @@ class DatasetRegistry:
                 observed_gaps.extend(self._gap(previous_end, measured["start_ns"],
                                                manifest.expected_interval_ns))
             previous_end = measured["end_ns"]
+            if manifest.availability == "received":
+                if (previous_received is not None
+                        and measured["received_start_ns"] < previous_received):
+                    raise DatasetIntegrityError("actual receipt history is out of order across parts")
+                previous_received = measured["received_end_ns"]
             observed_rows += measured["rows"]
             observed_gaps.extend(measured["gaps"])
         if observed_rows != manifest.rows or tuple(observed_gaps) != manifest.gaps:
@@ -268,31 +288,24 @@ class DatasetRegistry:
             raise DatasetIntegrityError("dataset type has no approved MarketEvent mapping")
         for part in manifest.files:
             parquet = pq.ParquetFile(self._rooted(part.relative_path))
-            for batch in parquet.iter_batches(batch_size=65_536):
+            for batch in parquet.iter_batches(batch_size=64 if manifest.data_type == "market_events" else 65_536):
                 for index, field in enumerate(batch.schema):
                     if pa.types.is_timestamp(field.type):
                         values = pc.cast(batch.column(index), pa.timestamp("ns", tz=field.type.tz))
                         batch = batch.set_column(index, field.name, pc.cast(values, pa.int64()))
                 for row in batch.to_pylist():
                     if manifest.data_type == "market_events":
-                        event = MarketEvent.model_validate_json(row["event_json"])
-                        if (event.venue != manifest.venue or event.instrument != manifest.instrument
-                                or event.received_ts_ns != row["received_ts_ns"]
-                                or event.exchange_ts_ns != row["exchange_ts_ns"]
-                                or event.event_type != row["event_type"]
-                                or event.sequence != row["sequence"]):
-                            raise DatasetIntegrityError("event envelope disagrees with its immutable row")
-                        yield event
+                        yield self._event_envelope(row, (manifest.venue, manifest.instrument))
                         continue
-                    timestamp = row[manifest.timestamp_column]
-                    exchange_ns = row.get("exchange_ts_ns", timestamp)
+                    timestamp = _timestamp(row[manifest.timestamp_column], manifest.timestamp_column)
+                    exchange_ns = _timestamp(row.get("exchange_ts_ns", timestamp), "exchange_ts_ns")
                     payload = {key: value for key, value in row.items()
                                if key not in {manifest.timestamp_column, "exchange_ts_ns",
                                               "received_ts_ns", "available_at_ns", "sequence"}}
                     if kind == "bar":
                         semantics = manifest.provenance.get("timestamp_semantics")
                         if "close_ts_ns" in row:
-                            exchange_ns = row["close_ts_ns"]
+                            exchange_ns = _timestamp(row["close_ts_ns"], "close_ts_ns")
                         elif semantics == "open" and manifest.expected_interval_ns is not None:
                             exchange_ns = timestamp + manifest.expected_interval_ns
                             payload["open_ts_ns"] = timestamp
@@ -313,16 +326,33 @@ class DatasetRegistry:
                             # at ingestion, while execution DTOs still reject
                             # callers passing binary floats as money.
                             text = str(raw) if type(raw) in (int, float) else raw
-                            payload[name] = decimal_string(_PRICE.validate_python(text, strict=True))
+                            try:
+                                payload[name] = decimal_string(_PRICE.validate_python(text, strict=True))
+                            except ValueError as exc:
+                                raise DatasetIntegrityError(f"invalid positive financial column: {name}") from exc
                     for name in ("volume", "quantity", "size", "buy_volume", "sell_volume"):
                         if name in payload:
                             raw = payload[name]
                             text = str(raw) if type(raw) in (int, float) else raw
-                            payload[name] = decimal_string(_SIZE.validate_python(text, strict=True))
-                    available_ns = row.get("available_at_ns", exchange_ns)
-                    received_ns = row.get("received_ts_ns", available_ns)
+                            try:
+                                payload[name] = decimal_string(_SIZE.validate_python(text, strict=True))
+                            except ValueError as exc:
+                                raise DatasetIntegrityError(f"invalid nonnegative financial column: {name}") from exc
+                    available_ns = _timestamp(row.get("available_at_ns", exchange_ns), "available_at_ns")
+                    received_ns = _timestamp(row.get("received_ts_ns", available_ns), "received_ts_ns")
+                    if received_ns < available_ns:
+                        raise DatasetIntegrityError("event version is received before its availability")
                     if kind == "bar" and (available_ns < exchange_ns or received_ns < available_ns):
                         raise DatasetIntegrityError("bar is available before its close")
+                    if kind == "bar":
+                        prices = [_PRICE.validate_python(payload[name], strict=True)
+                                  for name in ("low", "open", "close", "high")]
+                        if not prices[0] <= min(prices[1:3]) <= max(prices[1:3]) <= prices[3]:
+                            raise DatasetIntegrityError("bar OHLC prices are inconsistent")
+                        if ("open_ts_ns" in payload
+                                and (type(payload["open_ts_ns"]) is not int
+                                     or not 0 <= payload["open_ts_ns"] < exchange_ns)):
+                            raise DatasetIntegrityError("bar open must precede its close")
                     reconstructed = "received_ts_ns" not in row
                     if manifest.availability == "received" and reconstructed:
                         raise DatasetIntegrityError("actual-receipt dataset lacks received_ts_ns")
@@ -334,6 +364,22 @@ class DatasetRegistry:
                         quality_flags=("RECONSTRUCTED_RECEIPT",) if reconstructed else (),
                         revision_id=manifest.revision_id, source_hash=part.sha256,
                     )
+
+    @staticmethod
+    def _event_envelope(row: Mapping[str, Any], identity: tuple[str, str]) -> MarketEvent:
+        try:
+            encoded = row["event_json"]
+            if not isinstance(encoded, str) or len(encoded.encode("utf-8")) > 4 * 1024 * 1024:
+                raise DatasetIntegrityError("event envelope JSON is not bounded UTF-8 text")
+            event = MarketEvent.model_validate_json(encoded)
+            if (event.venue != identity[0] or event.instrument != identity[1]
+                    or event.received_ts_ns != row["received_ts_ns"]
+                    or event.exchange_ts_ns != row["exchange_ts_ns"]
+                    or event.event_type != row["event_type"] or event.sequence != row["sequence"]):
+                raise DatasetIntegrityError("event envelope disagrees with its immutable row")
+            return event
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DatasetIntegrityError("event envelope is malformed or disagrees with its immutable row") from exc
 
     @staticmethod
     def _gap(previous: int, current: int, interval_ns: int | None) -> list[DataGap]:
@@ -353,7 +399,7 @@ class DatasetRegistry:
     @classmethod
     def _inspect(
         cls, path: Path, timestamp_column: str, interval_ns: int | None,
-        *, availability: str,
+        *, availability: str, event_identity: tuple[str, str] | None = None,
     ) -> dict[str, Any]:
         if interval_ns is not None and (type(interval_ns) is not int or interval_ns <= 0):
             raise DatasetIntegrityError("expected interval must be positive integer nanoseconds")
@@ -367,10 +413,15 @@ class DatasetRegistry:
                 raise DatasetIntegrityError("timestamp column must be integer ns or Arrow timestamp")
             if availability == "received" and "received_ts_ns" not in schema.names:
                 raise DatasetIntegrityError("actual-receipt dataset lacks received_ts_ns")
+            if event_identity is not None and not {
+                "event_json", "received_ts_ns", "exchange_ts_ns", "event_type", "sequence",
+            } <= set(schema.names):
+                raise DatasetIntegrityError("market event envelopes require all identity and timestamp columns")
             rows, first, previous = 0, None, None
+            first_received: int | None = None
             previous_received: int | None = None
             gaps: list[DataGap] = []
-            for batch in parquet.iter_batches(batch_size=65_536):
+            for batch in parquet.iter_batches(batch_size=64 if event_identity is not None else 65_536):
                 times = batch.column(batch.schema.get_field_index(timestamp_column))
                 if times.null_count:
                     raise DatasetIntegrityError("timestamps contain nulls")
@@ -390,10 +441,16 @@ class DatasetRegistry:
                     received = batch.column(batch.schema.get_field_index("received_ts_ns"))
                     if received.null_count or not pa.types.is_integer(received.type):
                         raise DatasetIntegrityError("actual receipt timestamps require nonnull integer ns")
+                    received = pc.cast(received, pa.int64(), safe=True)
                     for received_ns in received.to_pylist():
                         if received_ns < 0 or (previous_received is not None and received_ns < previous_received):
                             raise DatasetIntegrityError("actual receipt history is out of order")
                         previous_received = received_ns
+                        if first_received is None:
+                            first_received = received_ns
+                if event_identity is not None:
+                    for row in batch.to_pylist():
+                        cls._event_envelope(row, event_identity)
                 for column in batch.columns:
                     if pa.types.is_floating(column.type):
                         finite = pc.all(pc.fill_null(pc.is_finite(column), True)).as_py()
@@ -403,7 +460,8 @@ class DatasetRegistry:
                 raise DatasetIntegrityError("empty datasets cannot be registered")
             return {"rows": rows, "start_ns": first, "end_ns": previous,
                     "gaps": tuple(gaps), "columns": tuple(schema.names),
-                    "arrow_schema": schema.to_string()}
+                    "arrow_schema": schema.to_string(), "received_start_ns": first_received,
+                    "received_end_ns": previous_received}
         except (pa.ArrowException, KeyError, TypeError) as exc:
             raise DatasetIntegrityError("Parquet contents or timestamp schema are invalid") from exc
 

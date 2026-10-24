@@ -65,6 +65,11 @@ def test_v4_compose_keeps_processes_and_native_candidate_separate():
         if role != "control-api":
             assert "ports" not in services[role]
     assert services["control-api"]["ports"] == ["127.0.0.1:${QT_V4_PORT:-8890}:8890"]
+    assert services["control-api"]["networks"] == ["control", "ingress"]
+    assert compose["networks"]["control"]["internal"] is True
+    assert compose["networks"]["ingress"].get("internal", False) is False
+    assert all("ingress" not in service.get("networks", [])
+               for name, service in services.items() if name != "control-api")
     assert "ports" not in services["postgres"]
     assert services["postgres"]["image"].startswith("postgres:17.9-bookworm@sha256:")
     assert services["experiment-worker"]["build"]["target"] == "native"
@@ -72,6 +77,13 @@ def test_v4_compose_keeps_processes_and_native_candidate_separate():
     assert services["native-candidate"]["network_mode"] == "none"
     assert "environment" not in services["native-candidate"]
     assert "volumes" not in services["native-candidate"]
+    assert services["native-candidate"]["build"]["target"] == "runtime"
+    candidate_test = services["native-candidate-test"]
+    assert candidate_test["build"]["target"] == "test"
+    assert candidate_test["profiles"] == ["candidate"]
+    assert candidate_test["network_mode"] == "none"
+    assert candidate_test["volumes"] == ["./tests:/tests:ro"]
+    assert "environment" not in candidate_test
     assert services["native-baseline-check"]["network_mode"] == "none"
     assert services["research-worker"]["environment"]["QT_V4_MODEL_PROVIDER"] == "llama_cpp_local"
     assert "QT_V4_SIGNING_KEY" in services["watchdog"]["environment"]
@@ -90,14 +102,21 @@ def test_v4_test_database_does_not_reuse_production_volume_or_port():
     assert database["environment"]["POSTGRES_DB"] == "qt_v4_test"
 
 
-def test_v4_wrapper_does_not_allow_shell_values_to_redirect_inspected_database(tmp_path):
+@pytest.mark.parametrize("arguments", [
+    ["v4-config"],
+    ["v4-run", "--entrypoint", "python", "native-candidate", "-c", "pass"],
+])
+def test_v4_wrapper_does_not_allow_shell_values_to_redirect_inspected_database(tmp_path, arguments):
     import os
     import subprocess
 
     # Stub Docker, not the wrapper: assert the exact subprocess environment
     # received by Compose after the private config was validated.
     docker = tmp_path / "docker"
-    docker.write_text("#!/usr/bin/env python3\nimport os\n"
+    docker.write_text("#!/usr/bin/env python3\nimport os,sys\n"
+                      "assert sys.argv[1:3] == ['--context','orbstack']\n"
+                      "assert 'qt-production-v4' in sys.argv\n"
+                      "assert 'run' not in sys.argv or all(v in sys.argv for v in ['--rm','-T','--no-deps'])\n"
                       "assert not any(k.startswith('QT_V4_') or k == 'QT_EXPERIMENT_IMAGE_DIGEST' for k in os.environ)\n")
     docker.chmod(0o755)
     env_file = tmp_path / "private.env"
@@ -109,7 +128,7 @@ def test_v4_wrapper_does_not_allow_shell_values_to_redirect_inspected_database(t
                    "QT_V4_ENV_FILE": str(env_file),
                    "QT_V4_DATABASE_URL": "postgresql+psycopg://foreign:secret@foreign/foreign",
                    "QT_EXPERIMENT_IMAGE_DIGEST": "uninspected"}
-    result = subprocess.run([str(ROOT / "deploy/orbstack.sh"), "v4-config"],
+    result = subprocess.run([str(ROOT / "deploy/orbstack.sh"), *arguments],
                             env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 
@@ -137,12 +156,50 @@ def test_native_economic_parity_does_not_automatically_promote_upgrade(tmp_path,
     paths = []
     for version in ("2.0.0rc4", "2.0.0rc7"):
         path = tmp_path / version
-        path.write_text(json.dumps({"engine_version": version, "fixture_sha256": "a" * 64,
-                                    "evidence": {"terminal_equity": "1000"}}))
+        path.write_text(json.dumps(comparison_report(module, version)))
         paths.append(path)
     report = module.compare(paths)
     assert report["economic_parity"] is True
     assert report["upgrade_accepted"] is False
+
+
+def comparison_report(module, version):
+    evidence = {"nav": {"2020-01-01": 1000}, "decisions": [], "fills": [],
+                "account_invariants": {"status": "verified"}, "fees": {"fees": "0"},
+                "terminal_equity": "1000", "fee_scenarios": {}, "causality": {}}
+    return {"schema_version": "qt.native-parity.v2", "engine_version": version,
+            "fixture_sha256": "a" * 64, "adapter_sha256": "b" * 64,
+            "evidence_sha256": module.canonical_hash(evidence), "evidence": evidence,
+            "upgrade_accepted": False}
+
+
+@pytest.mark.parametrize("mutation", ["unhashed_fee", "missing_case", "different_adapter", "additional_field"])
+def test_native_comparison_cannot_hide_missing_corrupt_or_new_evidence(tmp_path, monkeypatch, mutation):
+    import json
+
+    module = helper("v4_native_compare", monkeypatch)
+    reports = [comparison_report(module, version) for version in ("2.0.0rc4", "2.0.0rc7")]
+    candidate = reports[1]
+    if mutation == "unhashed_fee":
+        candidate["evidence"]["fees"]["fees"] = "10"
+    elif mutation == "missing_case":
+        del candidate["evidence"]["fee_scenarios"]
+        candidate["evidence_sha256"] = module.canonical_hash(candidate["evidence"])
+    elif mutation == "different_adapter":
+        candidate["adapter_sha256"] = "c" * 64
+    else:
+        candidate["evidence"]["new_financial_field"] = None
+        candidate["evidence_sha256"] = module.canonical_hash(candidate["evidence"])
+    paths = [tmp_path / "baseline", tmp_path / "candidate"]
+    for path, report in zip(paths, reports, strict=True):
+        path.write_text(json.dumps(report))
+    if mutation == "additional_field":
+        comparison = module.compare(paths)
+        assert comparison["economic_parity"] is False
+        assert comparison["changed_fields"] == ["new_financial_field"]
+    else:
+        with pytest.raises(ValueError, match=r"comparison_report|adapter_sources"):
+            module.compare(paths)
 
 
 def test_restore_check_rejects_corrupted_backup_before_any_docker_command(tmp_path, monkeypatch):

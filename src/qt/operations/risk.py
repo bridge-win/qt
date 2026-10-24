@@ -150,8 +150,14 @@ class RiskGuard:
                 ),
             )).first():
                 reasons.append("execution_requires_reconciliation")
+            if connection.execute(select(orders.c.intent_id).where(
+                orders.c.account_id == account["account_id"],
+                orders.c.settlement_status.not_in({"NOT_REQUIRED", "CONFIRMED"}),
+            )).first():
+                reasons.append("settlement_requires_reconciliation")
             mode = "HALTED" if any(reason in reasons for reason in (
-                "execution_requires_reconciliation", "cash_reservation_exceeds_actual_wallet",
+                "execution_requires_reconciliation", "settlement_requires_reconciliation",
+                "cash_reservation_exceeds_actual_wallet",
             )) else "REDUCE_ONLY" if reasons else account["mode"]
             if account["mode"] == "HALTED":
                 mode = "HALTED"

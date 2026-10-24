@@ -11,8 +11,22 @@ import threading
 from contextlib import suppress
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from qt.control.service import ControlService
 from qt.persistence import Repository, create_engine, migrate
+
+
+def trading_feed_configuration(runtime, instrument) -> dict[str, str]:
+    """The signed strategy selects the feed; unrelated collector env cannot drift it."""
+    intervals = {60_000_000_000: "1m", 300_000_000_000: "5m", 900_000_000_000: "15m",
+                 3_600_000_000_000: "1h", 14_400_000_000_000: "4h", 86_400_000_000_000: "1d"}
+    if instrument.venue != "binance" or instrument.instrument_type != "spot":
+        raise ValueError("public_trading_feed_requires_binance_spot")
+    interval = intervals.get(runtime.strategy.artifact.signal_interval_ns)
+    if interval is None:
+        raise ValueError("public_trading_feed_interval_not_supported")
+    return {"symbol": instrument.instrument, "bar_interval": interval}
 
 
 def configured_service() -> ControlService:
@@ -20,7 +34,24 @@ def configured_service() -> ControlService:
     return ControlService(Repository(create_engine(url)),
                            Path(os.environ.get("QT_V4_DATA_ROOT", "data/runtime/production-v4/datasets")),
                            tenant=os.environ.get("QT_V4_TENANT", "personal"),
-                           signing_key=os.environ.get("QT_V4_SIGNING_KEY", "").encode())
+                           signing_key=os.environ.get("QT_V4_SIGNING_KEY", "").encode(),
+                           experiment_timeout_seconds=int(os.environ.get("QT_V4_EXPERIMENT_TIMEOUT_SECONDS", "7200")))
+
+
+async def reconcile_background(service: ControlService, stop: asyncio.Event) -> None:
+    """Read-only reconciliation survives unavailable health storage as well."""
+    from qt.control.worker import reconcile_paper_once
+
+    while not stop.is_set():
+        try:
+            await asyncio.to_thread(lambda: asyncio.run(reconcile_paper_once(service)))
+        except Exception as error:
+            with suppress(SQLAlchemyError):
+                service.repository.health(service.tenant, "reconciliation", {
+                    "status": "blocked", "error_type": type(error).__name__,
+                })
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=1)
 
 
 async def collect(service: ControlService, *, trading: bool = False, once: bool = False) -> None:
@@ -29,20 +60,23 @@ async def collect(service: ControlService, *, trading: bool = False, once: bool 
 
     repo, tenant = service.repository, service.tenant
     runtime, instrument, fees = None, None, None
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(signum, stop.set)
+    feed = {"symbol": os.environ.get("QT_V4_SYMBOL", "BTCUSDT"),
+            "bar_interval": os.environ.get("QT_V4_BAR_INTERVAL", "1m")}
     if trading:
         identity = os.environ.get("QT_V4_DEPLOYMENT_ID", "")
         if not identity:
             repo.health(tenant, "trading-runtime", {"status": "blocked", "reason": "deployment_id_required"})
             if not once:
-                await asyncio.Event().wait()
+                await stop.wait()
             return
         from qt.execution.runtime import runtime_for_deployment
 
         runtime, instrument, fees = runtime_for_deployment(service, identity)
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stop.set)
+        feed = trading_feed_configuration(runtime, instrument)
 
     async def event_callback(event, book):
         if runtime is None or book is None or not book.bids or not book.asks:
@@ -67,27 +101,23 @@ async def collect(service: ControlService, *, trading: bool = False, once: bool 
             repo.health(tenant, f"market:{health['venue']}:{health['instrument']}",
                         {"book_valid": False, "reason": health.get("reason"), "status": health["status"]})
 
+    def manifest_callback(manifest):
+        registered = service.register("dataset", manifest)
+        if once and runtime is None:
+            # A one-shot data probe succeeds after a durable, registered batch,
+            # not just a socket connection. Healthy streams can stay open forever.
+            stop.set()
+        return registered
+
     collector = BinanceCollector(
-        service.datasets, symbol=os.environ.get("QT_V4_SYMBOL", "BTCUSDT"),
-        bar_interval=os.environ.get("QT_V4_BAR_INTERVAL", "1m"),
+        service.datasets, **feed,
         on_event=event_callback, on_health=health_callback,
-        on_manifest=lambda manifest: service.register("dataset", manifest),
+        on_manifest=manifest_callback,
     )
 
-    async def reconciliation_loop():
-        from qt.control.worker import reconcile_paper_once
-
-        while not stop.is_set():
-            try:
-                # Reconciliation owns no send authority. Run its blocking DB
-                # calls off the market event loop, within this OMS process.
-                await asyncio.to_thread(lambda: asyncio.run(reconcile_paper_once(service)))
-            except Exception as error:
-                repo.health(tenant, "reconciliation", {"status": "blocked", "error_type": type(error).__name__})
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=1)
-
-    reconciliation = asyncio.create_task(reconciliation_loop()) if runtime is not None else None
+    # Reconciliation owns no send authority. Keep blocking DB work off the
+    # market event loop, within this OMS process.
+    reconciliation = asyncio.create_task(reconcile_background(service, stop)) if runtime is not None else None
     try:
         await collector.run(stop=stop, maximum_sessions=1 if once else None)
     finally:
@@ -164,6 +194,7 @@ def main() -> int:
 
     kind = args.command.removesuffix("-worker")
     while not stop.is_set():
+        retry_seconds = 1
         try:
             if kind == "reconciliation":
                 from qt.control.worker import reconcile_paper_once
@@ -171,16 +202,26 @@ def main() -> int:
                 result = asyncio.run(reconcile_paper_once(service))
             else:
                 provider = provider_from_environment() if kind == "research" else None
-                result = run_once(service, kind, provider=provider)
+                result = run_once(service, kind, provider=provider, shutdown=stop)
             repo.health(tenant, args.command, {"status": "ready", "processed_job": bool(result)})
         except (KeyError, ValueError) as error:
             result = {"status": "blocked", "error_type": type(error).__name__,
                       "reason": "explicit_runtime_configuration_required"}
-            repo.health(tenant, args.command, result)
+            try:
+                repo.health(tenant, args.command, result)
+            except SQLAlchemyError:
+                result = {"status": "unavailable", "reason": "control_database_unavailable"}
+                retry_seconds = 5
+        except SQLAlchemyError:
+            # Reconnect through pool_pre_ping after a database outage. Do not
+            # log connection exceptions or turn transient outages into a tight
+            # container restart loop. Active job leases expire for recovery.
+            result = {"status": "unavailable", "reason": "control_database_unavailable"}
+            retry_seconds = 5
         if args.once:
             print(json.dumps(result, default=str))
             return 0
-        stop.wait(1)
+        stop.wait(retry_seconds)
     return 0
 
 

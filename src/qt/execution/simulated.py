@@ -11,7 +11,7 @@ import time
 from decimal import Decimal, localcontext
 from typing import Any
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 
 from qt.contracts import (
     CancelResult,
@@ -79,15 +79,26 @@ class PaperAdapter:
             "asks": [(level.price, level.quantity) for level in book.asks],
         })
 
-    def _records(self, connection=None) -> list[dict]:
+    def _records(self, connection=None, *, book_hash: str | None = None) -> list[dict]:
         if self.repo is None:
-            return list(self._results.values())
+            return [row for row in self._results.values() if book_hash is None or row["book_hash"] == book_hash]
         if connection is None:
             with self.repo.transaction() as connection:
-                return self._records(connection)
-        return [dict(row["payload"]) for row in connection.execute(select(artifacts.c.payload).where(
+                return self._records(connection, book_hash=book_hash)
+        query = select(artifacts).where(
             artifacts.c.tenant_id == self.tenant_id, artifacts.c.kind == "paper_order_result",
-        ).order_by(artifacts.c.created_ns, artifacts.c.entity_id)).mappings()]
+        )
+        if book_hash is not None:
+            query = query.where(artifacts.c.payload["book_hash"].as_string() == book_hash)
+        return [self._verified_payload(row) for row in connection.execute(
+            query.order_by(artifacts.c.created_ns, artifacts.c.entity_id),
+        ).mappings()]
+
+    @staticmethod
+    def _verified_payload(row) -> dict:
+        if content_hash(row["payload"]) != row["sha256"]:
+            raise Conflict("paper_result_integrity_failure")
+        return dict(row["payload"])
 
     def _lookup(self, identity: str, connection=None) -> dict | None:
         if self.repo is None:
@@ -101,9 +112,7 @@ class PaperAdapter:
         )).mappings().first()
         if row is None:
             return None
-        if content_hash(row["payload"]) != row["sha256"]:
-            raise Conflict("paper_result_integrity_failure")
-        return dict(row["payload"])
+        return self._verified_payload(row)
 
     def _match(self, intent: OrderIntent, previous: list[dict]) -> dict:
         if self._book is None:
@@ -212,12 +221,15 @@ class PaperAdapter:
                 ).with_for_update()).first()
                 existing = self._lookup(intent.intent_id, connection)
                 if existing is None:
-                    previous = self._records(connection)
+                    previous = self._records(connection, book_hash=self._book["book_hash"])
                     existing = self._match(intent, previous)
-                    existing["account_sequence"] = 1 + max((
-                        record.get("account_sequence", 0) for record in previous
-                        if record["intent"]["account_id"] == intent.account_id
-                    ), default=0)
+                    sequence = connection.execute(select(func.max(
+                        artifacts.c.payload["account_sequence"].as_integer(),
+                    )).where(
+                        artifacts.c.tenant_id == self.tenant_id, artifacts.c.kind == "paper_order_result",
+                        artifacts.c.payload["intent"]["account_id"].as_string() == intent.account_id,
+                    )).scalar_one()
+                    existing["account_sequence"] = 1 + (sequence or 0)
                     connection.execute(insert(artifacts).values(
                         tenant_id=self.tenant_id, kind="paper_order_result", entity_id=intent.intent_id,
                         payload=existing, sha256=content_hash(existing), created_ns=time.time_ns(),
@@ -230,10 +242,13 @@ class PaperAdapter:
         if self.repo is None:
             return identity in self._canceled
         with self.repo.transaction() as connection:
-            return connection.execute(select(artifacts.c.entity_id).where(
+            row = connection.execute(select(artifacts).where(
                 artifacts.c.tenant_id == self.tenant_id, artifacts.c.kind == "paper_cancel",
                 artifacts.c.entity_id == identity,
-            )).first() is not None
+            )).mappings().first()
+            if row is not None:
+                self._verified_payload(row)
+            return row is not None
 
     @staticmethod
     def _verify_identity(record: dict, identity: OrderIdentity) -> None:
@@ -269,24 +284,38 @@ class PaperAdapter:
         return CancelResult(status="confirmed", identity=snapshot.identity, received_at_ns=time.time_ns())
 
     async def reconcile(self, cursor: ReconcileCursor) -> ReconcileBatch:
-        records = [record for record in self._records() if (
-            record["intent"]["account_id"] == cursor.account_id and record["intent"]["venue"] == cursor.venue
-        )]
-        if self.repo is not None:
-            records.sort(key=lambda record: record["account_sequence"])
         try:
             offset = int(cursor.cursor or "0")
         except ValueError as exc:
             raise ValueError("invalid_paper_reconcile_cursor") from exc
-        if offset < 0 or offset > len(records):
+        if offset < 0:
             raise ValueError("invalid_paper_reconcile_cursor")
-        page = records[offset:offset + 200]
+        if self.repo is None:
+            records = [record for record in self._records() if (
+                record["intent"]["account_id"] == cursor.account_id and record["intent"]["venue"] == cursor.venue
+            )]
+            if offset > len(records):
+                raise ValueError("invalid_paper_reconcile_cursor")
+            page = records[offset:offset + 201]
+        else:
+            # Bound payload materialization to one page even after years of
+            # immutable paper history. Appending new records preserves offsets.
+            with self.repo.transaction() as connection:
+                rows = connection.execute(select(artifacts).where(
+                    artifacts.c.tenant_id == self.tenant_id, artifacts.c.kind == "paper_order_result",
+                    artifacts.c.payload["intent"]["account_id"].as_string() == cursor.account_id,
+                    artifacts.c.payload["intent"]["venue"].as_string() == cursor.venue,
+                ).order_by(artifacts.c.payload["account_sequence"].as_integer(), artifacts.c.entity_id)
+                    .offset(offset).limit(201)).mappings().all()
+                page = [self._verified_payload(row) for row in rows]
+        complete = len(page) <= 200
+        page = page[:200]
         snapshots = [await self.query(OrderIdentity.model_validate(record["snapshot"]["identity"])) for record in page]
         return ReconcileBatch(
             next_cursor=ReconcileCursor(venue=cursor.venue, account_id=cursor.account_id,
                                         cursor=str(offset + len(page))),
             orders=tuple(snapshots), fills=tuple(fill for record in page for fill in record["fills"]),
-            complete=offset + len(page) >= len(records),
+            complete=complete,
         )
 
 

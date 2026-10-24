@@ -6,7 +6,7 @@ import hashlib
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 from sqlalchemy import and_, insert, or_, select, update
@@ -69,10 +69,11 @@ class Repository:
             raise Conflict("job_lease_lost")
 
     def put(self, tenant: str, kind: str, payload: dict, entity_id: str | None = None,
-            *, fence_job: tuple[str, str] | None = None) -> dict:
+            *, fence_job: tuple[str, str] | None = None,
+            connection: Connection | None = None) -> dict:
         digest = checksum(payload)
         identity = entity_id or digest
-        with self.transaction() as connection:
+        with nullcontext(connection) if connection is not None else self.transaction() as connection:
             if fence_job is not None:
                 self.assert_job_fence(connection, tenant, fence_job)
             insert_once(connection, artifacts, {
@@ -109,13 +110,14 @@ class Repository:
             return [dict(row) for row in rows]
 
     def enqueue(self, tenant: str, kind: str, payload: dict, key: str,
-                *, deadline_ns: int | None = None, fence_job: tuple[str, str] | None = None) -> dict:
+                *, deadline_ns: int | None = None, fence_job: tuple[str, str] | None = None,
+                connection: Connection | None = None) -> dict:
         if not key or len(key) > 200:
             raise ValueError("invalid_idempotency_key")
         now = time.time_ns()
         identity = checksum([tenant, kind, key])
         digest = checksum(payload)
-        with self.transaction() as connection:
+        with nullcontext(connection) if connection is not None else self.transaction() as connection:
             if fence_job is not None:
                 self.assert_job_fence(connection, tenant, fence_job)
             insert_once(connection, jobs, {
@@ -141,8 +143,8 @@ class Repository:
 
     def claim(self, kind: str, *, lease_seconds: int = 60, now_ns: int | None = None,
               tenant: str | None = None) -> dict | None:
-        now = now_ns or time.time_ns()
         with self.transaction() as connection:
+            now = now_ns if now_ns is not None else time.time_ns()
             expired = connection.execute(select(jobs).where(
                 jobs.c.kind == kind, jobs.c.status.in_(["QUEUED", "RUNNING"]),
                 jobs.c.tenant_id == tenant if tenant is not None else True,
@@ -173,14 +175,20 @@ class Repository:
             return {**dict(row), **values}
 
     def heartbeat(self, job: dict, *, lease_seconds: int = 60) -> bool:
-        now = time.time_ns()
         with self.transaction() as connection:
-            changed = connection.execute(update(jobs).where(
-                jobs.c.job_id == job["job_id"], jobs.c.lease_token == job["lease_token"],
-                jobs.c.status == "RUNNING", jobs.c.cancel_requested == 0,
-                jobs.c.lease_until_ns > now, jobs.c.deadline_ns > now,
-            ).values(lease_until_ns=now + lease_seconds * 1_000_000_000))
-            return changed.rowcount == 1
+            row = connection.execute(select(jobs).where(
+                jobs.c.job_id == job["job_id"], jobs.c.tenant_id == job["tenant_id"],
+            ).with_for_update()).mappings().first()
+            # Sampling before a row-lock wait could resurrect a lease which
+            # expired while this transaction was blocked behind another writer.
+            now = time.time_ns()
+            if (row is None or row["lease_token"] != job["lease_token"]
+                    or row["status"] != "RUNNING" or row["cancel_requested"]
+                    or row["lease_until_ns"] <= now or row["deadline_ns"] <= now):
+                return False
+            connection.execute(update(jobs).where(jobs.c.job_id == job["job_id"]).values(
+                lease_until_ns=now + lease_seconds * 1_000_000_000))
+            return True
 
     def finish(self, job: dict, result: dict, *, failed: bool = False) -> dict:
         canonical(result)

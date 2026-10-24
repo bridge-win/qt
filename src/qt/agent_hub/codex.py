@@ -177,6 +177,23 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
             process.kill()
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # On macOS an exiting process group can transiently report EPERM
+        # instead of ESRCH, even for our own child. Reap an already-exiting
+        # child before classifying this as a real termination failure.
+        try:
+            process.wait(timeout=0.1)
+            return
+        except subprocess.TimeoutExpired:
+            # Do not leave a running leader behind if group termination is
+            # genuinely denied. Killing only the leader does not establish
+            # that its descendants stopped, so the invocation remains failed.
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                raise CodexUnavailableError("Codex process termination could not be verified") from None
+            raise CodexUnavailableError("Codex process group termination could not be verified") from None
     process.wait(timeout=5)
 
 
@@ -187,15 +204,21 @@ def _bounded_wait(
     events: Path | None = None,
 ) -> int:
     deadline = time.monotonic() + timeout
-    while True:
+    def check_limits():
         if output.exists() and output.stat().st_size > MAX_OUTPUT_BYTES:
             _stop(process)
             raise CodexUnavailableError("Codex output exceeded the configured limit")
         if events is not None and events.exists() and events.stat().st_size > MAX_EVENT_BYTES:
             _stop(process)
             raise CodexUnavailableError("Codex event stream exceeded the configured limit")
+
+    while True:
+        check_limits()
         code = process.poll()
         if code is not None:
+            # The last write can occur between the earlier stat and poll.
+            # Event output must be bounded even when the process exits fast.
+            check_limits()
             return code
         if time.monotonic() >= deadline:
             _stop(process)

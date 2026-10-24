@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import nullcontext
 from typing import Any
 
 from sqlalchemy import (
@@ -24,9 +25,10 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.engine import Connection
 
 from qt.persistence.repository import Conflict, Repository, checksum, insert_once
-from qt.persistence.schema import metadata
+from qt.persistence.schema import jobs, metadata
 
 dataset_guards = Table(
     "campaign_dataset_guards", metadata,
@@ -126,12 +128,15 @@ class ExperimentRegistry(Repository):
         return dict(row)
 
     def register_trial(
-        self, tenant_id: str, campaign_id: str, trial_id: str, proposal: dict[str, Any]
+        self, tenant_id: str, campaign_id: str, trial_id: str, proposal: dict[str, Any],
+        *, fence_job: tuple[str, str] | None = None, connection: Connection | None = None,
     ) -> dict[str, Any]:
         if not trial_id or not proposal:
             raise ValueError("trial_identity_and_proposal_required")
         digest = checksum({"campaign_id": campaign_id, "proposal": proposal})
-        with self.transaction() as db:
+        with nullcontext(connection) if connection is not None else self.transaction() as db:
+            if fence_job is not None:
+                self.assert_job_fence(db, tenant_id, fence_job)
             campaign = db.execute(select(campaigns).where(
                 campaigns.c.tenant_id == tenant_id, campaigns.c.campaign_id == campaign_id,
             ).with_for_update()).mappings().first()
@@ -164,12 +169,15 @@ class ExperimentRegistry(Repository):
             return row
 
     def finish_trial(
-        self, tenant_id: str, trial_id: str, *, status: str, result: dict[str, Any]
+        self, tenant_id: str, trial_id: str, *, status: str, result: dict[str, Any],
+        fence_job: tuple[str, str] | None = None, connection: Connection | None = None,
     ) -> dict[str, Any]:
         if status not in {"completed", "failed", "aborted", "rejected"}:
             raise ValueError("invalid_terminal_trial_status")
         digest = checksum({"status": status, "result": result})
-        with self.transaction() as db:
+        with nullcontext(connection) if connection is not None else self.transaction() as db:
+            if fence_job is not None:
+                self.assert_job_fence(db, tenant_id, fence_job)
             row = db.execute(select(trials).where(
                 trials.c.tenant_id == tenant_id, trials.c.trial_id == trial_id,
             ).with_for_update()).mappings().first()
@@ -192,6 +200,47 @@ class ExperimentRegistry(Repository):
                 trials.c.tenant_id == tenant_id, trials.c.campaign_id == campaign_id,
             ).order_by(trials.c.created_ns, trials.c.trial_id)).mappings().all()
         return [dict(row) for row in rows]
+
+    def reconcile_terminal_jobs(self, tenant_id: str, *, limit: int = 100) -> int:
+        """Finish abandoned trials from durable queue facts, never a stale worker.
+
+        Cancel-before-claim, deadline expiry and exhausted crash retries must
+        remain counted in the search population without staying 'submitted'
+        forever. A still-active legacy duplicate job takes precedence.
+        """
+        if not 1 <= limit <= 100:
+            raise ValueError("terminal_trial_reconciliation_limit_invalid")
+        other = jobs.alias("other_attempt")
+        active = select(other.c.job_id).where(
+            other.c.tenant_id == jobs.c.tenant_id, other.c.kind == "experiment",
+            other.c.sha256 == jobs.c.sha256, other.c.status.in_(("QUEUED", "RUNNING")),
+        ).exists()
+        count = 0
+        with self.transaction() as connection:
+            rows = connection.execute(select(jobs).join(trials,
+                (trials.c.tenant_id == jobs.c.tenant_id)
+                & (trials.c.trial_id == jobs.c.payload["experiment_hash"].as_string()),
+            ).where(jobs.c.tenant_id == tenant_id, jobs.c.kind == "experiment",
+                    jobs.c.status.in_(("CANCELLED", "EXHAUSTED", "FAILED")),
+                    trials.c.status == "submitted", ~active)
+                .order_by(jobs.c.created_ns, jobs.c.job_id).limit(limit)
+                .with_for_update(of=jobs, skip_locked=True)).mappings().all()
+            for job in rows:
+                if checksum(job["payload"]) != job["sha256"]:
+                    continue
+                current = connection.execute(select(trials.c.status).where(
+                    trials.c.tenant_id == tenant_id,
+                    trials.c.trial_id == job["payload"]["experiment_hash"],
+                ).with_for_update()).scalar_one()
+                if current != "submitted":
+                    continue
+                self.finish_trial(tenant_id, job["payload"]["experiment_hash"],
+                                  status="failed" if job["status"] == "FAILED" else "aborted",
+                                  result={"job_id": job["job_id"], "queue_status": job["status"],
+                                          "attempts": job["attempts"], "queue_result_hash": checksum(job["result"])},
+                                  connection=connection)
+                count += 1
+        return count
 
     def unlock_holdout(
         self, tenant_id: str, campaign_id: str, *, actor_id: str,

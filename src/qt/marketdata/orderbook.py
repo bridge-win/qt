@@ -176,13 +176,16 @@ class OrderBook:
     def view(self, *, now_ns: int, maximum_age_ns: int, depth: int = 20) -> BookView:
         if type(now_ns) is not int or type(maximum_age_ns) is not int:
             raise ValueError("book clock and age must be integer nanoseconds")
-        if depth <= 0 or maximum_age_ns < 0:
+        if type(depth) is not int or depth <= 0 or maximum_age_ns < 0 or now_ns < 0:
             raise ValueError("depth must be positive and age nonnegative")
         if not self.is_valid or self.last_update_id is None:
             raise BookInvalidError(self.invalid_reason or "invalid_book")
         if now_ns < self.received_ts_ns:
             self.invalidate("receipt_in_future")
             raise BookInvalidError("receipt_in_future")
+        if now_ns < self.exchange_ts_ns:
+            self.invalidate("exchange_time_in_future")
+            raise BookInvalidError("exchange_time_in_future")
         if now_ns - self.received_ts_ns > maximum_age_ns:
             raise BookInvalidError("stale_book")
         if now_ns - self.exchange_ts_ns > maximum_age_ns:

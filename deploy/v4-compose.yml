@@ -24,6 +24,7 @@ x-environment: &environment
   QT_V4_TENANT: ${QT_V4_TENANT:-personal}
   QT_V4_PORT: "8890"
   QT_V4_TRADING_MODE: paper
+  QT_V4_EXPERIMENT_TIMEOUT_SECONDS: ${QT_V4_EXPERIMENT_TIMEOUT_SECONDS:-7200}
   OPENBLAS_NUM_THREADS: "1"
   OMP_NUM_THREADS: "1"
 
@@ -86,10 +87,12 @@ services:
       QT_V4_MODEL_ID: ${QT_V4_MODEL_ID:-}
     volumes: [datasets:/state/datasets:ro]
     depends_on: *ready
-    networks: [control]
+    # A container attached only to an internal bridge may not get its host
+    # port published. Keep PostgreSQL private and expose only API loopback.
+    networks: [control, ingress]
     ports: ["127.0.0.1:${QT_V4_PORT:-8890}:8890"]
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8890/healthz',timeout=5)"]
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8890/readyz',timeout=5)"]
       interval: 15s
       timeout: 5s
       start_period: 15s
@@ -175,8 +178,19 @@ services:
     profiles: [candidate]
     restart: "no"
     image: qt-nautilus-candidate:rc7
-    build: {context: ., dockerfile: Dockerfile.nautilus-candidate}
+    build: {context: ., dockerfile: Dockerfile.nautilus-candidate, target: runtime}
     network_mode: none
+    mem_limit: 4g
+    cpus: 2.0
+
+  native-candidate-test:
+    <<: *runtime
+    profiles: [candidate]
+    restart: "no"
+    image: qt-nautilus-candidate-tests:rc7
+    build: {context: ., dockerfile: Dockerfile.nautilus-candidate, target: test}
+    network_mode: none
+    volumes: ["./tests:/tests:ro"]
     mem_limit: 4g
     cpus: 2.0
 
@@ -194,6 +208,7 @@ services:
 
 networks:
   control: {internal: true}
+  ingress: {}
   outbound: {}
 volumes:
   postgres-data: {}

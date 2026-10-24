@@ -43,7 +43,7 @@ from qt.strategies.base import EvaluationResult, Opportunity, Strategy, Strategy
 FACTOR_PROVENANCE: dict[str, str] = {'hot_rsi': 'rsi.overbought', 'hot_bb': 'bb.std', 'hot_atr_disp': 'atr_disp.extreme', 'hot_runup_30d': 'runup.30d_min', 'hot_funding_z': 'funding.8h_hot', 'hot_funding_pos': 'funding.8h_hot', 'hot_oi_surge': 'oi.surge_24h_min', 'hot_short_liq': 'liq.long_z', 'hot_mvrv_z': 'mvrv_z.top_literature', 'hot_nupl': 'nupl.euphoria', 'hot_pi_top': 'pi_cycle.top', 'hot_fng': 'fear_greed.hot'}
 
 
-def factor_sources(factors: list[str]) -> dict[str, dict]:
+def factor_sources(factors: list[str]) -> dict[str, dict[str, Any]]:
     """Provenance for every factor that fired: threshold value, method, source URL."""
 
     out = {}

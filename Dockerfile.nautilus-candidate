@@ -5,7 +5,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
 COPY requirements-native-candidate.lock /download/candidate.lock
 RUN python -m pip download --require-hashes --only-binary=:all: --dest /wheels -r /download/candidate.lock
 
-FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530
+FROM python:3.13.17-slim-bookworm@sha256:e32be0e55814a08977501ca863271d9bd02443710db8f2afaf8372e2c4508530 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app/src:/app/packages/btc-backtest/src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 COPY --from=wheels /wheels /wheels
@@ -23,3 +23,13 @@ USER 10001:10001
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["python", "/app/deploy/v4_native_compare.py"]
 CMD ["--expected-version", "2.0.0rc7", "--output", "/tmp/candidate.json"]
+
+FROM runtime AS test
+USER root
+COPY pyproject.toml /app/pyproject.toml
+COPY requirements-production-test.lock /tmp/test.lock
+RUN python -m pip install --require-hashes -r /tmp/test.lock && python -m pip check && rm /tmp/test.lock
+USER 10001:10001
+ENV PYTEST_ADDOPTS="-p no:cacheprovider -c /app/pyproject.toml"
+ENTRYPOINT ["python", "-m", "pytest"]
+CMD ["-q", "-m", "not performance", "/tests/nautilus", "/tests/test_experiment_native.py"]

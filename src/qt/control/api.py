@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, R
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from qt.control.service import ControlService
 from qt.persistence import Conflict, Repository, create_engine
@@ -90,7 +91,7 @@ def build_router(service: ControlService, *, dependencies=None) -> APIRouter:
     @router.get("/research-runs/{run_id}/events")
     async def stream(request: Request, run_id: str, after: int = Query(default=0, ge=0),
                      follow: bool = False, last_event_id: str | None = Header(default=None)):
-        repo.job(tenant, run_id)
+        await asyncio.to_thread(repo.job, tenant, run_id)
         try:
             cursor = int(last_event_id) if last_event_id is not None else after
         except ValueError:
@@ -108,7 +109,8 @@ def build_router(service: ControlService, *, dependencies=None) -> APIRouter:
                     yield f"id: {cursor}\nevent: {event['event_type']}\ndata: {json.dumps(event, allow_nan=False)}\n\n"
                 if not follow or time.monotonic() >= until:
                     break
-                if repo.job(tenant, run_id)["status"] not in {"QUEUED", "RUNNING"} and not page:
+                current = await asyncio.to_thread(repo.job, tenant, run_id)
+                if current["status"] not in {"QUEUED", "RUNNING"} and not page:
                     break
                 yield ": heartbeat\n\n"
                 await asyncio.sleep(1)
@@ -187,7 +189,8 @@ def build_router(service: ControlService, *, dependencies=None) -> APIRouter:
 
         deployment = service.verify_deployment(deployment_id)
         return JSONResponse(jsonable_encoder(
-            OMS(repo).set_mode(tenant, deployment.account_id, body.mode, body.reason),
+            OMS(repo).set_mode(tenant, deployment.account_id, body.mode, body.reason,
+                              deployment_id=deployment.deployment_id),
             custom_encoder={Decimal: str}))
 
     @router.get("/orders/{intent_id}")
@@ -234,7 +237,9 @@ def create_app(service: ControlService | None = None, *, token: str | None = Non
         url = os.environ.get("QT_V4_DATABASE_URL", "")
         service = ControlService(Repository(create_engine(url)),
                                  Path(os.environ.get("QT_V4_DATA_ROOT", "/state/datasets")),
-                                 signing_key=os.environ.get("QT_V4_SIGNING_KEY", "").encode())
+                                 tenant=os.environ.get("QT_V4_TENANT", "personal"),
+                                 signing_key=os.environ.get("QT_V4_SIGNING_KEY", "").encode(),
+                                 experiment_timeout_seconds=int(os.environ.get("QT_V4_EXPERIMENT_TIMEOUT_SECONDS", "7200")))
     app = FastAPI(title="QT Production Control", version="4.0.0",
                   docs_url=None, redoc_url=None, openapi_url=None)
     app.state.service = service
@@ -284,9 +289,37 @@ def create_app(service: ControlService | None = None, *, token: str | None = Non
     async def forbidden(_request, _error):
         return JSONResponse({"detail": "protected_holdout_or_capability"}, status_code=403)
 
+    @app.exception_handler(SQLAlchemyError)
+    async def database_unavailable(_request, _error):
+        # Database exceptions may contain SQL parameters or connection details.
+        # Never serialize them into a client response or enable writes on error.
+        return JSONResponse({"detail": "control_database_unavailable"}, status_code=503,
+                            headers={"Retry-After": "5"})
+
     @app.get("/healthz")
     def health():
         return {"service": "qt-production-v4", "status": "process_running"}
+
+    @app.get("/readyz")
+    def ready():
+        from alembic.config import Config
+        from alembic.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        import qt.persistence.database as database
+
+        config = Config()
+        config.set_main_option("script_location", str(Path(database.__file__).with_name("migrations")))
+        expected_heads = set(ScriptDirectory.from_config(config).get_heads())
+        with service.repository.transaction() as connection:
+            context = MigrationContext.configure(connection, opts={
+                "version_table_schema": "qt_v4" if connection.dialect.name == "postgresql" else None,
+            })
+            current_heads = set(context.get_current_heads())
+        if current_heads != expected_heads:
+            return JSONResponse({"status": "not_ready", "reason": "database_migration_required"}, status_code=503)
+        return {"service": "qt-production-v4", "status": "ready", "scope": "control_database_schema",
+                "live_execution_authorized": False}
 
     app.include_router(build_router(service, dependencies=[Depends(authenticate)]))
     return app

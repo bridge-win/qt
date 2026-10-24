@@ -131,6 +131,18 @@ def test_stale_exchange_backlog_and_local_clock_regression_block_decision() -> N
         book.view(now_ns=102, maximum_age_ns=10)
 
 
+def test_future_exchange_clock_and_invalid_depth_block_book_views() -> None:
+    book = valid_book()
+    assert book.apply_delta(DepthDelta(first_update_id=102, last_update_id=102,
+                                       exchange_ts_ns=200, received_ts_ns=102))
+    with pytest.raises(BookInvalidError, match="exchange_time_in_future"):
+        book.view(now_ns=103, maximum_age_ns=10)
+    assert not book.is_valid
+    for depth in (True, 1.5, 0):
+        with pytest.raises(ValueError):
+            valid_book().view(now_ns=102, maximum_age_ns=10, depth=depth)
+
+
 def bar(open_at, close_price="101") -> ClosedBar:
     return ClosedBar(instrument="BTCUSDT", open_ts_ns=open_at, close_ts_ns=open_at + 10,
                      available_at_ns=open_at + 11, received_at_ns=open_at + 12,

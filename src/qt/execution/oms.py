@@ -42,6 +42,7 @@ from qt.persistence import Conflict, Repository
 from qt.persistence.repository import insert_once
 from qt.persistence.schema import (
     accounts,
+    events,
     fills,
     ledger_entries,
     ledger_transactions,
@@ -99,6 +100,7 @@ class OMS:
         self.repo = repo
         self.risk_guard = RiskGuard(repo)
         self.funded_gate = funded_gate
+        self._account_lease_tokens: dict[tuple[str, str, str], str] = {}
         self.daily_entry_fraction = _amount(daily_entry_fraction, positive=True)
         if self.daily_entry_fraction > 1:
             raise ValueError("daily_entry_fraction_must_not_exceed_one")
@@ -380,20 +382,27 @@ class OMS:
             self.repo.event(connection, tenant, intent.intent_id, "order_reserved", {"sha256": digest})
         return row
 
-    def claim_account(self, tenant: str, account_id: str, *, owner: str, ttl_seconds: int = 30) -> str:
+    def claim_account(self, tenant: str, account_id: str, *, owner: str, ttl_seconds: int = 30,
+                      lease_token: str | None = None) -> str:
         _text(owner)
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300:
             raise ValueError("invalid_lease_ttl")
-        now = time.time_ns()
         with self.repo.transaction() as connection:
             account = self._account(connection, tenant, account_id)
-            if account["lease_until_ns"] > now and account["lease_owner"] != owner:
-                raise Conflict("account_execution_lease_held")
+            now = time.time_ns()
+            key = (tenant, account_id, owner)
+            proof = lease_token if lease_token is not None else self._account_lease_tokens.get(key)
+            if account["lease_until_ns"] > now:
+                if account["lease_owner"] != owner or proof != account["lease_token"]:
+                    raise Conflict("account_execution_lease_held")
+            elif lease_token is not None and lease_token != account["lease_token"]:
+                raise Conflict("account_execution_lease_lost")
             token = account["lease_token"] if account["lease_until_ns"] > now else uuid.uuid4().hex
             connection.execute(update(accounts).where(accounts.c.account_id == account_id).values(
                 lease_owner=owner, lease_token=token, lease_until_ns=now + ttl_seconds * 1_000_000_000,
             ))
             self.repo.event(connection, tenant, account_id, "execution_lease_claimed", {"owner": owner})
+        self._account_lease_tokens[key] = token
         return token
 
     @staticmethod
@@ -412,12 +421,39 @@ class OMS:
             status=status, reserved_quote=_ZERO, reserved_base=_ZERO, updated_ns=now,
         ))
 
-    def _uncertain(self, tenant: str, identity: str, reason: str) -> dict:
+    def _settlement(self, connection, tenant: str, row: dict, incoming: str,
+                    *, authoritative: bool = False) -> str:
+        current = row["settlement_status"]
+        if incoming == "NOT_REQUIRED" or (current == "CONFIRMED" and incoming == "PENDING"):
+            return current
+        if (current in {"FAILED", "REORGED"} and incoming not in {"FAILED", "REORGED"}
+                and (not authoritative or incoming != "CONFIRMED")):
+            return current
+        if incoming != current:
+            connection.execute(update(orders).where(orders.c.intent_id == row["intent_id"]).values(
+                settlement_status=incoming,
+            ))
+            self.repo.event(connection, tenant, row["intent_id"], "settlement_observed", {
+                "previous": current, "status": incoming, "authoritative_snapshot": authoritative,
+            })
+        if incoming in {"FAILED", "REORGED"}:
+            connection.execute(update(accounts).where(accounts.c.account_id == row["account_id"]).values(mode="HALTED"))
+        return incoming
+
+    def _uncertain(self, tenant: str, identity: str, reason: str,
+                   *, expected_status: str | None = None) -> dict:
         first = self.get_order(tenant, identity)
         with self.repo.transaction() as connection:
             # Consistent account->order lock order across all writers.
             account = self._account(connection, tenant, first["account_id"])
             found = self._order(connection, tenant, identity)
+            if found["status"] in _TERMINAL or (
+                expected_status is not None and found["status"] not in {expected_status, "UNKNOWN"}
+            ):
+                self.repo.event(connection, tenant, identity, "late_transport_failure_ignored", {
+                    "reason": reason, "observed_status": found["status"],
+                })
+                return found
             connection.execute(update(orders).where(orders.c.intent_id == identity).values(
                 status="UNKNOWN" if found["status"] not in _TERMINAL else found["status"], updated_ns=time.time_ns(),
             ))
@@ -463,7 +499,8 @@ class OMS:
                       lease_token: str, now_ns: int | None = None,
                       checked_market: ExecutableMarketSnapshot | None = None) -> dict:
         first = self.get_order(tenant, intent_id)
-        with self.repo.transaction() as connection:
+        with self.repo.transaction() as connection, localcontext() as ctx:
+            ctx.prec = 80
             account = self._account(connection, tenant, first["account_id"])
             now = _now(now_ns)
             row = self._order(connection, tenant, intent_id)
@@ -490,7 +527,18 @@ class OMS:
             )).first():
                 raise ValueError("account_requires_reconciliation")
             if deployment.mode == "shadow":
-                return {**row, "sent": False, "shadow": True}
+                # Shadow observes complete approved intents but has no venue
+                # effect. A completed observation cannot keep cash/inventory
+                # reserved as if it were a resting venue order.
+                self._release(connection, account, row, "CANCELED", now)
+                gross = intent.quantity * intent.limit_price
+                if intent.side == "buy" and account["day_utc"] == _day(now):
+                    connection.execute(update(accounts).where(accounts.c.account_id == row["account_id"]).values(
+                        daily_new_risk=max(_ZERO, account["daily_new_risk"] - gross),
+                    ))
+                self.repo.event(connection, tenant, intent_id, "shadow_intent_evaluated", {"sent": False})
+                return {**row, "status": "CANCELED", "reserved_quote": _ZERO, "reserved_base": _ZERO,
+                        "sent": False, "shadow": True}
             adapter_mode = getattr(adapter, "execution_mode", None)
             if deployment.mode == "paper" and adapter_mode != "paper":
                 raise ValueError("paper_deployment_requires_explicit_paper_adapter")
@@ -508,21 +556,66 @@ class OMS:
             # Recheck fencing immediately before the side effect. A stalled old
             # sender leaves SUBMITTING, which blocks all new account submissions.
             with self.repo.transaction() as connection:
-                self._lease(self._account(connection, tenant, row["account_id"]), lease_token, time.time_ns())
+                account = self._account(connection, tenant, row["account_id"])
+                current = self._order(connection, tenant, intent_id)
+                now = _now(now_ns)
+                self._lease(account, lease_token, time.time_ns())
+                ensure_active_deployment(connection, tenant, row["account_id"], row["deployment_id"])
+                if current["status"] != "SUBMITTING":
+                    return {**current, "requires_reconciliation": current["status"] in _UNCERTAIN}
+                reason = None
+                abort_mode = account["mode"]
+                if account["mode"] == "HALTED" or (account["mode"] != "ACTIVE" and intent.side != "sell"):
+                    reason = "risk_mode_changed_before_send"
+                health = connection.execute(select(runtime_health).where(
+                    runtime_health.c.tenant_id == tenant,
+                    runtime_health.c.name == f"market:{row['venue']}:{row['instrument']}",
+                )).mappings().first()
+                try:
+                    latest = ExecutableMarketSnapshot.model_validate(health["payload"]) if health else checked_market
+                    if latest is None:
+                        raise ValueError("trusted_market_required_before_send")
+                    self._verify(intent, InstrumentSpec.model_validate(row["payload"]["instrument"]),
+                                 FeeSchedule.model_validate(row["payload"]["fees"]), deployment, latest, now)
+                    if intent.side == "buy":
+                        self.risk_guard.ensure_new_risk_locked(
+                            connection, account, deployment,
+                            InstrumentSpec.model_validate(row["payload"]["instrument"]), latest, now,
+                        )
+                except StaleMarketObservationError:
+                    reason = reason or "superseded_market_observation_before_send"
+                except RiskBudgetExceededError:
+                    reason = reason or "risk_budget_changed_before_send"
+                    abort_mode = "HALTED" if account["mode"] == "HALTED" else "REDUCE_ONLY"
+                except ValueError:
+                    reason = reason or "market_or_risk_changed_before_send"
+                    abort_mode = "HALTED"
+                if reason is not None:
+                    # This writer still owns the intent, and no network call
+                    # has started. End its reservation with an explicit local
+                    # never-sent event; do not manufacture venue cancellation.
+                    self._release(connection, account, current, "CANCELED", now)
+                    connection.execute(update(accounts).where(accounts.c.account_id == row["account_id"]).values(mode=abort_mode))
+                    self.repo.event(connection, tenant, intent_id, "order_aborted_before_send", {
+                        "reason": reason, "never_sent": True,
+                    })
+                    return {**current, "status": "CANCELED", "sent": False, "never_sent": True,
+                            "reserved_quote": _ZERO, "reserved_base": _ZERO}
             remaining_seconds = max(0.001, min(5, (intent.valid_until_ns - time.time_ns()) / 1_000_000_000))
             result = await asyncio.wait_for(adapter.submit(intent), timeout=remaining_seconds)
             if not isinstance(result, SubmitResult):
                 raise ValueError("adapter_submit_result_must_be_typed")
             self._identity_matches(row, result.identity)
         except asyncio.CancelledError:
-            self._uncertain(tenant, intent_id, "submission_cancelled")
+            self._uncertain(tenant, intent_id, "submission_cancelled", expected_status="SUBMITTING")
             raise
         except Exception as exc:
-            return self._uncertain(tenant, intent_id, type(exc).__name__)
+            return self._uncertain(tenant, intent_id, type(exc).__name__, expected_status="SUBMITTING")
         with self.repo.transaction() as connection:
             account = self._account(connection, tenant, row["account_id"])
             current = self._order(connection, tenant, intent_id)
             self._lease(account, lease_token, time.time_ns())
+            self._identity_matches(current, result.identity)
             if result.identity.venue_order_id is not None:
                 connection.execute(update(orders).where(orders.c.intent_id == intent_id).values(
                     venue_order_id=result.identity.venue_order_id,
@@ -575,10 +668,10 @@ class OMS:
                 raise ValueError("adapter_cancel_result_must_be_typed")
             self._identity_matches(row, result.identity)
         except asyncio.CancelledError:
-            self._uncertain(tenant, intent_id, "cancel_cancelled")
+            self._uncertain(tenant, intent_id, "cancel_cancelled", expected_status="CANCEL_PENDING")
             raise
         except Exception as exc:
-            return self._uncertain(tenant, intent_id, type(exc).__name__)
+            return self._uncertain(tenant, intent_id, type(exc).__name__, expected_status="CANCEL_PENDING")
         with self.repo.transaction() as connection:
             account = self._account(connection, tenant, row["account_id"])
             current = self._order(connection, tenant, intent_id)
@@ -630,9 +723,19 @@ class OMS:
             if existing is not None:
                 if existing["sha256"] != digest:
                     raise Conflict("venue_trade_identity_conflict")
+                # Settlement evolves independently of the immutable economic
+                # fill. A reorg notification must not duplicate the journal or
+                # disappear merely because its trade ID was already ingested.
+                self._settlement(connection, tenant, row, settlement_status)
                 return dict(existing)
             if row["status"] == "RESERVED":
                 raise ValueError("fill_for_never_submitted_order")
+            if connection.execute(select(events.c.sequence).where(
+                events.c.tenant_id == tenant, events.c.entity_id == intent_id,
+                events.c.event_type.in_({"shadow_intent_evaluated", "order_aborted_before_send",
+                                       "unsent_order_canceled", "order_expired_unsent"}),
+            ).limit(1)).first():
+                raise ValueError("fill_for_proven_never_sent_order")
             filled = row["filled_quantity"] + quantity
             if filled > row["quantity"]:
                 raise ValueError("fill_exceeds_order_quantity")
@@ -661,9 +764,10 @@ class OMS:
             status = "FILLED" if filled == row["quantity"] else (
                 row["status"] if not active or row["status"] == "CANCEL_PENDING" else "PARTIALLY_FILLED"
             )
+            settlement = self._settlement(connection, tenant, row, settlement_status)
             connection.execute(update(orders).where(orders.c.intent_id == intent_id).values(
                 filled_quantity=filled, reserved_quote=new_quote, reserved_base=new_base,
-                status=status, settlement_status=settlement_status, updated_ns=now,
+                status=status, settlement_status=settlement, updated_ns=now,
             ))
             account_reserved = account["reserved_quote"] - row["reserved_quote"] + new_quote
             connection.execute(update(accounts).where(accounts.c.account_id == row["account_id"]).values(
@@ -678,7 +782,7 @@ class OMS:
                 or wallet.get(quote_asset, _ZERO) < account_reserved
                 or wallet.get(base_asset, _ZERO) < pending_base
                 or fee_asset != fee_spec["fee_asset"]
-                or fee > (gross * fee_rate if fee_asset == quote_asset else quantity * fee_rate)
+                or fee > _ceil(gross * fee_rate if fee_asset == quote_asset else quantity * fee_rate)
                 or (price > original_intent.limit_price if row["side"] == "buy" else price < original_intent.limit_price)
             )
             if breach or settlement_status in {"FAILED", "REORGED"}:
@@ -692,6 +796,16 @@ class OMS:
         with self.repo.transaction() as connection:
             account = self._account(connection, tenant, first["account_id"])
             row = self._order(connection, tenant, first["intent_id"])
+            if snapshot.asof_ns < row["last_reconciled_ns"] or (
+                snapshot.filled_quantity < row["filled_quantity"] and snapshot.asof_ns < row["updated_ns"]
+            ):
+                self.repo.event(connection, tenant, row["intent_id"], "stale_order_snapshot_ignored", {
+                    "snapshot_ns": snapshot.asof_ns, "current_updated_ns": row["updated_ns"],
+                })
+                return {**row, "snapshot_ignored": True}
+            self._identity_matches(row, snapshot.identity)
+            if row["status"] == "RESERVED":
+                raise ValueError("snapshot_for_never_submitted_order")
             if snapshot.quantity != row["quantity"] or snapshot.filled_quantity != row["filled_quantity"]:
                 raise ValueError("snapshot_fill_ledger_difference_requires_fill_reconciliation")
             if snapshot.asof_ns < row["created_ns"] or snapshot.asof_ns > time.time_ns():
@@ -702,11 +816,18 @@ class OMS:
                 raise ValueError("snapshot_cannot_regress_terminal_order")
             if snapshot.status == "FILLED" and snapshot.filled_quantity != row["quantity"]:
                 raise ValueError("filled_snapshot_is_incomplete")
+            if snapshot.status == "ACKNOWLEDGED" and snapshot.filled_quantity > 0:
+                raise ValueError("acknowledged_snapshot_cannot_erase_partial_fill_state")
+            if row["status"] == "CANCEL_PENDING" and snapshot.status not in _TERMINAL:
+                # Seeing an open order does not prove that an in-flight cancel
+                # failed. Only cancel rejection or terminal venue truth clears it.
+                return {**row, "snapshot_ignored": True}
             if snapshot.status in _TERMINAL:
                 self._release(connection, account, row, snapshot.status, time.time_ns())
+            settlement = self._settlement(connection, tenant, row, snapshot.settlement_status, authoritative=True)
             connection.execute(update(orders).where(orders.c.intent_id == row["intent_id"]).values(
                 status=snapshot.status, venue_order_id=snapshot.identity.venue_order_id,
-                settlement_status=snapshot.settlement_status, last_reconciled_ns=snapshot.asof_ns,
+                settlement_status=settlement, last_reconciled_ns=snapshot.asof_ns,
                 updated_ns=time.time_ns(),
             ))
             if snapshot.settlement_status in {"FAILED", "REORGED"}:
@@ -717,10 +838,12 @@ class OMS:
     async def query(self, tenant: str, intent_id: str, adapter: ExecutionAdapter) -> dict:
         row = self.get_order(tenant, intent_id)
         try:
-            result = await adapter.query(OrderIdentity(
+            result = await asyncio.wait_for(adapter.query(OrderIdentity(
                 venue=row["venue"], account_id=row["account_id"], intent_id=intent_id,
                 venue_order_id=row["venue_order_id"],
-            ))
+            )), timeout=5)
+            if not isinstance(result, OrderSnapshot):
+                raise ValueError("adapter_query_result_must_be_typed")
             return self._snapshot(tenant, result)
         except Exception as exc:
             return self._uncertain(tenant, intent_id, "query:" + type(exc).__name__)
@@ -730,7 +853,9 @@ class OMS:
         # Reconciliation ingestion is intentionally read-only at the venue.
         with self.repo.transaction() as connection:
             self._account(connection, tenant, account_id)
-        batch = await adapter.reconcile(ReconcileCursor(venue=venue, account_id=account_id, cursor=cursor))
+        batch = await asyncio.wait_for(
+            adapter.reconcile(ReconcileCursor(venue=venue, account_id=account_id, cursor=cursor)), timeout=5,
+        )
         if batch.next_cursor.account_id != account_id or batch.next_cursor.venue != venue:
             raise ValueError("reconciliation_identity_mismatch")
         for item in batch.fills:
@@ -760,21 +885,34 @@ class OMS:
                 orders.c.account_id == account_id, orders.c.status.in_(_UNCERTAIN),
             )).first():
                 raise ValueError("unresolved_execution_states_remain")
+            if connection.execute(select(orders.c.intent_id).where(
+                orders.c.account_id == account_id,
+                orders.c.settlement_status.not_in({"NOT_REQUIRED", "CONFIRMED"}),
+            )).first():
+                raise ValueError("unresolved_settlement_states_remain")
             connection.execute(update(accounts).where(accounts.c.account_id == account_id).values(reconciled_ns=now))
             self.repo.event(connection, tenant, account_id, "account_reconciled", {})
         return {**account, "reconciled_ns": now}
 
-    def set_mode(self, tenant: str, account_id: str, mode: str, reason: str) -> dict:
+    def set_mode(self, tenant: str, account_id: str, mode: str, reason: str,
+                 *, deployment_id: str | None = None) -> dict:
         if mode not in _MODES or not isinstance(reason, str) or not reason.strip():
             raise ValueError("invalid_risk_mode_or_reason")
         with self.repo.transaction() as connection:
             account = self._account(connection, tenant, account_id)
+            if deployment_id is not None:
+                ensure_active_deployment(connection, tenant, account_id, deployment_id)
             if mode == "ACTIVE" and any(value < 0 for value in self._wallet(connection, account_id).values()):
                 raise ValueError("negative_wallet_prevents_reactivation")
             if mode == "ACTIVE" and connection.execute(select(orders.c.intent_id).where(
                 orders.c.account_id == account_id, orders.c.status.in_(_UNCERTAIN),
             )).first():
                 raise ValueError("uncertain_orders_prevent_reactivation")
+            if mode == "ACTIVE" and connection.execute(select(orders.c.intent_id).where(
+                orders.c.account_id == account_id,
+                orders.c.settlement_status.not_in({"NOT_REQUIRED", "CONFIRMED"}),
+            )).first():
+                raise ValueError("unresolved_settlement_prevents_reactivation")
             connection.execute(update(accounts).where(accounts.c.account_id == account_id).values(mode=mode))
             self.repo.event(connection, tenant, account_id, "risk_mode_changed", {"mode": mode, "reason": reason})
         return {**account, "mode": mode}

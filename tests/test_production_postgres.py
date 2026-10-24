@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 
 from qt.control.service import ControlService
 from qt.persistence import Conflict, Repository, create_engine, migrate
+from tests.test_execution_oms import state as state
 
 pytestmark = pytest.mark.integration
 
@@ -113,6 +114,60 @@ def test_pg_exact_money_and_single_account_writer(postgres):
         tokens = [value for value in executor.map(compete, range(30)) if value is not None]
     assert len(tokens) == 1
     assert OMS(service.repository).balances(service.tenant, account_id)["wallet"]["USDT"] == Decimal("10000.000000000000000001")
+
+
+def test_pg_independent_instances_cannot_renew_by_reusing_the_same_owner_name(postgres):
+    from qt.execution.oms import OMS
+
+    service = postgres
+    identity = "same-owner-" + uuid.uuid4().hex
+    OMS(service.repository).create_account(service.tenant, identity, capital=Decimal("10000"))
+
+    def compete(_):
+        try:
+            return OMS(Repository(service.repository.engine)).claim_account(
+                service.tenant, identity, owner="identical-configured-owner",
+            )
+        except Conflict:
+            return None
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        accepted = [token for token in executor.map(compete, range(40)) if token is not None]
+    assert len(accepted) == 1
+    replacement = OMS(Repository(service.repository.engine))
+    with pytest.raises(Conflict, match="lease_held"):
+        replacement.claim_account(service.tenant, identity, owner="identical-configured-owner")
+    assert replacement.claim_account(service.tenant, identity, owner="identical-configured-owner",
+                                     lease_token=accepted[0]) == accepted[0]
+
+
+@pytest.mark.asyncio
+async def test_pg_paper_depth_consumption_and_bounded_reconciliation_use_exact_persistent_history(postgres, state):
+    from qt.execution.oms import OMS
+    from qt.execution.simulated import PaperAdapter
+    from tests.test_execution_oms import intent
+
+    repo, tenant = postgres.repository, postgres.tenant
+    identity = "pg-paper-" + uuid.uuid4().hex
+    oms = OMS(repo)
+    oms.create_account(tenant, identity, capital=Decimal("10000"))
+    deployment = state.deployment.model_copy(update={"account_id": identity})
+    token = oms.claim_account(tenant, identity, owner="paper-fixture")
+    adapter = PaperAdapter(repo, tenant_id=tenant)
+    adapter.set_book(state.market, state.instrument, state.fees, {
+        "bids": [("9999", "1")], "asks": [("10001", "0.0015")],
+    })
+    for number in range(2):
+        order = intent(state, identity + str(number), account_id=identity, quantity="0.001",
+                       limit_price="10001", time_in_force="IOC")
+        oms.reserve(tenant, order, instrument=state.instrument, fees=state.fees,
+                    deployment=deployment, market=state.market)
+        await oms.submit(tenant, order.intent_id, adapter, lease_token=token)
+        assert (await oms.reconcile(tenant, identity, adapter, venue="fixture"))["complete"]
+    assert oms.get_order(tenant, identity + "0")["status"] == "FILLED"
+    assert oms.get_order(tenant, identity + "1")["status"] == "CANCELED"
+    balances = oms.balances(tenant, identity)
+    assert balances["wallet"]["BTC"] == Decimal("0.0015") and balances["reserved"]["USDT"] == 0
 
 
 def test_pg_parallel_risk_reservations_cannot_overspend_or_duplicate_fills(postgres):

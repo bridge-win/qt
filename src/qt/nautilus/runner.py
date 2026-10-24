@@ -34,6 +34,9 @@ class NativeLedgerError(RuntimeError):
     """Raised when native fills and account balances do not reconcile."""
 
 
+SUPPORTED_NATIVE_VERSIONS = frozenset({"2.0.0rc4", "2.0.0rc7"})
+
+
 @dataclass(frozen=True)
 class InstrumentDefinition:
     symbol: str = "BTCUSDT"
@@ -91,11 +94,19 @@ class NautilusDataFrameRunner:
         if initialize is not None:
             initialize()
         prepared = _utc_frame(frame)
+        last_available = prepared.index[-1] + (
+            pd.Timedelta(0) if definition.timestamp_at_close
+            else pd.Timedelta(seconds=_interval_seconds(prepared.index))
+        )
         prepared_quotes = (
             _validate_mark_quotes(mark_quotes)
             if mark_quotes is not None
             else None
         )
+        if prepared_quotes is not None:
+            prepared_quotes = prepared_quotes.loc[prepared_quotes["available_at"] <= last_available].copy()
+            if prepared_quotes.empty:
+                raise ValueError("no mark quotes were observable before the backtest window ended")
         native_instrument, bar_type = _build_instrument(
             runtime,
             prepared,
@@ -147,6 +158,7 @@ class NautilusDataFrameRunner:
                 ],
                 default_leverage=assumptions.leverage,
                 fill_model=_fill_model(runtime, assumptions),
+                fee_model=_fee_model(runtime, assumptions),
                 latency_model=runtime.StaticLatencyModel(
                     base_latency_nanos=assumptions.latency_nanos,
                 ),
@@ -195,7 +207,10 @@ class NautilusDataFrameRunner:
                 base_precision=int(native_instrument.base_currency.precision),
                 kind=definition.kind,
             )
-            terminal_timestamp = prepared.index[-1].to_pydatetime()
+            # Bar-open timestamps name the source row, not when its close was
+            # observable. Use the engine's processed horizon so a final fill
+            # cannot be reported before the last causal decision trace.
+            terminal_timestamp = _native_timestamp(result.backtest_end)
             _cash, terminal_equity, _realized_pnl, _unrealized_pnl, _positions = _native_portfolio_state(
                 engine.portfolio,
                 factory.instrument_ids,
@@ -219,6 +234,12 @@ class NautilusDataFrameRunner:
                         assumptions,
                         quote_currency=definition.quote_currency,
                     ),
+                    "fee_policy": {
+                        "maker_rate": str(assumptions.maker_fee),
+                        "taker_rate": str(assumptions.taker_fee),
+                        "owner": "instrument" if runtime.version == "2.0.0rc4" else "venue_account",
+                        "model": "MakerTakerFeeModel",
+                    },
                     "liquidation": {
                         "status": (
                             "native_enabled"
@@ -329,12 +350,30 @@ def _validate_mark_quotes(frame: pd.DataFrame) -> pd.DataFrame:
 def _fill_model(runtime: object, assumptions: ExecutionAssumptions) -> object:
     kwargs = {
         "prob_fill_on_limit": assumptions.limit_fill_probability,
-        "prob_slippage": assumptions.slippage_probability,
+        "prob_slippage": assumptions.effective_slippage_probability,
         "random_seed": assumptions.seed,
     }
-    if assumptions.one_tick_slippage:
-        return runtime.OneTickSlippageFillModel(**kwargs)
+    # The native one-tick probability hook supplies the entire slippage model.
+    # OneTickSlippageFillModel shifts its synthetic book first; combining it
+    # with prob_slippage would charge a second tick in both rc4 and rc7.
     return runtime.DefaultFillModel(**kwargs)
+
+
+def _fee_model(runtime: object, assumptions: ExecutionAssumptions) -> object | None:
+    """Bind the same explicit rates through each pinned engine's fee API.
+
+    rc4's default model reads instrument fees. rc7 removes those instrument
+    fields and requires account-owned rates in MakerTakerFeeModel. Omitting
+    either side would silently turn a configured cost into a different model.
+    """
+    if runtime.version == "2.0.0rc4":
+        return None
+    if runtime.version == "2.0.0rc7":
+        return runtime.MakerTakerFeeModel(
+            maker_rate=assumptions.maker_fee,
+            taker_rate=assumptions.taker_fee,
+        )
+    raise NautilusUnavailableError("native fee API has not been verified for this engine version")
 
 
 def _native_costs(
@@ -367,10 +406,14 @@ def _native_costs(
             else "non-quote native commissions require explicit fill-time FX rates"
         ),
         "spread": None,
-        "slippage": "one_tick" if assumptions.one_tick_slippage else "none",
+        "slippage": (
+            "one_tick" if assumptions.effective_slippage_probability == 1
+            else "probabilistic_one_tick" if assumptions.effective_slippage_probability > 0
+            else "none"
+        ),
         "funding": "0",
         "borrow": "0",
-        "slippage_probability": assumptions.slippage_probability,
+        "slippage_probability": assumptions.effective_slippage_probability,
     }
 
 
@@ -506,6 +549,7 @@ def _runtime() -> object:
         from nautilus_trader.config import BacktestEngineConfig
         from nautilus_trader.execution import (
             DefaultFillModel,
+            MakerTakerFeeModel,
             OneTickSlippageFillModel,
             StaticLatencyModel,
         )
@@ -529,8 +573,11 @@ def _runtime() -> object:
         )
     except ImportError as error:  # pragma: no cover - native host capability
         raise NautilusUnavailableError(
-            "NautilusTrader 2.0.0rc4 is unavailable; QT will not substitute EventRunner",
+            "A pinned NautilusTrader runtime is unavailable; QT will not substitute EventRunner",
         ) from error
+
+    if nautilus_trader.__version__ not in SUPPORTED_NATIVE_VERSIONS:
+        raise NautilusUnavailableError("unsupported NautilusTrader version; use a verified pinned image")
 
     @dataclass(frozen=True)
     class Runtime:
@@ -538,6 +585,7 @@ def _runtime() -> object:
         BacktestEngine: object
         BacktestEngineConfig: object
         DefaultFillModel: object
+        MakerTakerFeeModel: object
         StaticLatencyModel: object
         AccountType: object
         AggregationSource: object
@@ -562,6 +610,7 @@ def _runtime() -> object:
         BacktestEngine=BacktestEngine,
         BacktestEngineConfig=BacktestEngineConfig,
         DefaultFillModel=DefaultFillModel,
+        MakerTakerFeeModel=MakerTakerFeeModel,
         StaticLatencyModel=StaticLatencyModel,
         AccountType=AccountType,
         AggregationSource=AggregationSource,
@@ -603,11 +652,11 @@ def _build_instrument(
         "size_increment": runtime.Quantity.from_str(str(definition.size_increment)),
         "ts_event": first,
         "ts_init": first,
-        "maker_fee": assumptions.maker_fee,
-        "taker_fee": assumptions.taker_fee,
         "margin_init": Decimal("1") if definition.kind == "perpetual" else None,
         "margin_maint": assumptions.maintenance_margin if definition.kind == "perpetual" else None,
     }
+    if runtime.version == "2.0.0rc4":
+        common.update(maker_fee=assumptions.maker_fee, taker_fee=assumptions.taker_fee)
     instrument = (
         runtime.CryptoPerpetual(
             settlement_currency=currency.from_str(definition.quote_currency),
@@ -673,10 +722,12 @@ def _interval_seconds(index: pd.DatetimeIndex) -> int:
     deltas = index.to_series().diff().dropna()
     if deltas.nunique() != 1:
         raise ValueError("OHLCV timestamps contain gaps or inconsistent intervals")
-    seconds = int(deltas.iloc[0].total_seconds())
-    if seconds <= 0:
+    nanoseconds = int(deltas.iloc[0].value)
+    if nanoseconds <= 0:
         raise ValueError("OHLCV timestamps must have a positive interval")
-    return seconds
+    if nanoseconds % 1_000_000_000:
+        raise ValueError("native OHLCV bars require whole-second intervals; fractional intervals cannot be truncated")
+    return nanoseconds // 1_000_000_000
 
 
 def _bar_spec(seconds: int) -> str:

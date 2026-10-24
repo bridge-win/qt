@@ -164,7 +164,7 @@ async def test_shadow_persists_unsent_intents_without_any_adapter_calls(state):
     snapshot = market(state)
     result = await actor.process(item, snapshot)
     assert result.get("mode") == "shadow", result
-    assert result["orders"][0]["status"] == "RESERVED"
+    assert result["orders"][0]["status"] == "CANCELED"
     assert state.oms.balances("owner", "paper-account")["wallet"].get("BTC", 0) == 0
 
 

@@ -32,13 +32,19 @@ class MarketEvent(Contract):
     exchange_ts_ns: TimestampNS
     received_ts_ns: TimestampNS
     timestamp_precision: Literal["ns"] = "ns"
-    sequence: int | None = Field(default=None, ge=0)
+    sequence: int | None = Field(default=None, ge=0, le=2**63 - 1)
     payload: FrozenDict = Field(default_factory=FrozenDict)
     quality_flags: tuple[str, ...] = ()
     published_at_ns: TimestampNS | None = None
     available_at_ns: TimestampNS | None = None
     revision_id: NonEmptyStr = "initial"
     source_hash: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def available_before_receipt(self) -> MarketEvent:
+        if self.available_at_ns is not None and self.available_at_ns > self.received_ts_ns:
+            raise ValueError("event version cannot be received before it is available")
+        return self
 
 
 class InstrumentSpec(Contract):

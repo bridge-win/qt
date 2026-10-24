@@ -26,6 +26,11 @@ def decimal_string(value: Decimal) -> str:
         raise ValueError("financial values must be finite")
     if value == 0:
         return "0"
+    # Frozen JSON also accepts Decimal outside a money field. Bound expansion
+    # before format('f'), which otherwise allocates gigabytes for Decimal('1eN').
+    exponent = value.as_tuple().exponent
+    if not isinstance(exponent, int) or abs(exponent) > 1000 or value.adjusted() > 1000:
+        raise ValueError("decimal text exceeds the canonical expansion bound")
     rendered = format(value, "f")
     return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
 
@@ -45,6 +50,8 @@ def _decimal(value: object) -> Decimal:
     exponent = parsed.as_tuple().exponent
     if not parsed.is_finite() or not isinstance(exponent, int) or abs(exponent) > 1000:
         raise ValueError("financial values must be finite with a bounded exponent")
+    if parsed.adjusted() > 19:
+        raise ValueError("financial values must fit NUMERIC(38,18) without rounding")
     integer, _, fraction = decimal_string(parsed).lstrip("-").partition(".")
     if len(integer.lstrip("0")) > 20 or len(fraction) > 18:
         raise ValueError("financial values must fit NUMERIC(38,18) without rounding")

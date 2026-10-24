@@ -8,6 +8,8 @@ import json
 import time
 from pathlib import Path
 
+from sqlalchemy import select
+
 from qt.contracts import (
     DatasetManifest,
     DeploymentManifest,
@@ -22,7 +24,8 @@ from qt.datasets import DatasetRegistry
 from qt.experiments.registry import ExperimentRegistry
 from qt.operations.gates import INTEGRITY, GatePolicy
 from qt.operations.releases import DeploymentRegistry
-from qt.persistence import Repository
+from qt.persistence import Conflict, Repository
+from qt.persistence.schema import jobs
 
 
 def parse(model, value: dict):
@@ -32,13 +35,16 @@ def parse(model, value: dict):
 
 class ControlService:
     def __init__(self, repository: Repository, data_root: Path, *, tenant: str = "personal",
-                 signing_key: bytes | None = None):
+                 signing_key: bytes | None = None, experiment_timeout_seconds: int = 7200):
+        if type(experiment_timeout_seconds) is not int or not 60 <= experiment_timeout_seconds <= 86400:
+            raise ValueError("experiment_timeout_must_be_between_60_and_86400_seconds")
         self.repository = repository
         self.datasets = DatasetRegistry(data_root)
         self.experiments = ExperimentRegistry(repository.engine)
         self.policy = GatePolicy()
         self.tenant = tenant
         self.signing_key = signing_key
+        self.experiment_timeout_seconds = experiment_timeout_seconds
 
     def register(self, kind: str, payload: dict) -> dict:
         models = {"strategy": StrategyArtifact, "instrument": InstrumentSpec,
@@ -56,6 +62,8 @@ class ControlService:
     def create_experiment(self, payload: dict, key: str,
                           *, fence_job: tuple[str, str] | None = None) -> dict:
         spec = parse(ExperimentSpecV2, payload)
+        if not key or len(key) > 200:
+            raise ValueError("invalid_idempotency_key")
         strategy = self.repository.get(self.tenant, "strategy", spec.strategy_version)
         declared = strategy["payload"]["instruments"]
         if any(symbol not in declared for symbol in spec.instruments):
@@ -80,12 +88,37 @@ class ControlService:
         for fee_hash in spec.cost_model.fee_schedule_hashes:
             self.repository.get(self.tenant, "fees", fee_hash)
         identity = spec.content_hash()
-        self.experiments.register_trial(self.tenant, spec.campaign_id, identity,
-                                        spec.model_dump(mode="json"))
-        self.repository.put(self.tenant, "experiment_spec", spec.model_dump(mode="json"), identity,
-                            fence_job=fence_job)
-        return self.repository.enqueue(self.tenant, "experiment", {"experiment_hash": identity}, key,
-                                        fence_job=fence_job)
+        # A conflicting idempotency key or cancelled research invocation must
+        # not consume a candidate slot or leave a permanently submitted trial.
+        with self.repository.transaction() as connection:
+            self.experiments.register_trial(
+                self.tenant, spec.campaign_id, identity, spec.model_dump(mode="json"),
+                fence_job=fence_job, connection=connection,
+            )
+            self.repository.put(self.tenant, "experiment_spec", spec.model_dump(mode="json"), identity,
+                                fence_job=fence_job, connection=connection)
+            payload = {"experiment_hash": identity}
+            # Different request keys must not run the same frozen trial in
+            # parallel. Preserve original job IDs and pre-upgrade key conflicts.
+            # The campaign row locked by register_trial serializes this lookup.
+            requested = connection.execute(select(jobs).where(
+                jobs.c.tenant_id == self.tenant, jobs.c.kind == "experiment",
+                jobs.c.idempotency_key == key,
+            )).mappings().first()
+            if requested is not None and requested["sha256"] != content_hash(payload):
+                raise Conflict("idempotency_key_payload_conflict")
+            self.repository.put(self.tenant, "experiment_request", payload,
+                                content_hash([self.tenant, "experiment", key]),
+                                fence_job=fence_job, connection=connection)
+            existing = requested or connection.execute(select(jobs).where(
+                jobs.c.tenant_id == self.tenant, jobs.c.kind == "experiment",
+                jobs.c.sha256 == content_hash(payload),
+            ).order_by(jobs.c.created_ns, jobs.c.job_id).limit(1)).mappings().first()
+            if existing is not None:
+                return dict(existing)
+            return self.repository.enqueue(self.tenant, "experiment", payload, key,
+                                            fence_job=fence_job, connection=connection,
+                                            deadline_ns=time.time_ns() + self.experiment_timeout_seconds * 1_000_000_000)
 
     def validation(self, experiment_hash: str, stage: str = "paper") -> dict:
         result = self.repository.get(self.tenant, "experiment_result", experiment_hash)

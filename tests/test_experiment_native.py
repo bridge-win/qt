@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import json
 
@@ -21,8 +22,9 @@ from qt.datasets import DatasetRegistry
 from qt.experiments.native import builtin_strategy_code_hash, run
 
 pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("nautilus_trader") is None,
-    reason="requires installed pinned Nautilus native engine",
+    importlib.util.find_spec("nautilus_trader") is None
+    or importlib.metadata.version("nautilus_trader") != "2.0.0rc4",
+    reason="V2 production experiment baseline remains pinned to rc4; candidate refusal has a separate test",
 )
 
 

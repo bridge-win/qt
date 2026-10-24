@@ -232,7 +232,9 @@ def test_real_native_engine_fills_and_reports_actual_fee() -> None:
         ),
     )
 
-    assert run.engine_version == "2.0.0rc4"
+    import importlib.metadata
+
+    assert run.engine_version == importlib.metadata.version("nautilus_trader")
     assert len(run.orders) == 1
     assert len(run.fills) == 1
     assert run.fills.iloc[0]["status"] == "FILLED"
@@ -449,6 +451,11 @@ def test_terminal_account_equity_includes_last_bar_fills_without_mutating_traces
     assert run.terminal_equity != causal_terminal
     assert series[run.terminal_timestamp.isoformat()] == float(run.terminal_equity)
     assert Decimal(str(run.metrics["costs"]["fees"])) > 0
+    assert run.terminal_timestamp == run.traces[-1].timestamp
+    assert list(series) == sorted(series)
+    assert list(series)[-1] == run.terminal_timestamp.isoformat()
+    assert list(series.values())[-1] == float(run.terminal_equity)
+    assert _canonical_metrics(series)["net_return"] == pytest.approx(float(run.terminal_equity / run.initial_equity - 1))
 
 
 @pytest.mark.native_engine

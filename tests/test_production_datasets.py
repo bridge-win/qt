@@ -8,7 +8,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from qt.contracts import DatasetManifest, MarketEvent
 from qt.datasets import DatasetIntegrityError, DatasetRegistry
+from qt.datasets.registry import manifest_identity
 
 
 def register(registry: DatasetRegistry, table: pa.Table, **changes: object):
@@ -148,3 +150,65 @@ def test_actual_trade_receipt_order_is_preserved(tmp_path) -> None:
                       "price": ["100", "101"], "quantity": ["1", "2"]})
     manifest = register(registry, table, timestamp_column="received_ts_ns", availability="received")
     assert [event.payload["price"] for event in registry.events(manifest.dataset_id)] == ["100", "101"]
+
+
+@pytest.mark.parametrize("change", [{"received_ts_ns": 99}, {"exchange_ts_ns": 99},
+    {"event_type": "delta"}, {"sequence": 99}, {"event_json": "null"},
+])
+def test_invalid_event_envelopes_are_rejected_before_publishing(tmp_path, change) -> None:
+    registry = DatasetRegistry(tmp_path)
+    event = MarketEvent(venue="fixture", instrument="BTCUSDT", event_type="trade",
+                        exchange_ts_ns=1, received_ts_ns=2, sequence=1)
+    row = {"received_ts_ns": 2, "exchange_ts_ns": 1, "event_type": "trade",
+           "sequence": 1, "event_json": event.model_dump_json(), **change}
+    with pytest.raises(DatasetIntegrityError, match="envelope"):
+        register(registry, pa.Table.from_pylist([row]), data_type="market_events",
+                 timestamp_column="received_ts_ns", expected_interval_ns=None, availability="received")
+    assert not list((tmp_path / "manifests").iterdir())
+
+
+def test_event_envelope_columns_and_secondary_receipt_integer_capacity_are_verified(tmp_path) -> None:
+    registry = DatasetRegistry(tmp_path)
+    with pytest.raises(DatasetIntegrityError, match="require all"):
+        register(registry, pa.table({"received_ts_ns": [1]}), data_type="market_events",
+                 timestamp_column="received_ts_ns", availability="received")
+    with pytest.raises(DatasetIntegrityError):
+        register(registry, pa.table({"exchange_ts_ns": [1],
+                                    "received_ts_ns": pa.array([2**63], type=pa.uint64())}),
+                 availability="received")
+
+
+def test_multipart_snapshot_cannot_hide_receipt_order_regression(tmp_path) -> None:
+    registry = DatasetRegistry(tmp_path)
+    parts = [register(registry, pa.table({"exchange_ts_ns": [exchange], "received_ts_ns": [received],
+                                        "price": ["100"], "quantity": ["1"]}), availability="received")
+             for exchange, received in ((10, 100), (20, 90))]
+    fields = {**parts[0].model_dump(mode="python"), "files": tuple(item.files[0] for item in parts),
+              "rows": 2, "end_ns": 20}
+    fields["dataset_id"] = manifest_identity(fields)
+    combined = DatasetManifest.model_validate(fields)
+    with pytest.raises(DatasetIntegrityError, match="across parts"):
+        registry.verify(combined)
+
+
+@pytest.mark.parametrize("change", [{"high": ["99"]}, {"open_ts_ns": [10]}, {"low": ["NaN"]}])
+def test_replayed_bars_reject_inconsistent_ohlc_or_noncausal_interval(tmp_path, change) -> None:
+    registry = DatasetRegistry(tmp_path)
+    table = pa.table({"time": [10], "open": ["100"], "high": ["102"], "low": ["99"],
+                      "close": ["101"], "volume": ["1"], **change})
+    manifest = register(registry, table, timestamp_column="time", data_type="ohlcv",
+                        provenance={"timestamp_semantics": "close"})
+    with pytest.raises(DatasetIntegrityError):
+        list(registry.events(manifest.dataset_id))
+
+
+@pytest.mark.parametrize("change", [{"available_at_ns": [None]}, {"available_at_ns": [30]},
+                                   {"exchange_ts_ns": [None]}])
+def test_invalid_secondary_times_cannot_create_usable_events(tmp_path, change) -> None:
+    registry = DatasetRegistry(tmp_path)
+    manifest = register(registry, pa.table({"time": [1], "exchange_ts_ns": [10],
+                                            "received_ts_ns": [20], "available_at_ns": [10],
+                                            "price": ["100"], "quantity": ["1"], **change}),
+                        timestamp_column="time", expected_interval_ns=None, availability="received")
+    with pytest.raises(DatasetIntegrityError):
+        list(registry.events(manifest.dataset_id))

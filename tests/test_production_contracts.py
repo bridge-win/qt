@@ -21,6 +21,7 @@ from qt.contracts import (
     SubmitResult,
     canonical_json,
     content_hash,
+    decimal_string,
 )
 
 HASH = "a" * 64
@@ -169,3 +170,22 @@ def test_contracts_produce_openapi_compatible_json_schemas() -> None:
     assert MarketEvent.model_json_schema()["properties"]["payload"]["type"] == "object"
     schema = OrderIntent.model_json_schema()
     assert schema["additionalProperties"] is False
+
+
+def test_extreme_decimal_objects_cannot_expand_canonical_json_unboundedly() -> None:
+    for value in (Decimal("1e10000000"), Decimal("1e-10000000")):
+        with pytest.raises(ValueError, match="bound"):
+            decimal_string(value)
+        with pytest.raises(ValueError):
+            FrozenDict({"parameter": value})
+    with pytest.raises(ValidationError, match="NUMERIC"):
+        order(quantity=Decimal("1" * 10_000))
+
+
+def test_market_sequences_fit_the_persisted_signed_integer_representation() -> None:
+    with pytest.raises(ValidationError):
+        MarketEvent(venue="fixture", instrument="BTCUSDT", event_type="trade",
+                    exchange_ts_ns=1, received_ts_ns=2, sequence=2**63)
+    with pytest.raises(ValidationError, match="before it is available"):
+        MarketEvent(venue="fixture", instrument="BTCUSDT", event_type="news",
+                    exchange_ts_ns=1, received_ts_ns=2, available_at_ns=3)

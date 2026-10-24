@@ -19,7 +19,9 @@ from qt.agent_hub.codex import (
     MAX_OUTPUT_BYTES,
     CodexProvider,
     CodexUnavailableError,
+    _bounded_wait,
     _home_lock,
+    _stop,
     seed_oauth,
 )
 from qt.agent_hub.context import ContextStore
@@ -127,6 +129,64 @@ def test_codex_nonzero_exit_and_excessive_output_fail_closed(tmp_path: Path) -> 
     provider, _ = fake_codex(tmp_path, {**REPLY, "summary": "x" * (MAX_OUTPUT_BYTES + 1)})
     with pytest.raises(CodexUnavailableError, match="output exceeded"):
         provider.invoke("risk", "Validate", {})
+
+
+def test_codex_excessive_output_keeps_limit_error_when_exiting_group_reports_eperm(tmp_path, monkeypatch):
+    output = tmp_path / "oversize.json"
+    output.write_bytes(b"x" * (MAX_OUTPUT_BYTES + 1))
+
+    class Exiting:
+        pid = 123456
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            self.reaped = True
+            return 0
+
+    process = Exiting()
+
+    def raced_group(*args):
+        raise PermissionError("private subprocess context must not escape")
+
+    monkeypatch.setattr(os, "killpg", raced_group)
+    with pytest.raises(CodexUnavailableError, match="output exceeded") as failure:
+        _bounded_wait(process, output, 1)
+    assert process.reaped is True
+    assert "private" not in str(failure.value)
+
+
+def test_codex_checks_final_event_write_after_process_exit(tmp_path):
+    output, events = tmp_path / "result.json", tmp_path / "events.jsonl"
+    events.write_bytes(b"")
+
+    class FinalWrite:
+        def poll(self):
+            events.write_bytes(b"x" * (MAX_EVENT_BYTES + 1))
+            return 0
+
+    with pytest.raises(CodexUnavailableError, match="event stream exceeded"):
+        _bounded_wait(FinalWrite(), output, 1, events)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux/macOS process group boundary")
+def test_codex_group_permission_failure_reaps_leader_and_still_fails_closed(monkeypatch):
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+
+    def denied(*args):
+        raise PermissionError("private-group-details")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    try:
+        with pytest.raises(CodexUnavailableError, match="termination could not be verified") as failure:
+            _stop(process)
+        assert process.poll() is not None
+        assert "private" not in str(failure.value)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_codex_keeps_only_usage_and_duration_never_raw_event_text(tmp_path: Path) -> None:

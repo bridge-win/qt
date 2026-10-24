@@ -12,6 +12,7 @@ from contextlib import suppress
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from qt.contracts import (
     ExperimentSpecV2,
@@ -112,7 +113,7 @@ def native_experiment(service: ControlService, job: dict, cancelled) -> dict:
             raise Conflict("cached_experiment_identity_mismatch")
         service.experiments.finish_trial(tenant, identity, status="completed", result={
             "result_hash": saved["sha256"], "gate_evidence": saved["payload"]["gate_evidence"],
-        })
+        }, fence_job=(job["job_id"], job["lease_token"]))
         return {"experiment_hash": identity, "result_hash": saved["sha256"],
                 "paper_eligible": service.validation(identity, "paper")["eligible"]}
     spec = parse(ExperimentSpecV2, repo.get(tenant, "experiment_spec", identity)["payload"])
@@ -190,11 +191,12 @@ def native_experiment(service: ControlService, job: dict, cancelled) -> dict:
                               "fold_NAV_is_not_a_single_continuous_portfolio",
                               "forward_observation_and_full_statistical_acceptance_required"],
               "live_ready": False}
-    repo.put(tenant, "experiment_result", result, identity,
-             fence_job=(job["job_id"], job["lease_token"]))
-    service.experiments.finish_trial(tenant, identity, status="completed", result={
-        "result_hash": content_hash(result), "gate_evidence": evidence,
-    })
+    with repo.transaction() as connection:
+        repo.put(tenant, "experiment_result", result, identity,
+                 fence_job=(job["job_id"], job["lease_token"]), connection=connection)
+        service.experiments.finish_trial(tenant, identity, status="completed", result={
+            "result_hash": content_hash(result), "gate_evidence": evidence,
+        }, fence_job=(job["job_id"], job["lease_token"]), connection=connection)
     return {"experiment_hash": identity, "result_hash": content_hash(result),
             "paper_eligible": service.validation(identity, "paper")["eligible"]}
 
@@ -380,29 +382,86 @@ async def reconcile_paper_once(service: ControlService) -> dict | None:
         thread.join(timeout=2)
 
 
-def run_once(service: ControlService, kind: str, *, provider=None, checkpointer=None) -> dict | None:
+class _JobLease:
+    """Bounded cancellation polling for CPU replays; all writes remain DB-fenced.
+
+    Querying PostgreSQL for every market event makes large replays I/O-bound.
+    Cache only this read-only cancellation hint for at most 100 ms. Deadlines,
+    cached lease expiry and local shutdown are still checked on every call.
+    A failed heartbeat invalidates the hint immediately instead of silently
+    leaving a dead renewal thread behind.
+    """
+
+    def __init__(self, repository, job, *, shutdown=None, poll_seconds=.1):
+        self.repository, self.job, self.shutdown = repository, job, shutdown
+        self.stopped = threading.Event()
+        self.current = job
+        self.next_poll = 0.0
+        self.poll_seconds = poll_seconds
+
+    def active(self):
+        if self.stopped.is_set() or (self.shutdown is not None and self.shutdown.is_set()):
+            return False
+        if time.monotonic() >= self.next_poll:
+            self.current = self.repository.job(self.job["tenant_id"], self.job["job_id"])
+            self.next_poll = time.monotonic() + self.poll_seconds
+        current, now = self.current, time.time_ns()
+        return (current["status"] == "RUNNING" and not current["cancel_requested"]
+                and current["lease_token"] == self.job["lease_token"]
+                and current["lease_until_ns"] > now and current["deadline_ns"] > now)
+
+    def renew(self):
+        try:
+            if not self.repository.heartbeat(self.job):
+                self.stopped.set()
+        except Exception:
+            # The worker must not keep consuming resources after losing its
+            # ability to establish ownership. No exception/DSN is logged here.
+            self.stopped.set()
+
+    def heartbeat(self):
+        while not self.stopped.wait(10):
+            if self.shutdown is not None and self.shutdown.is_set():
+                self.stopped.set()
+                break
+            self.renew()
+
+
+async def _while_owned(awaitable, lease):
+    """Cancel in-flight model I/O promptly on cancellation, shutdown or fencing."""
+    task = asyncio.create_task(awaitable)
+    try:
+        while not task.done():
+            if not await asyncio.to_thread(lease.active):
+                raise InterruptedError("worker_cancelled_or_lease_lost")
+            await asyncio.wait({task}, timeout=.1)
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+
+
+def run_once(service: ControlService, kind: str, *, provider=None, checkpointer=None,
+             shutdown: threading.Event | None = None) -> dict | None:
+    if kind not in {"experiment", "research"}:
+        raise ValueError("unsupported_worker_job_kind")
+    if shutdown is not None and shutdown.is_set():
+        return None
     job = service.repository.claim(kind, lease_seconds=60, tenant=service.tenant)
+    if kind == "experiment":
+        service.experiments.reconcile_terminal_jobs(service.tenant)
     if job is None:
         return None
-    stop = threading.Event()
-
-    def active():
-        current = service.repository.job(job["tenant_id"], job["job_id"])
-        return (not stop.is_set() and not current["cancel_requested"]
-                and current["lease_token"] == job["lease_token"]
-                and current["lease_until_ns"] > time.time_ns()
-                and current["deadline_ns"] > time.time_ns())
-
-    def heartbeat():
-        while not stop.wait(10):
-            if not service.repository.heartbeat(job):
-                stop.set()
-
-    thread = threading.Thread(target=heartbeat, daemon=True)
+    lease = _JobLease(service.repository, job, shutdown=shutdown)
+    thread = threading.Thread(target=lease.heartbeat, daemon=True)
     thread.start()
     try:
+        if content_hash(job["payload"]) != job["sha256"]:
+            raise ValueError("worker_job_payload_integrity_failure")
         if kind == "experiment":
-            result = native_experiment(service, job, lambda: not active())
+            result = native_experiment(service, job, lambda: not lease.active())
         elif kind == "research":
             if provider is None:
                 raise ValueError("research_requires_explicit_bounded_provider")
@@ -424,22 +483,32 @@ def run_once(service: ControlService, kind: str, *, provider=None, checkpointer=
                                           tool_broker(service, asof_ns=job["created_ns"],
                                                       fence_job=(job["job_id"], job["lease_token"])), saver)
                     return await graph.run(job, model_id=job["payload"]["model_id"])
-            result = asyncio.run(research())
-        else:
-            raise ValueError("unsupported_worker_job_kind")
+            result = asyncio.run(_while_owned(research(), lease))
         return service.repository.finish(job, result)
     except Exception as error:
+        if shutdown is not None and shutdown.is_set():
+            # Keep the attempt resumable after its lease expires. Already
+            # persisted artifacts/call reservations remain immutable.
+            return {"status": "interrupted", "job_id": job["job_id"]}
+        if lease.stopped.is_set():
+            return {"status": "lease_lost", "job_id": job["job_id"]}
+        if isinstance(error, (SQLAlchemyError, OSError)) and not isinstance(error, InterruptedError):
+            return {"status": "retry_pending", "job_id": job["job_id"], "error_type": type(error).__name__}
         if kind == "experiment":
             with suppress(KeyError, ValueError):
                 service.experiments.finish_trial(job["tenant_id"], job["payload"]["experiment_hash"],
-                                                status="failed", result={"error_type": type(error).__name__})
+                                                status="failed", result={"error_type": type(error).__name__},
+                                                fence_job=(job["job_id"], job["lease_token"]))
         try:
-            return service.repository.finish(job, {"status": "failed", "error_type": type(error).__name__},
-                                              failed=True)
+            finished = service.repository.finish(job, {"status": "failed", "error_type": type(error).__name__},
+                                                 failed=True)
+            if kind == "experiment":
+                service.experiments.reconcile_terminal_jobs(service.tenant)
+            return finished
         except Conflict:
             return {"status": "lease_lost", "job_id": job["job_id"]}
     finally:
-        stop.set()
+        lease.stopped.set()
         thread.join(timeout=2)
 
 

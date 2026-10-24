@@ -79,6 +79,7 @@ jobs = Table(
     UniqueConstraint("tenant_id", "kind", "idempotency_key", name="uq_v4_job_identity"),
     CheckConstraint("attempts >= 0", name="ck_v4_job_attempts"),
     Index("ix_v4_jobs_claim", "kind", "status", "lease_until_ns", "created_ns"),
+    Index("ix_v4_jobs_payload", "tenant_id", "kind", "sha256", "created_ns"),
 )
 events = Table(
     "audit_events", metadata,
